@@ -18,9 +18,13 @@ from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
 
 from decor import unhookPyQt, print_args
 from magic.string import banner
+    
 
+######################################################################################################
+# Class definitions
+######################################################################################################
 
-#######################################################################################################    
+#**********************************************************************************************************************************************
 ApertureCollection.WARN = False
 
 
@@ -28,29 +32,23 @@ class PhotApertures( SameSizeMixin, InteractionMixin, ApertureCollection ):
     pass
     
 class SkyApertures( SameSizeMixin, InteractionMixin, SkyApertures ):
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     AXIS = 1
     #WARN = False
     #_properties = SkyApertureProperties
 
-    ##===============================================================================================
+    ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    
 
-######################################################################################################
-# Class definitions
-######################################################################################################
-
+#**********************************************************************************************************************************************
 class Star( object ):   #ApertureCollection
     ''' '''
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     ATTRS = ['coo', 'peak', 'flux', 'fwhm', 'sigma_xy', 'ratio', 'ellipticity', 
              'sky_mean', 'sky_sigma', 'image', 'id', 'slice']#'cache']
-    IGNORE = ('image', 'slice', 'rad_prof')
-    #===============================================================================================
+    IGNORE = ('image', 'slice', 'rprofile')
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, **params):
-        
-        rmax = params.pop( 'rmax', 0 )
         
         for key in self.ATTRS:
             #set the star attributes given in the params dictionary
@@ -58,9 +56,9 @@ class Star( object ):   #ApertureCollection
             
         if not self.image is None:      #if no stellar image is supplied don't try compute the radial profile
             #self.flux = self.image.sum()
-            self.rad_prof = self.radial_profile( rmax )                       #containers for radial profiles of fit, data, cumulative data
+            self.rprofile = self.radial_profile( )                       #containers for radial profiles of fit, data, cumulative data
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __str__(self):
         info = Table( vars(self), 
                         title='Star No. {}'.format(self.id), 
@@ -69,25 +67,33 @@ class Star( object ):   #ApertureCollection
                         ignore_keys=self.IGNORE )  #'cache'
         return str(info)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_params(self):
         raise NotImplementedError
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def set_params(self, dic):
         raise NotImplementedError
     
-    #===============================================================================================
-    def radial_profile( self, rmax=None ):
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def radial_profile( self, bins=None ):
+        '''Calculate radial profile for star'''
+        #NOTE. Maximal radius for calculation depends on size of image.
         
         pix_cen = np.mgrid[self.slice]  + 0.5                           #the index grid for pixel centroid
         rfc = np.linalg.norm( pix_cen.T-self.coo[::-1], axis=-1 ).T     #radial distance of pixel centroid from star centoid
         
-        #rmax = SkyApertures.R_OUT_UPLIM + 1                             #maximal radial distance of pixel from image centroid
         image = self.image - self.sky_mean
-        rmax = int(np.ceil(rmax))
-        bins = pairwise(range(1, rmax) )
-        return np.array([ np.mean( image[(rfc>=bl)&(rfc<bu)] ) for bl,bu in bins ])
+        
+        if bins is None:
+            bins = range(0, min(image.shape)//2+1)
+        bin_centres = np.fromiter(map(np.mean, pairwise(bins)), float)
+        
+        annuli = [image[(rfc>=bl)&(rfc<bu)] for bl,bu in pairwise(bins)]
+        val = np.array( [a.mean() for a in annuli] )
+        err = np.array( [a.std() for a in annuli] )
+        
+        return bin_centres, val, err
 
 
 def w2b(artist):        #TODO:  this can be a decorator!
@@ -97,10 +103,10 @@ def w2b(artist):        #TODO:  this can be a decorator!
     artist.set_color( ca )
         
 
-#######################################################################################################    
+#**********************************************************************************************************************************************
 class StarApertures( list ):
     '''Container class for various apertures associated with the star'''
-    #===============================================================================================     
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~     
     #@unhookPyQt
     def __init__(self, psf, phot, sky):
         '''Initialise from dictionaries of properties, or from ApertureCollection'''
@@ -117,7 +123,7 @@ class StarApertures( list ):
         
         super().__init__( [self.psf, self.phot, self.sky] )
     
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     def draw(self):
         
         renderer = self.sky.figure._cachedRenderer
@@ -130,48 +136,105 @@ class StarApertures( list ):
         for ann in self.annotations:
             ann.draw( renderer )
 
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     def append( self, *props ):
         
         for aps, props in zip(self, props):
             
-            print()
-            print( '!'*100 )
-            print( aps )
-            print()
+            #print()
+            #print( '!'*100 )
+            #print( aps )
+            #print()
             aps.append( **props )
 
 
-class RadialProfiles(list):
-    pass
+#**********************************************************************************************************************************************
+class RadialProfiles():
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def __init__(self, ax):
+        self.ax = ax
+        
+        #plots
+        eprops = dict(capsize=0, ls='', marker='o', ms=5, mec='none')
+        null = [0]*4
+        self.ax.errorbar( *null, color='g', label='Data', **eprops )
+        self.ax.errorbar( *null, color='b', label='Cumulative', **eprops )
+        self.ax.plot( 0, 0, color='k', label='Model' )
+        
+        #self.data = []
+        #self.cumulative = []
+        #self.model = []
+        
+        
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    @unhookPyQt
+    def update(self, rsky):
+        
+        
+        
+        self.ax.set_xlim( 0, np.ceil(rsky.max()) + 0.5 )
+        
+        #rpx = np.arange( 0, self.window )
+        #rpxd = np.linspace( 0, self.window )
+        #embed()
+        xerr = 0.5
+        for handle, label in zip(*self.ax.get_legend_handles_labels()):
+            
+            
+            #banner( handle, label, bg='magenta' )
 
-#######################################################################################################    
-class ModelStar( Star, StarApertures ):
-    #===============================================================================================     
+            if label in ('Data', 'Cumulative'):
+                x,y,yerr = getattr( self, label.lower() )
+                points, caps, (xbars, ybars) = handle
+                points.set_data(x,y)
+            
+                #NOTE: Don't switch the order of the lines below - if you do, some utterly bizarre fuck-up occurs (with y)
+                ybars.set_segments( np.r_['-1,3,0', np.c_[x, x],
+                                                    np.c_[y-yerr, y+yerr]] )
+
+                xbars.set_segments( np.r_['-1,3,0', np.c_[x-xerr, x+xerr], 
+                                                    np.c_[y, y]] )
+            else:
+                x,y = getattr( self, label.lower() )
+                handle.set_data(x, y)
+        
+        #for pl, x, y in zip( self.pl_prof, [rpxd, rpx, rpx], self.rprofile ):
+            #x = np.arange( 0, len(y) )
+            #pl.set_data( x, y )
+            
+    
+
+#**********************************************************************************************************************************************
+class ModelStar( Star ):   #StarApertures
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~     
     psf = GaussianPSF()
     
-    #===============================================================================================     
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~     
     #@unhookPyQt
-    def __init__(self, idx, window):
+    def __init__(self, idx, window, resolution=None):
         
         banner( 'ModelStar.__init__', bg='green' )
         
+        #TODO:  kill idx
         self.idx = idx
         self.window = window
+        self.resolution = resolution or window
+        
         #self.psf = psf
         coo = [( window/2, window/2 )]
         wslice = (slice(0, window),)*2
         
         super().__init__( coo=coo[0], 
                           slice=wslice,
-                          sky_mean=0 )      #won't calculate rad_prof as no image kw
+                          sky_mean=0 )      #won't calculate rprofile as no image kw
         
         #self.apertures = ApertureCollection( radii=np.zeros(4), 
                                              #coords=fakecoo, 
                                              #colours=['k','w','g','g'], 
                                              #ls=['dotted','dotted','solid','solid'])
         
-        psfaps = dict( coords=coo, 
+        #TODO:  The coords of these con be 2D
+        psfaps = dict( coords=[coo,coo], 
                         radii=np.zeros(2), 
                         ls=':', 
                         colours=['k','w'],
@@ -181,29 +244,24 @@ class ModelStar( Star, StarApertures ):
                         radii=[0],
                         gc='c' )
         skyaps = dict( radii=np.zeros(2), 
-                        coords=coo, )
+                        coords=[coo,coo], )
                                     #**kw )
                                     
-        StarApertures.__init__( self, psfaps, photaps, skyaps )
+        self.apertures = StarApertures( psfaps, photaps, skyaps )
         
-        #embed()
-        
-        #TODO: RadialProfile class??
-        self.rad_prof = [[], [], []]               #containers for radial profiles of fit, data, cumulative data
         self.has_plot = False
-        #self.init_plots
     
-    #=============================================================================================== 
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
     #@profile()
     @unhookPyQt
     def init_plots(self, fig):
         #print('!'*88, '\ninitializing model plots\n', '!'*88, )
+        
         ##### Plots for mean profile #####
         self.mainfig = fig
         _, self.ax_zoom, self.ax_prof, _ = fig.axes
-        #gs2 = gridspec.GridSpec(2, 2, width_ratios=(1,2), height_ratios=(3,1) )
-        #self.ax_zoom = fig.add_subplot( gs2[2], aspect='equal' )
-        #self.ax_zoom.set_title( 'PSF Model' )
+        
+        self.radial = RadialProfiles( self.ax_prof )
         
         #TODO:  AxesContainer
         
@@ -212,34 +270,28 @@ class ModelStar( Star, StarApertures ):
         
         self.pl_zoom.set_clim( 0, 1 )
         self.pl_zoom.set_extent( [0, self.window, 0, self.window] )
-        
-        #self.ax_prof = fig.add_subplot( gs2[3] )
-        #self.ax_prof.set_title( 'Mean Radial Profile' )
-        #self.ax_prof.set_ylim( 0, 1.1 )
+
         
         ##### stellar profile + psf model #####
-        labels = ['', 'Cumulative', 'Model']
-        self.pl_prof = self.ax_prof.plot( 0, 0, 'g-',
-                                          0, 0, 'r.',
-                                          0, 0, 'bs' )       #, animated=True
-        [pl.set_label(label) for pl,label in zip( self.pl_prof, labels )]
+       
+        #self.pl_prof = 
         
         #embed()
         
         ##### apertures #####
-        for aps in self:
+        for aps in self.apertures:
             lines = aps.aplines = ApLineCollection( aps, self.ax_prof  )
             #lines.set_animated( True )
             self.ax_prof.add_collection( lines )
             #lines.axadd( self.ax_prof )
             aps.axadd( self.ax_zoom )
         
-        w2b(self.psf.aplines)      #convert white lines to black for displaying on white canvas
+        #w2b(self.apertures.psf.aplines)      #convert white lines to black for displaying on white canvas
         
         ##### sky fill #####
         from matplotlib.patches import Rectangle
         
-        trans = self.psf.aplines.get_transform()
+        trans = self.apertures.psf.aplines.get_transform()
         self.sky_fill = Rectangle( (0,0), width=0, height=1, transform=trans, color='b', alpha=0.3)     #, animated=True
         self.ax_prof.add_artist( self.sky_fill )
         
@@ -251,30 +303,34 @@ class ModelStar( Star, StarApertures ):
         #set all the artist invisible to start with - we'll create a background from this for blitting
         #self.set_visible( False )
         
-    #===============================================================================================
-    #@unhookPyQt
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    @unhookPyQt
     def update(self, cached_params, data_profs, rsky, rphot, plot=True):
         
         print( 'model update' )
         #embed()
         
         window = self.window
-        Y, X = np.mgrid[:window, :window] + 0.5
+        #res = complex(self.resolution)
+        Y, X = np.mgrid[0:window, 0:window] + 0.5
         p = cached_params[:]                                    #update with mean of cached_params
         p[:2], p[2], p[-1] = self.coo, 1, 0                     #coordinates, peak, background
-        fwhm = self.psf.get_fwhm(p)
+        fwhm = self.psf.get_fwhm(p)                             #retrieve FWHM
         
         self.image = self.psf( p, X, Y )
         
         #FIXME: YOU MAY WANT TO INCREASE THE RESOLUTION OF THE RADIAL PROFILE.....
-        self.rad_prof[0] = self.radial_profile( window/2 )
-        self.rad_prof[1:] = data_profs
+        rmax = min(self.image.shape)
+        r = np.linspace(0, rmax, self.resolution)
+        self.radial.model = r, self.psf.radial(p, r)
+        self.radial.data, self.radial.cumulative = data_profs
         
-        self.psf.radii = 0.5*fwhm, 1.5*fwhm
-        self.sky.radii = rsky
-        self.phot.radii = rphot
+        print( 'self.radial.data', self.radial.data )
+        print( 'self.radial.cumulative', self.radial.cumulative )
         
-        #embed()
+        self.apertures.psf.radii = 0.5*fwhm, 1.5*fwhm
+        self.apertures.sky.radii = rsky
+        self.apertures.phot.radii = rphot
         
         
         if plot:
@@ -282,32 +338,26 @@ class ModelStar( Star, StarApertures ):
         
         
         
-    #===============================================================================================
-    @unhookPyQt
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #@unhookPyQt
     def update_plots(self, rsky):
         if self.has_plot:
             Z = self.image
             self.pl_zoom.set_data( Z )
-
-            self.ax_prof.set_xlim( 0, np.ceil(rsky.max()) + 0.5 )
             
-            embed()
-            
-            rpx = np.arange( 0, self.window )
-            rpxd = np.linspace( 0, self.window )
-            
-            for pl, x, y in zip( self.pl_prof, [rpxd, rpx, rpx], self.rad_prof ):
-                x = np.arange( 0, len(y) )
-                pl.set_data( x, y )
+            self.radial.update( rsky )
             
             self.update_aplines( rsky )
         
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #@print_args()
+    #@unhookPyQt
     def update_aplines(self, rsky):
         ##### set aperture line position + properties #####
         
-        for apertures in self:
+        #embed()
+        
+        for apertures in self.apertures:
             #try:
             apertures.aplines.update_from( apertures )
             apertures.aplines.set_visible( True )      #NOTE:  ONLY HAVE TO DO THIS ON THE FIRST CALL
@@ -317,8 +367,8 @@ class ModelStar( Star, StarApertures ):
                 #pyqtRestoreInputHook()
             
         #print( '*'*88 )
-        #print( self )
-        #print( self.aplines )
+        #print( self.apertures )
+        #print( self.apertures.aplines )
         
         ##### Shade sky region #####
         #TODO: MAKE THIS A PROPERTY!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -338,10 +388,10 @@ class ModelStar( Star, StarApertures ):
         #for txt, x in zip( plot_texts, xposit ):
             #txt.set_position( (x, y) )
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #TODO:  Move to StarApertures class???
     def set_visible(self, state):
-        for apertures in self:
+        for apertures in self.apertures:
             apertures.set_visible( state )
             apertures.aplines.set_visible( state )
             sky_fill.set_visible( state )
@@ -349,18 +399,18 @@ class ModelStar( Star, StarApertures ):
         for l in self.pl_prof:
             l.set_visible( state )
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def draw(self):
         
         #draw all the apertures
-        self.draw() #for ax_zoom
+        self.apertures.draw() #for ax_zoom
         
         axz, axp = self.ax_zoom, self.ax_prof
         axz.draw_artist( self.pl_zoom )         #redraw the image
         
         #redraw the ap lines + sky fill
         axp.draw_artist( self.sky_fill )
-        for apertures in self:
+        for apertures in self.apertures:
             #axz.draw_artist( apertures )
             axp.draw_artist( apertures.aplines )
         
@@ -374,14 +424,14 @@ class ModelStar( Star, StarApertures ):
 
 
     
-#######################################################################################################    
+#**********************************************************************************************************************************************
 class Stars( list ):
     '''
     Class to contain measured values for selected stars in image.
     '''
     
     DEFAUL_SKYRADII = (10, 20)   #These are the skyradii the stars start with. 
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, idx,  **kw):
         
         self.idx = idx
@@ -393,8 +443,8 @@ class Stars( list ):
         super().__init__( [Star(coo=coo, fwhm=fwhm) 
                                 for (coo,fwhm) in itt.zip_longest(coords, as_iter(fwhm)) ] )
         #self.star_count = len(self.stars)
-        
-        self.model = ModelStar( idx, self.window )
+        resolution = 50
+        self.model = ModelStar( idx, self.window, resolution )
         self.plots = []
         self.annotations = []           #TODO:  AnnotationMixin for ApertureCollection????
         
@@ -404,7 +454,7 @@ class Stars( list ):
         
         apcoo = np.array( interleave( coords, coords ) )                #each stars has 2 apertures.sky and 2 apertures.psf!!!!
         
-        banner( 'Stars.__init__', bg='magenta' )
+        #banner( 'Stars.__init__', bg='magenta' )
         
         self.apertures = StarApertures( dict(coords=apcoo, 
                                                 radii=psfradii, 
@@ -430,7 +480,7 @@ class Stars( list ):
         
         self.has_plot = 0
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #TODO: A better way of doing this is this:  have a class LinkRadii that manages the linked properties???
     def get_skyradii(self):
         return self.apertures.sky.radii[0]
@@ -450,10 +500,10 @@ class Stars( list ):
     
     photradii = property(get_skyradii, set_skyradii)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __str__(self):
         attrs = Star.ATTRS.copy()
-        ignore_keys = 'image', 'slice', 'rad_prof'              #Don't print these attributes
+        ignore_keys = 'image', 'slice', 'rprofile'              #Don't print these attributes
         [attrs.pop(attrs.index(key)) for key in ignore_keys if key in attrs]
         data = [self.pullattr(attr) for attr in attrs]
         table = Table(  data, 
@@ -465,18 +515,18 @@ class Stars( list ):
                     #for which, radii in zip(apdesc, self.apertures) )
         return str(table)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #def __repr__(self):
         #return str(self)
     
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     def __getattr__(self, attr):
         if attr in ('fwhm', 'sky_sigma', 'sky_mean'):
             return self.get_mean_val( attr )
         else:
             return super().__getattribute__(attr)
     
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     #def connect(self):
         #self.apertures.sky.connect()
         #self.apertures.sky.connect()
@@ -484,11 +534,11 @@ class Stars( list ):
 
         
         
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def pullattr(self, attr):
         return [getattr(star, attr) for star in self]
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def append(self, star=None, **star_params):
         
         if star_params:
@@ -532,7 +582,7 @@ class Stars( list ):
         
         return star
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_mean_val(self, key):
         if not len(self):
             #raise ValueError( 'The {} instance is empty!'.format(type(self)) )
@@ -543,7 +593,7 @@ class Stars( list ):
         if not None in vals:
             return np.mean( vals, axis=0 )
         
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #def get_unique_coords(self):
         #'''get unique coordinates'''
         #nq_coords = self.apertures.psf.coords          #non-unique coordinates (possibly contains duplicates)
@@ -551,25 +601,25 @@ class Stars( list ):
         #_, coords = sorter( list(idx), nq_coords[idx] )
         #return np.array(coords)                   #filtered for duplicates
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_coords(self):
         return np.array([star.coo for star in self])
     
     coords = property(get_coords)        #get_unique_coords
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def axadd( self, ax ):
         #self.apertures.sky.axadd( ax )
         for aps in self.apertures:
             aps.axadd( ax )
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #def draw(self):
         #ax.draw_artist( stars.psfaps )
         #ax.draw_artist( stars.apertures.sky )
         #ax.draw_artist( stars.annotations[-1] )
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def remove(self, idx):
         
         for aps in self.apertures:
@@ -588,7 +638,7 @@ class Stars( list ):
             star.id = i
             self.annotations[i].set_text( str(i) )
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def remove_all( self ):
         #print( 'Attempting remove all on', self )
         while len(self):        
@@ -599,23 +649,40 @@ class Stars( list ):
         #self.fitfig.canvas.draw()
         ##SAVE FIGURES.................
         
-    #=============================================================================================== 
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+    @unhookPyQt
     def mean_radial_profile( self ):
-        
-        
-        #embed()
-        #TODO: #NEEDS WORK!
         #TODO: RadialProfile class
         
+        x,y,e = zip(*[star.rprofile for star in self])                    #radial profile of mean stellar image\
+
+        profiles = get_masked_profiles(y)
+        errors = get_masked_profiles(e)
         
-        rp = [star.rad_prof for star in self]                    #radial profile of mean stellar image\
-        rpml = max(map(len, rp))
-        rpa = np.array( [np.pad(r, (0,rpml-len(r)), 'constant', constant_values=-1) for r in rp] )
-        rpma = np.ma.masked_array( rpa, rpa==-1 )
+        rpm = profiles.mean( axis=0 )
+        mx = np.max(rpm)
+        rpm /= mx                               #normalized mean radial data profile
         
-        rpm = rpma.mean( axis=0 );      rpm /= np.max(rpm)       #normalized mean radial data profile
-        cpm = np.cumsum( rpm )   ;      cpm /= np.max(cpm)       #normalized cumulative
+        ep = np.linalg.norm( errors, axis=0 )    #add errors in quadrature
+        ep /= mx
         
-        return rpm, cpm
+        cpm = np.cumsum( rpm )
+        cpm /= np.max(cpm)                      #normalized cumulative
+        
+        return (x[0], rpm, ep), (x[0], cpm, ep)       #FIXME: NEED ERROR CALCULATION FOR CUMULATIVE SUM
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
     
     
+def get_masked_profiles(data):
+    ml = max(map(len, data))
+    
+    #ix = np.digitize( tfr.frq[l], bins )
+    #apowb = np.array([apower[:,ix==i].mean(1) for i in np.unique(ix)])
+    
+    profiles = np.array( [np.pad( dat, 
+                                (0, ml-len(dat)), 
+                                'constant',
+                                constant_values=-1 ) 
+                        for dat in data] )
+    return np.ma.masked_array( profiles, profiles==-1 )

@@ -12,13 +12,15 @@ from superplot.multitab import MplMultiTab
 
 from magic.list import find_missing_numbers
 from magic.dict import TransDict
+#from magic.string import banner
 
 from myio import warn
 
 from decor import cache_last_return
 
 from IPython import embed
-from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
+#from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
+from decor import unhookPyQt
 
 ######################################################################################################    
 class PSF(object):
@@ -171,6 +173,28 @@ class GaussianPSF( PSF ):
             
         return pdict
     
+    #===============================================================================================
+    @staticmethod
+    def radial(p, r):
+        '''
+        Numerically integrate the psf with theta around (x0,y0) to determine mean radial
+        profile
+        '''
+        from scipy.integrate import quad
+        from functools import partial
+        
+        def integrand(psi, r, alpha, beta):
+            return np.exp( -r*r*(alpha*np.cos(psi) + beta*np.sin(psi)) )
+ 
+        def mprof(p, r):
+            x0, y0, z0, a, b, c, d = p
+            alpha = (a-c)/2
+            I = quad(integrand, 0, 4*np.pi, args=(r,alpha,b))
+            return (0.25/np.pi)*z0*np.exp( -0.5*r*r*(a+c) ) * I[0]
+        
+        R = partial(mprof, p)
+        return np.vectorize(R)(r)
+        
     #def param_hint(self, data):
         #'''x0, y0, z0, a, b, c, d'''
         #return self.default_params
@@ -413,6 +437,8 @@ class PSFPlotFactory():
     def __call__(self, mode):
         #if not mode in MODES.allkeys():
             #raise ValueError
-        return self.MODES.get(mode, NullPSFPlot)
+            
+        c = self.MODES.get(mode, NullPSFPlot)
+        return c
 
 psfPlotFactory = PSFPlotFactory()

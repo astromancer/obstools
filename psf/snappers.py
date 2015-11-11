@@ -55,7 +55,6 @@ class Snapper( object ):
         return self._snapper(x,y)
 
     #===============================================================================================
-    @cache_last_return
     def zoom(self, *coo):
         x,y = coo
         ij = int(round(y)), int(round(x))
@@ -93,11 +92,6 @@ class Snapper( object ):
         yp = ip[0]+il; xp = jp[0]+jl                   #indeces of peak within sub-image
 
         return xp, yp, zp
-
-
-######################################################################################################    
-#class DataCleanerMixin( object )
-
 
 ######################################################################################################    
 class ImageSnapper( Snapper ):
@@ -168,15 +162,28 @@ class ImageSnapper( Snapper ):
             return None, None
 
 
-            
 ######################################################################################################    
-class SnapCleaner( ImageSnapper ):
+class DoubleZoomMixin():
+    #===============================================================================================
+    def __call__(self, x, y):
+        xs, ys = super().__call__(x, y)
+        self.zoom( xs, ys )     #zoom with snapped pixel as center & cache (save) image
+        return xs, ys 
     
     #===============================================================================================
-    def __init__(self, data, window=None, snap='centroid', edge='edge', **kw):
-        super().__init__(data, window, snap, edge, **kw)
+    @cache_last_return
+    def zoom(self, *coo):
+        return super().zoom( *coo )
+    
+            
+######################################################################################################    
+class CleanerMixin():
+    
+    ##===============================================================================================
+    #def __init__(self, data, window=None, snap='centroid', edge='edge', **kw):
+        #super().__init__(data, window, snap, edge, **kw)
         
-        #self.image_data_cleaned = self.image_data.copy()
+        ##self.image_data_cleaned = self.image_data.copy()
     
     #===============================================================================================
     def clean(self, model):

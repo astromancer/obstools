@@ -20,13 +20,13 @@ from myio import warn
 #module level imports
 from .psf import *
 from .stars import *
-from .snappers import SnapCleaner
+from .snappers import ImageSnapper, CleanerMixin, DoubleZoomMixin
 
 from decor import print_args
 
 from IPython import embed
 from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
-from decor import unhookPyQt
+from decor import unhookPyQt, profile
 
 from pySHOC.readnoise import ReadNoiseTable
 RNT = ReadNoiseTable()
@@ -65,6 +65,12 @@ class ConnectionMixin( ConnectionManager ):
         for name, cid in self.connections.items():
             self.figure.canvas.mpl_disconnect( cid )
         print('Disconnected from figure {}'.format(self.figure) )
+
+
+######################################################################################################
+class Snapper(CleanerMixin, DoubleZoomMixin, ImageSnapper):
+        pass
+
 
 ######################################################################################################
 class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES??
@@ -196,7 +202,7 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         #canvas = FigureCanvas(self.figure)
         #self.backgrounds = [canvas.copy_from_bbox( ax.bbox ) for ax in fig.axes]
         
-        self.snap = SnapCleaner( self.image_data_cleaned, 
+        self.snap = Snapper( self.image_data_cleaned, 
                                   window=self.window, 
                                   snap='peak', 
                                   edge='clip',
@@ -253,6 +259,7 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
                               self._on_motion )
         
     #===============================================================================================
+    #@profile()
     @connect('button_press_event' )
     def _on_click(self, event):
         
@@ -305,7 +312,7 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
             star = stars.append( sky_sigma      =       sky_sigma,
                                  slice          =       wslice,
                                  image          =       data,
-                                 rmax           =       self.rphotmax,
+                                 #rmax           =       self.rphotmax,
                                  **info                                 )
             
             
