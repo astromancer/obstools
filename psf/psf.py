@@ -2,30 +2,32 @@ from collections import Callable
 
 import numpy as np
 from scipy.optimize import leastsq
-from scipy.ndimage.measurements import center_of_mass
+#from scipy.ndimage.measurements import center_of_mass
 
-from matplotlib import pylab as plt
-from mpl_toolkits.mplot3d import Axes3D
-from mpl_toolkits.axes_grid1 import AxesGrid
+from lmfit import minimize
 
-from superplot.multitab import MplMultiTab
 
-from magic.list import find_missing_numbers
-from magic.dict import TransDict
+from grafico.multitab import MplMultiTab
+from grafico.imagine import Compare3DImage
+
+from recipes.list import find_missing_numbers
+from recipes.dict import TransDict
 #from magic.string import banner
 
 from myio import warn
 
-from decor import cache_last_return
+from decor.misc import cache_last_return
 
 from IPython import embed
 #from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
-from decor import unhookPyQt
+from decor.misc import unhookPyQt
 
-######################################################################################################    
+#TODO:  use astropy.models!!!!???
+
+#****************************************************************************************************    
 class PSF(object):
     '''Class that implements the point source function.'''
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, F, default_params, to_cache=None):
         '''
         Initialize a PSF model function.
@@ -62,21 +64,22 @@ class PSF(object):
         self.no_cache = np.array( find_missing_numbers( np.r_[-1, ix, Npar] ) )  #indeces of uncached params
         #self.default_cache = #defpar[ix]
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, p, X, Y):
         return self.F(p, X, Y)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __repr__(self):
         return self.F.__name__  
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #@profile()
     def param_hint(self, data):
         '''Return a guess of the fitting parameters based on the data'''
         
         #location
-        y0, x0 = np.r_[np.where(data==data.max())]              #center_of_mass( data )
+        #y0, x0 = np.c_[np.where(data==data.max())][0]              #center_of_mass( data ) #NOTE: in case of multiple maxima it only returns the first
+        
         bg, bgsig = self.background_estimate( data )
         z0 = data.max() - bg
 
@@ -85,8 +88,8 @@ class PSF(object):
         #cached parameters will be set by StarFit
         return p
     
-    #===============================================================================================
-    @cache_last_return
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #@cache_last_return
     def background_estimate(self, data, edgefraction=0.1):
         '''background estimate using window edge pixels'''
         
@@ -95,21 +98,24 @@ class PSF(object):
         subset = np.r_[ data[tuple(np.mgrid[:bgix[0], :shape[1]])].ravel(),
                         data[tuple(np.mgrid[:shape[0], :bgix[1]])].ravel() ]
         
-        return np.mean(subset), np.std(subset)
+        return np.median(subset), np.std(subset)
         
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #TODO: memoize!!!!!!!!
-    def residuals(self, p, data, X, Y ):
+    def residuals(self, p, data, X, Y):
         '''Difference between data and model'''
         return data - self(p, X, Y)
 
-    #===============================================================================================
-    def err(self, p, data, X, Y ):
-        return abs( self.residuals(p, data, X, Y).flatten() )
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def err(self, p, data, X, Y):
+        return abs(self.residuals(p, data, X, Y).flatten())
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rss(self, p, data, X, Y):
+        return np.square(self.residuals(p, data, X, Y)).sum()
 
 
-
-######################################################################################################    
+#****************************************************************************************************    
 def Gaussian2D(p, x, y):
     #TODO: option to pass angle, semi-major, semi-minor; or covariance matrix
     '''Elliptical Gaussian function for fitting star profiles.'''
@@ -117,27 +123,43 @@ def Gaussian2D(p, x, y):
     return z0*np.exp(-(a*(x-x0)**2 + 2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
 
 
-######################################################################################################    
-class GaussianPSF( PSF ):
+#****************************************************************************************************    
+class GaussianPSF(PSF):
     ''' 7 param 2D Gaussian '''
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self):
         default_params = (0, 0, 1, .2, 0, .2, 0)
         to_cache = slice(3,6)
         PSF.__init__(self, Gaussian2D, default_params, to_cache)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rss(self, p, data, X, Y):
+        return np.square(self.residuals(p, data, X, Y)).flatten()
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integrate(self, p):
         '''
         Analytical solution to the integral over R2,
         source: http://en.wikipedia.org/wiki/Gaussian_integral#n-dimensional_and_functional_generalization
         '''
         _, _, z0, a, b, c, _ = p
-        A = 2*np.array( [[a, b], [b, c]] )
-        detA = np.linalg.det( A )
-        return 2*z0*np.pi / np.sqrt(detA)
+        return z0*np.pi / np.sqrt(a*c - b*b)
+        #A = 0.5*np.array([[a, b],
+                         # [b, c]] )
+        #detA = np.linalg.det(A)
+        #return 2*z0*np.pi / np.sqrt(detA)
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def int_err(self, p, punc):
+        '''Uncertainty associated with integrated flux via propagation'''
+        #NOTE: Error estimates for non-linear functions are biased on account of using a truncated series expansion.
+        #SEE: https://en.wikipedia.org/wiki/Uncertainty_quantification
+        _, _, z0, a, b, c, _ = p
+        _, _, z0v, av, bv, cv, _ = np.square(punc)
+        detr = a*c - b*b
+        return np.pi * np.sqrt(z0*z0 / detr**3 * (0.25*(c*c*av + a*a*cv) + b*b*bv) + z0v/detr)
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_fwhm(self, p):
         '''calculate fwhm from semi-major and semi-minor axes.'''
         a, c = p[3], p[5]
@@ -145,7 +167,7 @@ class GaussianPSF( PSF ):
         fwhm_c = 2*np.sqrt(np.log(2)/c)         #FWHM along semi-minor axis
         return np.sqrt( fwhm_a*fwhm_c )         #geometric mean of the FWHMa along each axis
         
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_description(self, p, offset=(0,0)):
         '''
         Get a description of the fit based on the parameters.
@@ -173,9 +195,23 @@ class GaussianPSF( PSF ):
             
         return pdict
     
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #def jacobian(self, p, X, Y):
+        #''' '''
+        #x0, y0, z0, a, b, c, d = p
+        #Xm = X-x0
+        #Ym = Y-y0
+        
+        #[(2*a*Xm +
+            #-(X-x0)**2 * self(p, X, Y), 
+         #-2*(X-x0)*(Y-y0)
+        
+        
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     @staticmethod
     def radial(p, r):
+        #WARNING: does this make sense????
         '''
         Numerically integrate the psf with theta around (x0,y0) to determine mean radial
         profile
@@ -200,7 +236,153 @@ class GaussianPSF( PSF ):
         #return self.default_params
 
 
-#===============================================================================================       
+#====================================================================================================
+import numpy.linalg as la
+from scipy.special import erf
+
+#TODO: as class
+def sym2D(diag, cross):
+    '''return symmetric 2D array'''
+    return np.eye(2) * diag + np.eye(2)[::-1] * cross
+
+def _to_cov_matrix(var, cov):       #correlation=None
+    '''compose symmetric covariance tensor'''
+    return sym2D(var, cov)
+
+def _to_precision_matrix(var, cov):
+    det = np.prod(var) - cov**2
+    return (1./det) * sym2D(var, -cov)
+    
+def _rot_mat(theta):
+    cos, sin = np.cos(theta), np.sin(theta)
+    return np.array([[cos, -sin], 
+                     [sin,  cos]])
+
+
+def discretizedGaussian(amp, mu, cov, grid):
+    '''Convenience method for discretized Gaussian evaluation'''
+    #eigenvalue decomposition of precision matrix
+    P = la.inv(cov)     #precision matrix
+    evl, M = la.eig(P)
+    
+    #assert np.allclose(np.diag(evl), iM.dot(cov).dot(M))
+    #check if covariance is positive definite
+    if np.any(evl < 0):
+        raise ValueError('Covariance matrix should be positive definite')
+    
+    
+    #make column vector for arithmetic
+    mu = np.array(mu, ndmin=grid.ndim, dtype=float).T
+    evl = np.array(evl, ndmin=grid.ndim, dtype=float).T
+
+    xm = grid - mu #(2,...) shape
+    
+    #return M, xm
+    
+    f = np.sqrt(2 / evl)
+    pf = np.sqrt(np.pi / evl)
+    td0 = np.tensordot(M, xm + 0.5, 1)
+    td1 = np.tensordot(M, xm - 0.5, 1)
+    w = pf*(erf(f*td0) - erf(f*td1))
+    
+    return amp * np.prod(w, axis=0)
+
+#****************************************************************************************************    
+#TODO: as Fittable2Dmodel!!!!!!!!!!!!!!!!!!!!!!!!!!!
+class DiscretizedGaussian(): #GaussianPSF??
+    '''Gaussian Point Response Function '''
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def __call__(self, p, grid):
+        ''' '''
+        #unpack parameters
+        amp, mux, muy, w0, w1, theta = (p[n] for n in ('amp', 'mux', 'muy', 'w0', 'w1', 'theta'))
+        
+        #Make eigenvector matrix from rotation angle
+        M = _rot_mat(float(theta))
+        
+        #make column vector for arithmetic
+        mu = np.array([mux, muy], ndmin=grid.ndim, dtype=float).T
+        evl = np.array([w0, w1], ndmin=grid.ndim, dtype=float).T
+        
+        #centered XY-grid
+        xm = grid - mu #(2,...) shape
+
+        f = np.sqrt(2 / evl)
+        pf = np.sqrt(np.pi / evl)
+        td0 = np.tensordot(M, xm + 0.5, 1)
+        td1 = np.tensordot(M, xm - 0.5, 1)
+        w = pf*(erf(f*td0) - erf(f*td1))
+        return amp * np.prod(w, axis=0)
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def _eig2cov(w0, w1, theta):
+        M = _rot_mat(float(theta))
+        w0 * M[:, 0] + w1 * M[:, 1]
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def residuals(self, p, data, grid):
+        return np.square(data - self(p, grid))
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rss2(self, p, data, grid):
+        return self.residuals(p, data, grid).sum()
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #TODO: major merger below!
+    def eigenvals(self, var, cov):
+        '''eigenvalues of precision matrix from variance-covariance'''
+        varx, vary = var
+        cov2 = np.square(cov)
+        detSig = np.prod(var) - cov2
+        
+        k = 1./detSig
+        sq = np.sqrt(np.square(varx-vary) + 4*cov2)
+        
+        return 1./(2*detSig) * (np.sum(var) + sq * np.array([1,-1]))
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def eigenvals2(self, var, cor):
+        '''eigenvalues of precision matrix from variance & correlation'''
+        varx, vary = var
+        hvars = 1./varx + 1./vary
+        t = 1 - cor*cor
+        #print('t', t)
+        sq = np.sqrt(np.square(hvars) - 4*t)
+        #print('sq', sq)
+        return 1./(2*t) * (hvars + sq * np.array([1,-1]))
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def eigenvecs(self, var, cov, eigvals):
+        '''eigenvectorss of precision matrix from variance, covariance, eigenvalues'''
+        #cor = cov / np.prod(var)
+        e0, e1 = eigvals
+        varx, vary = var
+        cov2 = cov * cov
+        
+        m0 = np.sqrt(np.square(vary*vary - e0) / cov2 + 1)
+        return m0
+        m1 = np.sqrt(1-m0*m0)
+        
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def eigenvecs2(self, var, cor, eigvals):
+        '''eigenvectorss of precision matrix from variance, correlation, eigenvalues'''
+        cov = cor * np.prod(var)
+        e0, e1 = eigvals
+        varx, vary = var
+        cov2 = cov * cov
+        
+        m0 = np.sqrt(np.square(vary*vary - e0) / cov2 + 1)
+        return m0
+        m1 = np.sqrt(1-m0*m0)
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rss(self, p, data, grid):
+        return np.square(self(p, grid)-data)
+        
+        
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~       
 #def Gaussian(p, x):
     #'''Gaussian function for fitting radial star profiles'''
     #A, b, mx = p
@@ -208,7 +390,7 @@ class GaussianPSF( PSF ):
 
 
 
-#===============================================================================================    
+#====================================================================================================
 def Moffat(p, x, y):
     x0, y0, z0, a, b, c  = p
     return z0*(1 + ((x-x0)**2 + (y-y0)**2) / (a*a))**-b + c
@@ -216,12 +398,12 @@ def Moffat(p, x, y):
         
         
         
-######################################################################################################    
+#****************************************************************************************************    
 class StarFit(object):
     #TODO: Kernel Density Estimation... or is this too slow??
-    #TODO:  cache decor ?????????????
-    #===============================================================================================
-    def __init__(self, psf=None, algorithm=None, caching=True, hints=True):
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def __init__(self, psf=None, algorithm=None, caching=True, hints=True, 
+                 _print=False, **kw):
         '''
         Parameters
         ----------
@@ -245,11 +427,21 @@ class StarFit(object):
         #set the psf function
         self.psf        = psf           or      GaussianPSF()
         self.caching    = caching
+        #pre-allocate cache memory
+        if caching:
+            self.max_cache_size = n = kw.get('max_cache_size', 25)
+            m = psf.Npar
+            self.cache = np.ma.array(np.zeros((n, m)),
+                                     mask=np.ones((n, m), bool))
+            
         self.hints      = hints
         #initialise parameter cache with psf defaults
-        self.cache      = []                  #parameter cache
-    
-    #===============================================================================================    
+        #self.cache      = []                  #parameter cache
+        
+        self.call_count = 0                    #keeps track of how many times the class has been called
+        self._print = _print
+        
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     #@profile()
     def __call__(self, grid, data):
         '''Fits the PSF model to the data on the grid given the input coordinates xy0'''
@@ -259,8 +451,8 @@ class StarFit(object):
         if self.hints:
             p0[psf.no_cache] = psf.param_hint( data )[psf.no_cache]
         
-        print('\n\nINIT PARAMS' )
-        print( p0, '\n\n' )
+        #print('\n\nINIT PARAMS' )
+        #print( p0, '\n\n' )
         
         #pyqtRemoveInputHook()
         #embed()
@@ -270,164 +462,71 @@ class StarFit(object):
         Y, X = grid
         args = data, X, Y
         
-        print( 'p0', p0 )
-        plsq, _, info, msg, success = self.algorithm( psf.err, p0, args=args, full_output=1 )
+        #print( 'p0', p0 )
+        #minimize residual sum of squares
+        plsq, _, info, msg, success = self.algorithm(psf.rss, p0, args=args, full_output=1)
+        
         
         if success != 1:
-            warn( 'FIT DID NOT CONVERGE!' )
-            print( msg )
-            print( info )
+            if self._print:
+                warn( 'FIT DID NOT CONVERGE!' )
+                print( msg )
+                print( info )
+            self.call_count += 1    #NOTE: This could be a simple decorator??
             return
         else:
-            print( '\nSuccessfully fit {} function to stellar profile.'.format(psf.F.__name__) )
+            if self._print:
+                print( '\nSuccessfully fit {} function to stellar profile.'.format(psf.F.__name__) )
             if self.caching:
-                if len(self.cache):
-                    self.cache = np.r_['0,2', self.cache, plsq]     #update cache with these parameters
-                    
-                else:
-                    self.cache = np.r_['0,2', plsq]
-                print( '\n\nCACHE!', self.cache )
-                print( '\n\n' )
+                #update cache with these parameters
+                i = self.call_count % self.max_cache_size #wrap!
+                self.cache[i] = plsq        #NOTE: implicit unmasking!
+                #print( '\n\nCACHE!', self.cache )
+                #print( '\n\n' )
+        
+        self.call_count += 1    #NOTE: This could be a simple decorator??
         return plsq
     
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     def get_params_from_cache(self):
         '''return the mean value of the cached parameters.  Useful as initial guess.'''
-        if len(self.cache):
-            return np.mean( self.cache, axis=0 )  #The fitting function expects a tuple???
+        if self.caching and self.call_count:
+            return self.cache.mean(0)  #The fitting function expects a tuple???
         else:
             return self.psf.default_params
     
-    #===============================================================================================    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
 
-######################################################################################################
-class NullPSFPlot( object ):
+#****************************************************************************************************
+class NullPSFPlot():
     def update(self, *args):
         pass
 
-######################################################################################################
-class PSFPlot( object ):
-    #TODO: buttons for switching back and forth??
-    #MODE = 'update'
-    '''Class for plotting / updating PSF models.'''
-    #===============================================================================================
-    #@profile()
-    def __init__(self, fig=None):
-        
-        self.setup_figure(fig)
-        
-    #===============================================================================================
-    def setup_figure(self, fig=None):
-        #TODO: Option for colorbars
-        '''
-        Initialize grid of 2x3 subplots. Top 3 are 3D wireframe, bottom 3 are colour images of 
-        data, fit, residual.
-        '''
-        ##### Plots for current fit #####
-        self.fig = fig = fig or plt.figure( figsize=(12,9), tight_layout=True )
-        self.plots, self.images = [], []
-        #TODO:  Include info as text in figure??????
-        
-        #Create the plot grid for the 3D plots
-        self.grid_3D = AxesGrid( fig, 211, # similar to subplot(211)
-                            nrows_ncols = (1, 3),
-                            axes_pad = -0.2,
-                            label_mode = None,          #This is necessary to avoid AxesGrid._tick_only throwing
-                            share_all = True,
-                            axes_class=(Axes3D,{}) )
-        
-        #Create the plot grid for the images
-        self.grid_images = AxesGrid( fig, 212, # similar to subplot(212)
-                            nrows_ncols = (1, 3),
-                            axes_pad = 0.1,
-                            label_mode = "L",           #THIS DOESN'T FUCKING WORK!
-                            #share_all = True,
-                            cbar_location="right",
-                            cbar_mode="each",
-                            cbar_size="5%",
-                            cbar_pad="0%"  )
-
-        titles = ['Data', 'Fit', 'Residual']
-        for ax, title in zip(self.grid_3D, titles):
-            pl = ax.plot_wireframe( [],[],[] )
-            #set title to display above axes
-            title = ax.set_title( title, {'fontweight':'bold'} )
-            x,y = title.get_position()
-            title.set_position( (x, 1.0) )
-            ax.set_axis_bgcolor( 'None' )
-            #ax.patch.set_linewidth( 1 )
-            #ax.patch.set_edgecolor( 'k' )
-            self.plots.append( pl )
-        
-        
-        for i, (ax, cax) in enumerate(zip(self.grid_images, self.grid_images.cbar_axes)):
-            im = ax.imshow( np.zeros((1,1)), origin='lower' )
-            cbar = cax.colorbar(im)
-            #make the colorbar ticks look nice
-            cax.axes.tick_params(axis='y', pad=-15, labelcolor='w', labelsize='small')
-            [t.set_weight( 'bold' ) for t in cax.axes.yaxis.get_ticklabels()]
-            #if i>1:
-                #ax.set_yticklabels( [] )       #FIXME:  This kills all ticklabels
-            self.images.append( im )
-        
-        fig.set_tight_layout(True)
-        #fig.suptitle( 'PSF Fitting' )                   #TODO:  Does not display correctlt with tight layout
+#****************************************************************************************************
+#class LinkedAxesMixin():
     
-    #===============================================================================================
-    @staticmethod
-    def make_segments(X, Y, Z):
-        '''Update segments of wireframe plots.'''
-        xlines = np.r_['-1,3,0', X, Y, Z]
-        ylines = xlines.transpose(1,0,2)        #swap x-y axes
-        return np.r_[xlines, ylines]
+    
 
-    #===============================================================================================
-    def update(self, X, Y, Z, data):
-        '''update plots with new data.'''
-        res = data - Z
-        plots, images = self.plots, self.images
-        
-        plots[0].set_segments( self.make_segments(X,Y,data) )
-        plots[1].set_segments( self.make_segments(X,Y,Z) )
-        plots[2].set_segments( self.make_segments(X,Y,res) )
-        images[0].set_data( data )
-        images[1].set_data( Z )
-        images[2].set_data( res )
-        
-        zlims = [Z.min(), Z.max()]
-        rlims = [res.min(), res.max()]
-        #plims = 0.25, 99.75                             #percentiles
-        #clims = np.percentile( data, plims )            #colour limits for data
-        #rlims = np.percentile( res, plims )             #colour limits for residuals
-        for i, pl in enumerate( plots ):
-            ax = pl.axes
-            ax.set_zlim( zlims if (i+1)%3 else rlims )
-        ax.set_xlim( [X[0,0],X[0,-1]] ) 
-        ax.set_ylim( [Y[0,0],Y[-1,0]] )
-        
-        for i,im in enumerate(images):
-            ax = im.axes
-            im.set_clim( zlims if (i+1)%3 else rlims )
-            #artificially set axes limits --> applies to all since share_all=True in constuctor
-            im.set_extent( [X[0,0], X[0,-1], Y[0,0], Y[-1,0]] )
-            
-        self.fig.canvas.draw()
-        #TODO: SAVE FIGURES.................
+#****************************************************************************************************        
+class PSFPlot(Compare3DImage):
+    '''Class for plotting / updating PSF models.'''
+    #TODO: buttons for switching back and forth??
+    pass
         
         
-######################################################################################################        
-class MultiPSFPlot( MplMultiTab ):
+#****************************************************************************************************        
+class MultiPSFPlot(MplMultiTab):
     '''Append each new fit plot as a figure in tab.'''
     #WARNING:  This is very slow!
     #TODO:  ui.show on first successful fit.
-    #===============================================================================================
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def update(self, X, Y, Z, data):
         plotter = PSFPlot()
         plotter.update(X, Y, Z, data)
         
         self.add_tab( plotter.fig )
     
-######################################################################################################        
+#****************************************************************************************************        
 class PSFPlotFactory():
     MODES = TransDict({ None       :      NullPSFPlot,
                         'update'   :      PSFPlot,

@@ -1,15 +1,17 @@
 import numpy as np
+from scipy.ndimage.measurements import center_of_mass
 from astropy.stats import sigma_clipped_stats
+from photutils.detection import detect_sources, detect_threshold
 
-from magic.array import neighbours
+from recipes.array import neighbours
 
-from decor import cache_last_return# unhookPyQt
+from decor.misc import cache_last_return#, unhookPyQt
 
 #from IPython import embed
 
 ######################################################################################################    
 class Snapper( object ):
-    '''Various snap-to-pixel methods for image GUI.'''
+    '''Various snap-to-pixel methods for locating star positions in an image.'''
     def __init__(self, data, window=None, snap='centroid', edge='edge'):
         '''
         Parameters
@@ -31,7 +33,7 @@ class Snapper( object ):
         methods = {'centroid'   :       self.snap2com,
                    'peak'       :       self.snap2peak }
 
-        self.image_data = np.asarray( data )
+        self.image_data = np.asarray(data)
         self.edge = edge
 
         #choose window size as fraction of image size if not given 
@@ -55,11 +57,18 @@ class Snapper( object ):
         return self._snapper(x,y)
 
     #===============================================================================================
+    #@unhookPyQt
     def zoom(self, *coo):
         x,y = coo
         ij = int(round(y)), int(round(x))
         win, il = neighbours( self.image_data, ij, self.window, pad=self.edge, return_index=1 )
-        #self.zoomed = win
+        ##self.zoomed = win
+        
+        #if win.shape != (30,30):
+                ##pyqtRemoveInputHook()
+            #embed()
+                ##pyqtRestoreInputHook()
+        
         return win, il
 
     #===============================================================================================
@@ -94,14 +103,14 @@ class Snapper( object ):
         return xp, yp, zp
 
 ######################################################################################################    
-class ImageSnapper( Snapper ):
+class ImageSnapper(Snapper):
     '''Does a few sanity checks after doing snapping'''
     _print = True
     _mem = True
     #===============================================================================================
     def __init__(self, data, window=None, snap='centroid', edge='edge', **kw):
         
-        self.noise_threshold    = kw.pop( 'noise_threshold',    None )
+        self.snr                = kw.pop( 'snr',    3. )
         self.edge_cutoff        = kw.pop( 'edge_cutoff',        None )
         self.offset_tolerance   = kw.pop( 'offset_tolerance',   None )
         
@@ -123,13 +132,13 @@ class ImageSnapper( Snapper ):
         if not self.noise_threshold is None:
             if zp < self.threshold:
                 if self._print:
-                    print( 'Probably not a star! '
-                           'Pixel value {:.1f} < {:.1f} (threshold)'.format(zp, self.threshold ) )
+                    print('Probably not a star! '
+                          'Pixel value {:.1f} < {:.1f} (threshold)'.format(zp, self.threshold ) )
                 return None, None
         
         #check edge proximity
         if not self.edge_cutoff is None:
-            r,c = self.image_data.shape
+            r, c = self.image_data.shape
             if any(np.abs([xp, xp-c, yp, yp-r]) < edge_cutoff):
                 if self._print:          print('Too close to image edge!')
                 return None, None
@@ -160,20 +169,25 @@ class ImageSnapper( Snapper ):
             if self._print:
                 print('No known star found within %i pixel radius' %offset_tolerance)
             return None, None
-
-
-######################################################################################################    
-class DoubleZoomMixin():
-    #===============================================================================================
-    def __call__(self, x, y):
-        xs, ys = super().__call__(x, y)
-        self.zoom( xs, ys )     #zoom with snapped pixel as center & cache (save) image
-        return xs, ys 
     
     #===============================================================================================
     @cache_last_return
     def zoom(self, *coo):
         return super().zoom( *coo )
+
+######################################################################################################    
+#class DoubleZoomMixin():
+    ##===============================================================================================
+    #def __call__(self, x, y):
+        #xs, ys = super().__call__(x, y)
+        #if xs and ys:
+            #self.zoom( xs, ys )     #zoom with snapped pixel as center & cache (save) image
+        #return xs, ys 
+    
+    ##===============================================================================================
+    #@cache_last_return
+    #def zoom(self, *coo):
+        #return super().zoom( *coo )
     
             
 ######################################################################################################    

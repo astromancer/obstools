@@ -20,6 +20,8 @@ from decor import unhookPyQt, print_args
 from magic.string import banner
     
 
+from matplotlib.colors import colorConverter    #HACK!!!
+
 ######################################################################################################
 # Class definitions
 ######################################################################################################
@@ -29,11 +31,11 @@ ApertureCollection.WARN = False
 
 
 class PhotApertures( SameSizeMixin, InteractionMixin, ApertureCollection ):
-    pass
+    SAME_SIZE_AXIS = 1
     
 class SkyApertures( SameSizeMixin, InteractionMixin, SkyApertures ):
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    AXIS = 1
+    SAME_SIZE_AXIS = 1
     #WARN = False
     #_properties = SkyApertureProperties
 
@@ -111,14 +113,14 @@ class StarApertures( list ):
     def __init__(self, psf, phot, sky):
         '''Initialise from dictionaries of properties, or from ApertureCollection'''
         
-        banner( 'psf', psf , bg='yellow' )
+        #banner( 'psf', psf , bg='yellow' )
         self.psf     = ApertureCollection( **psf )
        
-        banner( 'phot', phot, bg='cyan' )
+        #banner( 'phot', phot, bg='cyan' )
         #embed()
         self.phot    = PhotApertures( **phot  )
         
-        banner( 'sky', sky, bg='green' )
+        #banner( 'sky', sky, bg='green' )
         self.sky     = SkyApertures( **sky )
         
         super().__init__( [self.psf, self.phot, self.sky] )
@@ -147,7 +149,13 @@ class StarApertures( list ):
             #print()
             aps.append( **props )
 
-
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
+    def get_radii(self):
+        return {key : getattr(self, key).radii 
+                    for  key in ['psf', 'sky', 'phot']}
+    
+    radii = property(get_radii)
+    
 #**********************************************************************************************************************************************
 class RadialProfiles():
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -187,13 +195,17 @@ class RadialProfiles():
                 x,y,yerr = getattr( self, label.lower() )
                 points, caps, (xbars, ybars) = handle
                 points.set_data(x,y)
-            
-                #NOTE: Don't switch the order of the lines below - if you do, some utterly bizarre fuck-up occurs (with y)
-                ybars.set_segments( np.r_['-1,3,0', np.c_[x, x],
-                                                    np.c_[y-yerr, y+yerr]] )
+                
+                
+                try:
+                    #NOTE: Don't switch the order of the lines below - if you do, some utterly bizarre fuck-up occurs (with y)
+                    ybars.set_segments( np.r_['-1,3,0', np.c_[x, x],
+                                                        np.c_[y-yerr, y+yerr]] )
 
-                xbars.set_segments( np.r_['-1,3,0', np.c_[x-xerr, x+xerr], 
-                                                    np.c_[y, y]] )
+                    xbars.set_segments( np.r_['-1,3,0', np.c_[x-xerr, x+xerr], 
+                                                        np.c_[y, y]] )
+                except:
+                    embed()
             else:
                 x,y = getattr( self, label.lower() )
                 handle.set_data(x, y)
@@ -233,7 +245,8 @@ class ModelStar( Star ):   #StarApertures
                                              #colours=['k','w','g','g'], 
                                              #ls=['dotted','dotted','solid','solid'])
         
-        #TODO:  The coords of these con be 2D
+        orange = colorConverter.to_rgba_array('orangered')         #HACK!
+        
         psfaps = dict( coords=[coo,coo], 
                         radii=np.zeros(2), 
                         ls=':', 
@@ -242,7 +255,8 @@ class ModelStar( Star ):   #StarApertures
                         #**kw)
         photaps = dict( coords=coo, 
                         radii=[0],
-                        gc='c' )
+                        gc='c',
+                        badcolour=orange)     #FIXME:  keyword translation
         skyaps = dict( radii=np.zeros(2), 
                         coords=[coo,coo], )
                                     #**kw )
@@ -430,7 +444,7 @@ class Stars( list ):
     Class to contain measured values for selected stars in image.
     '''
     
-    DEFAUL_SKYRADII = (10, 20)   #These are the skyradii the stars start with. 
+    DEFAUL_SKYRADII = (10., 20.)   #These are the skyradii the stars start with. 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, idx,  **kw):
         
@@ -456,6 +470,8 @@ class Stars( list ):
         
         #banner( 'Stars.__init__', bg='magenta' )
         
+        orange = colorConverter.to_rgba_array('orangered')         #HACK!
+        
         self.apertures = StarApertures( dict(coords=apcoo, 
                                                 radii=psfradii, 
                                                 ls=':', 
@@ -464,7 +480,8 @@ class Stars( list ):
                                             
                                         dict(coords=apcoo, 
                                                 radii=photradii,
-                                                gc='c'), 
+                                                gc='c',
+                                                badcolour=orange),    #FIXME:  keyword translation
                                             
                                         dict(coords=apcoo, 
                                                 radii=skyradii,

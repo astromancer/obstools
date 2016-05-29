@@ -239,7 +239,8 @@ if __name__ == '__main__':
     from pySHOC.airmass import altitude
     
     #RKCat()
-    fields, data = read_data( '/media/Oceanus/UCT/Project/RKcat7.21_main.txt' )
+    #fields, data = read_data( '/media/Oceanus/UCT/Project/RKcat7.21_main.txt' )
+    fields, data = read_data( '/media/Oceanus/UCT/Observing/RKCat7.23.main.txt' )
     #table = read_data( '/media/Oceanus/UCT/Project/RKcat7.21_main.txt' )
     uncertain = np.vectorize( lambda s: s.endswith((':','?')) )(data)
     cleaned = np.vectorize( lambda s: s.strip(':?') )(data)
@@ -261,36 +262,46 @@ if __name__ == '__main__':
     
     #Type filter
     types = [c for c in table.colnames if 'type' in c]
-    mtypes = ('AM', 'AS', 'LA')             #magnetic systems 'IP', 'LI'
+    mtypes = ('AM', 'AS', 'LA', 'IP', 'LI')             #magnetic systems 'IP', 'LI'
     ltype = np.array( [any(t in mtypes for t in tt) for tt in table[types]] )
     
     #Hour angle filter
-    lra = (9 > coords.ra.hour) & (coords.ra.hour < 19)
+    #lra = (9 > coords.ra.hour) & (coords.ra.hour < 19)
     
-    tq = table[ltype&lra]
+    tq = table[ltype] #&lra
     #tq.sort('ra')
+    
+    raise SystemExit
     
     #Magnitude filter
     #mags = [c for c in table.colnames if 'mag' in c]
-    mag1 = np.vectorize( lambda s: float(s.strip('>UBVRIKpg') or 100) )(tq['mag1'])
+    mag1 = np.vectorize( lambda s: float(s.strip('>UBVRIKpgr') or 100) )(tq['mag1'])
     lmag = mag1 <= 18
     tqq = tq[lmag]
     
     #l = [ltype&lra][lmag]
     
     #Altitude filter
-    t0 = Time('2015-11-07 00:00:00', scale='utc')
+    t0 = Time('2015-12-03 00:00:00', scale='utc')
     interval = 300 #seconds
     td = TimeDelta(interval, format='sec')
-
-    N = 10*24*60*60 / interval
+    
+    days = 3
+    N = days*24*60*60 / interval
     t = t0 + td*np.arange(N)
-
+    
+    dawn, dusk = 8, 18
+    lnight = (dusk < t.hours) | (t.hours < dawn)
+    t = t[lnight]
+    
     iers_a = t.get_updated_iers_table( cache=True )        #update the IERS table and set the leap-second offset
     delta, status = t.get_delta_ut1_utc( iers_a, return_status=True )
     t.delta_ut1_utc = delta
+    
 
-    lat, lon = 18.590549, 98.486546
+    #lat, lon = 18.590549, 98.486546    #TNO
+    #28°45'38.3" N       17°52'53.9" W   +2332m
+    lat, lon = 28.7606389, 17.88163888888889     #WHT
     lmst       = t.sidereal_time('mean', longitude=lon)
     
     ra = np.radians( tqq['ra'].data[None].T )
@@ -302,8 +313,10 @@ if __name__ == '__main__':
     lalt = np.degrees(altmax) >= 45
     
     #Orbital period filter
-    Ph = tqq['P0'].astype(float) * 24
-    lP = Ph < 5
+    pc = tqq['P0']
+    pc[pc==''] = '-1'
+    Ph = pc.astype(float) * 24
+    lP = (Ph < 5) & (Ph > 0)
     
     tqqq = tqq[lalt&lP]
     tqqq.sort('ra')

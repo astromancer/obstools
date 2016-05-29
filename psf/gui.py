@@ -9,18 +9,18 @@ from matplotlib import pylab as plt
 #from mpl_toolkits.mplot3d import Axes3D
 #from mpl_toolkits.axes_grid1 import AxesGrid
 
-from superfits import fetch_first_frame, quickheader
+from fastfits import FITSFrame, quickheader
 from ApertureCollections import ApertureCollection
 
-from magic.array import grid_like
-from magic.meta import flaggerFactory
+from recipes.array import grid_like
+from recipes.meta import flaggerFactory
 
 from myio import warn
 
 #module level imports
 from .psf import *
 from .stars import *
-from .snappers import ImageSnapper, CleanerMixin, DoubleZoomMixin
+from .snappers import ImageSnapper, CleanerMixin
 
 from decor import print_args
 
@@ -62,13 +62,14 @@ class ConnectionMixin( ConnectionManager ):
         '''
         Disconnect from figure canvas.
         '''
+        #FIXME
         for name, cid in self.connections.items():
             self.figure.canvas.mpl_disconnect( cid )
         print('Disconnected from figure {}'.format(self.figure) )
 
 
 ######################################################################################################
-class Snapper(CleanerMixin, DoubleZoomMixin, ImageSnapper):
+class Snapper(CleanerMixin, ImageSnapper):
         pass
 
 
@@ -76,6 +77,8 @@ class Snapper(CleanerMixin, DoubleZoomMixin, ImageSnapper):
 class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES??
     ''' '''
     #===============================================================================================
+    PSFClass = GaussianPSF
+    
     DEFAULT_WINDOW = 30.
     #DEFAULT_SKYRADII = 15, 20
     
@@ -85,6 +88,7 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
     #===============================================================================================
     def __init__(self, idx, fig=None, **kwargs):
         
+        #initialize ConnectionMixin (gather flagged methods for connection)
         super().__init__()
         
         self.idx        = idx
@@ -141,7 +145,7 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
     
     #===============================================================================================
     #@profile()
-    @unhookPyQt
+    #@unhookPyQt
     def load_image(self, filename=None, data=None, **kw):
         '''
         Load the image for display, applying IRAF's zscale algorithm for colour limits.
@@ -152,8 +156,9 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         ##### Load the image #####
         if filename and data is None:
             self.filename = filename
-            self.image_data = data = fetch_first_frame( filename )
-            self.image_header = quickheader( filename )
+            FF = FITSFrame(filename)
+            self.image_data = data = FF[1]
+            self.image_header = FF.master_header
             
             #get readout noise and saturation if available
             self.ron = self.image_header.get('ron')
@@ -169,9 +174,11 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         else:
             raise ValueError( 'Please provide either a FITS filename, or the actual data' )
         
-        if kw.get( 'fliplr' , False ):
+        
+        #if kw.get( 'fliplr' , False ):
+        if self.image_header['flipx']:
             data = np.fliplr( data )
-            
+        
         #if WCS:            data = np.fliplr( data )
         self.image_data_cleaned = data.copy()
         r,c =  self.image_shape = data.shape
@@ -184,12 +191,15 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         
         fig, ax = self.figure, self.ax
         self.canvas = self.figure.canvas
-        self.image = ax.imshow( data, origin='lower', cmap = 'gist_heat', vmin=zlims[0], vmax=zlims[1])                  #gist_earth, hot
+        self.image = ax.imshow( data, 
+                                origin='lower', 
+                                cmap = 'gist_heat',              #gist_earth, hot
+                                vmin=zlims[0], vmax=zlims[1] )
         #ax.set_title( 'PSF Measure' ) 
         
         #TODO: #PRINT TARGET NAME AND COORDINATES ON IMAGE!! DATE, TIME, ETC.....
         #TODO: Axes Sliders
-        #TODO: Tight colourbar
+        #TODO: Tight colourbar + switchable maps
         self.colour_bar = fig.colorbar( self.image, ax=ax )
         #self.stars.zlims = zlims
         #box = ax.get_position()
@@ -205,12 +215,12 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         self.snap = Snapper( self.image_data_cleaned, 
                                   window=self.window, 
                                   snap='peak', 
-                                  edge='clip',
-                                  noise_threshold=3,
+                                  edge='shift',
+                                  noise_threshold=2.5,
                                   offset_tolerance=3 )
         
-        self.psf = GaussianPSF()
-        self.fit = StarFit( self.psf )
+        self.psf = self.PSFClass()
+        self.fit = StarFit( self.psf, hints=False )
         self.fitplotter = psfPlotFactory( self.plot_fits )()
         
         ##### Add ApertureCollection to axes #####
@@ -236,10 +246,10 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
         Select an artist (aperture)
         '''
         #if event.artist is self:
-        #print( 'PICK!'*10 )
-        #print( self )
-        #print( vars(event) )
-        #print()
+        print( 'PICK!'*10 )
+        print( self )
+        print( vars(event) )
+        print()
         
         self.selection = event
         
@@ -263,6 +273,8 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
     @connect('button_press_event' )
     def _on_click(self, event):
         
+        #TODO: ignore method here....
+        
         print( vars(event) )
         
         if event.inaxes != self.image.axes:
@@ -281,7 +293,9 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
             return
         
         x,y = event.xdata, event.ydata
-        xs, ys = self.snap(x,y)                                           #coordinates of maximum intensity within window / known star
+        xs, ys = self.snap(x,y)        #coordinates of maximum intensity within window around click position
+        
+            
         #print( '!'*100, xs, ys )
         if not (xs and ys):
             return
@@ -290,8 +304,11 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
             
             #TODO: NEW METHOD HERE??
             
+            
             #Fitting
-            data, index = self.snap.zoom.cache
+            data, index = self.snap.zoom(xs,ys)         #retrieve zoomed image of the star
+            
+            
             grid = Y, X = grid_like( data )
             params = self.fit( grid, data )
             Z = self.psf( params, X, Y )
@@ -299,12 +316,14 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
             if params is None:
                 return
             
-            #update fit plots
+            ##try:
+                #update fit plots
             self.fitplotter.update( X, Y, Z, data )
+            #except:
             
             #get dict of fit descriptors from params
             info = self.psf.get_description( params, index[::-1] )
-            _, sky_sigma = self.psf.background_estimate.cache
+            _, sky_sigma = self.psf.background_estimate.cache           #cached upon call to self.fit
             wslice = tuple(map( slice, index, index+data.shape))        #2D window slice
             
             #Add star to collection
@@ -319,8 +338,12 @@ class ApertureInteraction( ConnectionMixin ):          #TODO: INHERIT FROM AXES?
             
             #remove star from image by subtracting model
             bg = info['sky_mean']     #background value from fit
-            self.snap.clean( Z-bg )
-            
+            try:
+                self.snap.clean( Z-bg )
+            except:
+                pyqtRemoveInputHook()
+                embed()
+                pyqtRestoreInputHook()
             #Check apertures and colourise
             #TODO:  ONLY trigger checks on second draw...........
             psfaps, photaps, skyaps = self.stars.apertures
@@ -611,7 +634,7 @@ if __name__ == '__main__':
     #filename = '/media/Oceanus/UCT/Observing/SALT/MASTER_J0614-2725/20150424/product/bxgpS201504240003.fits'
     #filename = '/media/Oceanus/UCT/Observing/data/June_2013/V895Cen/0615/202130615.0022.fits'
     #api.load_image( filename )
-    
+        
     
     #snap = Snapper(api.image_data, window=25, snap='peak', edge='edge')
     #data, xypeak = snap.zoom( *snap(47, 50) )
