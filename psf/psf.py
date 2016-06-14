@@ -4,23 +4,18 @@ import numpy as np
 from scipy.optimize import leastsq
 #from scipy.ndimage.measurements import center_of_mass
 
-from lmfit import minimize
-
-
-from grafico.multitab import MplMultiTab
-from grafico.imagine import Compare3DImage
+#from lmfit import minimize
 
 from recipes.list import find_missing_numbers
-from recipes.dict import TransDict
 #from magic.string import banner
 
 from myio import warn
 
-from decor.misc import cache_last_return
+#from decor.misc import cache_last_return
 
-from IPython import embed
+#from IPython import embed
 #from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
-from decor.misc import unhookPyQt
+#from decor.misc import unhookPyQt
 
 #TODO:  use astropy.models!!!!???
 
@@ -117,10 +112,10 @@ class PSF(object):
 
 #****************************************************************************************************    
 def Gaussian2D(p, x, y):
-    #TODO: option to pass angle, semi-major, semi-minor; or covariance matrix
+    #TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
     '''Elliptical Gaussian function for fitting star profiles.'''
     x0, y0, z0, a, b, c, d = p
-    return z0*np.exp(-(a*(x-x0)**2 + 2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
+    return z0*np.exp(-(a*(x-x0)**2 -2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
 
 
 #****************************************************************************************************    
@@ -177,7 +172,7 @@ class GaussianPSF(PSF):
         
         fwhm = self.get_fwhm(p)
         counts = self.integrate(p)
-        sigx, sigy = 1/(2*a), 1/(2*c)           #standard deviation along the semimajor and semiminor axes
+        sigx, sigy = 1/(2*a), 1/(2*c)           #FIXME #standard deviation along the semimajor and semiminor axes
         ratio = min(a,c)/max(a,c)               #Ratio of minor to major axis of Gaussian kernel
         theta = 0.5*np.arctan2( -b, a-c )       #rotation angle of the major axis in sky plane
         ellipticity = np.sqrt(1-ratio**2)
@@ -497,47 +492,3 @@ class StarFit(object):
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
 
-#****************************************************************************************************
-class NullPSFPlot():
-    def update(self, *args):
-        pass
-
-#****************************************************************************************************
-#class LinkedAxesMixin():
-    
-    
-
-#****************************************************************************************************        
-class PSFPlot(Compare3DImage):
-    '''Class for plotting / updating PSF models.'''
-    #TODO: buttons for switching back and forth??
-    pass
-        
-        
-#****************************************************************************************************        
-class MultiPSFPlot(MplMultiTab):
-    '''Append each new fit plot as a figure in tab.'''
-    #WARNING:  This is very slow!
-    #TODO:  ui.show on first successful fit.
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def update(self, X, Y, Z, data):
-        plotter = PSFPlot()
-        plotter.update(X, Y, Z, data)
-        
-        self.add_tab( plotter.fig )
-    
-#****************************************************************************************************        
-class PSFPlotFactory():
-    MODES = TransDict({ None       :      NullPSFPlot,
-                        'update'   :      PSFPlot,
-                        'append'   :      MultiPSFPlot } )
-    MODES.add_translations( {False : None, True : 'update'} )
-
-    def __call__(self, mode):
-        #if not mode in MODES.allkeys():
-            #raise ValueError
-            
-        c = self.MODES.get(mode, NullPSFPlot)
-        return c
-
-psfPlotFactory = PSFPlotFactory()
