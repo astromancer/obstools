@@ -3,9 +3,10 @@ import numpy as np
 
 from collections import OrderedDict
 
+from astropy.coordinates import SkyCoord
 
-from magic.iter import interleave, consume, grouper
-from magic.list import lmap
+from recipes.iter import interleave, consume, grouper
+from recipes.list import lmap
 
 from IPython import embed
 
@@ -155,9 +156,9 @@ def read_data(filename):
         datalines = itt.filterfalse( lambda s: s.startswith(('\n','-')), fp )
         header = [next(datalines), next(datalines)]#consume(datalines, 2)       #header
         
-        splitter = lambda line: map( str.strip, line.strip('\n|\r').split('|') )
-        for i, lpair in enumerate( grouper(datalines, 2) ):
-            data.append( interleave( *map( splitter, lpair ) ) )
+        splitter = lambda line: map(str.strip, line.strip('\n|\r').split('|'))
+        for i, lpair in enumerate(grouper(datalines, 2)):
+            data.append(interleave(*map( splitter, lpair )))
             #data.append( dat )
 
     #Interleaving data and fields (every 2 lines refer to a single catalogue object)
@@ -186,33 +187,7 @@ def unflag(dat):
     return cleaned, u_flag, empty
         
 #****************************************************************************************************
-import re
-from astropy.coordinates import SkyCoord
-from collections import UserList
 
-class Jparser(UserList):
-    pattern = '([+-]*\d{2})(\d{2})(\d{2}\.\d{1,3})'
-    parser = re.compile( pattern )
-
-    def __init__(self, coolist):
-        self.raw = coolist
-        self.data = lmap( self.parser.findall, coolist )
-        #self.match_map = map( self.parser.findall, coolist )
-        #self.group_map = map( lambda mo: mo.groups(), self.match_map )
-
-    def to_strings(self, sep=':'):
-        str_map = lambda radec: sep.join( radec )
-        coo_str_map = lambda coo: lmap( str_map, coo )
-        return lmap( coo_str_map, self.data )
-
-    def to_string(self, sep=':', joiner=' '):
-        return lmap(' '.join, self.to_strings(sep) )
-
-    def to_SkyCoords(self):
-        return SkyCoord( self.to_string(), unit=('h', 'deg') )
-
-    def to_XEphem(self, **kw ):
-        return list( itt.starmap( to_XEphem, zip(self.raw, self.to_strings()) ))
 
 
 
@@ -240,13 +215,14 @@ if __name__ == '__main__':
     
     #RKCat()
     #fields, data = read_data( '/media/Oceanus/UCT/Project/RKcat7.21_main.txt' )
-    fields, data = read_data( '/media/Oceanus/UCT/Observing/RKCat7.23.main.txt' )
+    #fields, data = read_data( '/media/Oceanus/UCT/Observing/RKCat7.23.main.txt' )
     #table = read_data( '/media/Oceanus/UCT/Project/RKcat7.21_main.txt' )
+    fields, data = read_data('/media/Oceanus/UCT/Observing/RKCat/7.23/RKCat7.23.main.txt')
     uncertain = np.vectorize( lambda s: s.endswith((':','?')) )(data)
     cleaned = np.vectorize( lambda s: s.strip(':?') )(data)
     empty = np.vectorize( lambda s: s=='' )(data)
     
-    table = Table( cleaned, names=fields )
+    table = Table(cleaned, names=fields)
     
     #convert RA/DEC columns This is a massive HACK!!
     ra, dec = table['ra'], table['dec']

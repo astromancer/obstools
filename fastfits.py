@@ -4,6 +4,7 @@ from io import BytesIO
 import functools
 import itertools as itt
 import collections as coll
+from io import BytesIO
 from pathlib import Path
 
 #import scipy as sp
@@ -64,6 +65,7 @@ class FITSFrame():
         '''
         View image frames of 3D fits cube on demand by indexing.
         '''
+        filename = str(filename)    #for converting Path objects
         filesize = os.path.getsize(filename)
         with open(filename, 'rb') as fileobj:
             self.filemap = filemap = mmap.mmap(fileobj.fileno(), 
@@ -103,36 +105,50 @@ class FITSFrame():
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __getitem__(self, i):
+        
+        isize = self.image_size_bits
+        
         if isinstance(i, (int, np.integer)):
             istart = i
             istop = istart + 1
-            istep = 1
+            ispan = 1
             shape = self.ishape
             
         elif isinstance(i, slice):
+            
+            istart = i.start    or  0
+            istop = i.stop      or  len(self)
+            ispan = istop - istart
+            istep = i.step       or  1
+            shape = ((istop - istart) // istep,) + self.ishape
+            
+            if istop > len(self):
+                raise IndexError('index {} is out of bounds for axis 2 with size {}'
+                                 ''.format(i, len(self)))
+            
             if i.step:
-                raise IndexError('stepped slices not supported')
-            
-            istart = i.start or 0
-            istop = i.stop or len(self)
-            istep = istop - istart
-            shape = (istep,) + self.ishape
-            
+                _buffer = BytesIO()
+                iframes = range(len(self))[i]
+                for j in iframes:
+                    _start = self.data_start_bits + j*isize
+                    _buffer.write(self.filemap[_start:(_start + isize)])
+                _buffer.seek(0)
+                
+                return self.bzero + np.ndarray(shape, 
+                                               dtype=self.dtype, 
+                                               buffer=_buffer.read()
+                                               ).astype(float)
+
         else:
             raise IndexError('only integers, and (continuous) slices are valid '
                              'indices')
     
-        if istop > len(self):
-            raise IndexError('index {} is out of bounds for axis 2 with size {}'
-                             ''.format(i, len(self)))
-        
-        isize = self.image_size_bits
         start = self.data_start_bits + isize * istart
-        end = start + isize * istep
-        return self.bzero + np.ndarray( shape, 
-                                        dtype=self.dtype, 
-                                        buffer=self.filemap[start:end]
-                                        ).astype(float)
+        end = start + isize * ispan
+        return self.bzero + np.ndarray(shape, 
+                                       dtype=self.dtype, 
+                                       buffer=self.filemap[start:end]
+                                       ).astype(float)
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __iter__(self):

@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.ndimage.measurements import center_of_mass
 
+from photutils.detection import detect_sources, detect_threshold
 
 #****************************************************************************************************
 class SourceFinder():

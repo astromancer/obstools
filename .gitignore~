@@ -1,0 +1,14 @@
+
+*.kate-swp
+__pycache__
+EMvsCON_*.py
+lightcurve.1.3.py
+
+psf/gui.*.py
+psf/psf+find.*.py
+psf/psf_working.py
+psf/stars.*.py
+psf/psffit.*py
+psf/psffind.py
+
+*.py~
