@@ -25,3 +25,7 @@ plan/.coordcache
 plan/.ipynb_checkpoints
 plan/viz.ipynb
 plan/visibilities.py
+plan/viz.0.py
+plan/viz.py.bak
+plan/viztest.py
+plan/plan.py
