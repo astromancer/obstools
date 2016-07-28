@@ -9,7 +9,8 @@ from scipy.optimize import leastsq
 from recipes.list import find_missing_numbers
 #from magic.string import banner
 
-from myio import warn
+#from myio import warn
+from warnings import warn
 
 #from decor.misc import cache_last_return
 

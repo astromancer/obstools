@@ -11,15 +11,16 @@ from copy import copy
 
 from myio import warn as Warn
 
-from magic.iter import as_sequence, cycleN
+from recipes.iter import as_sequence, cycleN
 #from magic.array import grid_like
-from magic.dict import TransDict, SuperDict
-from magic.meta import altflaggerFactory
+from recipes.dict import TransDict, SuperDict
+from recipes.meta import altflaggerFactory
 
 #from misc import profile, ipshell
 
 
-from decor import print_args, print_returns, unhookPyQt, profile
+from decor import expose, profile
+#from decor.misc import unhookPyQt
 
 #from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
 from IPython import embed
@@ -28,18 +29,19 @@ from pprint import pprint
 
 rgba_array = colorConverter.to_rgba_array
 
-from magic.string import banner
+from ansi.str import banner
     
 
 #TODO: UPDATE ALL DOCSTRINGS
 #################################################################################################################################################################################################################     
 #@unhookPyQt
-@print_args( pre='\n'+'_'*80, post='\n'+'_'*80 )
+#@expose.args( pre='\n'+'_'*80, post='\n'+'_'*80 )
 #@profile()
 def pick_handler(artist, event):
     '''
     The picker function
     '''
+    #TODO: ignore: scroll, button 2, 3???
     
     if not len( artist ):
         #print( 'BARF!!!' )
@@ -80,7 +82,7 @@ def pick_handler(artist, event):
     #print( 'anyhit', anyhit)
     #print()
     props = { 'index' : np.where(hit) } if anyhit else {}
-    
+    print( props )
     return anyhit, props
 
 #################################################################################################################################################################################################################     
@@ -136,7 +138,7 @@ class PropertyConversion(SuperDict):
             [lambda key: ''.join(re.search( '(colo)u?(r)', key ).groups())]
         
     #===============================================================================================
-    @print_args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )
+    #@expose.args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )
     def __call__(self, dic=None, **kws):
         dic = dic or {}
         dic.update( **kws )
@@ -194,7 +196,7 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     conversions = PropertyConversion()
     
     #===============================================================================================
-    #@print_args( pre='%'*100, post = '\\'*100 )
+    #@expose.args( pre='%'*100, post = '\\'*100 )
     def __init__(self, defaults=None, **kws):
         
         #print( 'ApertureProperties' )
@@ -248,7 +250,7 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     
     #===============================================================================================
     @classmethod
-    #@print_args( pre='*'*100, post = '_'*100 )
+    #@expose.args( pre='*'*100, post = '_'*100 )
     def _prep_dict( cls, dic ): #TODO: combine with append method?
         
         #radii, coords = dic.pop('radii'), dic.pop('offsets')
@@ -275,7 +277,7 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
         
     #===============================================================================================
     @classmethod
-    @print_args( pre='o'*100, post='~'*100 )
+    #@expose.args( pre='o'*100, post='~'*100 )
     def concatenate( cls, current, adder ):
         
         if isinstance( current, np.ndarray ):
@@ -319,8 +321,9 @@ class AliasMixin(_AliasMixin):
 #AliasMixin,
 
 #################################################################################################################################################################################################################        
-class ApertureCollection( EllipseCollection ):
+class ApertureCollection(EllipseCollection):
     #TODO: __index__ !!!!!!!!!!!!!!!!!  THIS WILL BE REALLY REALLY REALLY REALLY AWESOME, 
+    #TODO: Annotation
     '''
     Class that handles methods common to collection of image apertures.
     '''
@@ -363,16 +366,17 @@ class ApertureCollection( EllipseCollection ):
                 #INSTANCES OF THE CLASS AND MULTIPLE INSTANCES???
         #self.picable = kws.pop('picable', self.prep_vals( True, warn=0 ) )    #yes, it's badly spelled.
         
-        print()
-        print( 'initialising EllipseCollection with:' )
-        banner( kws, 'RADII', radii, type(radii), width=100, bg='red' )
+        #print()
+        #print( 'initialising EllipseCollection with:' )
+        #banner( kws, 'RADII', radii, type(radii), width=100, bg='red' )
         #print( 'RADII', radii )
-        print()
+        #print()
         
         self.shape = np.shape( kws['offsets'] )
         
         #NOTE:  for some fucking bizarre reason the width / height passed to EllipseCollection 
-        #are divided by 2 when self._width / self._height are set. We therefore pass twice 
+        #are divided by 2 when self._width / self._height are set. We therefore 
+        #pass in twice their value below 
         #NOTE: transOffset=IdentityTransform() this is needed below so that Collection uses 
         # self._offsets and not self._uniform_offsets for the coordinates which does not 
         #allow for dynamically extending the instance.  This will be changed to
@@ -387,6 +391,7 @@ class ApertureCollection( EllipseCollection ):
                                     #offset_position='data',
                                     **kws )
     
+        self._axes = None
         
     #===============================================================================================
     def __str__(self):
@@ -520,8 +525,8 @@ class ApertureCollection( EllipseCollection ):
         return props
     
     #===============================================================================================
-    @print_args( pre='='*100, post = '~'*100 )
-    @unhookPyQt
+    #@expose.args( pre='='*100, post = '~'*100 )
+    #@unhookPyQt
     def append(self, aps=None, **props ):
         '''Dynamically extend the ApertureCollection.
         params: aps - instance of ApertureCollection / keywords with properties of ApertureCollection to append
@@ -652,13 +657,64 @@ class ApertureCollection( EllipseCollection ):
         
         
     #==============================================================================================
+    #TODO: maybe maxe this a propetry??
     def axadd(self, ax=None):
         if not self in ax.collections:
             #print( 'Adding collection to axis' )
             
-            self._transOffset = ax.transData            #necessary for apertures to map correctly to data positions
-            ax.add_collection( self )
+            #necessary for apertures to map correctly to data positions
+            self._transOffset = ax.transData
+            ax.add_collection(self)
+            
+            self._axes = ax
     
+    #==============================================================================================
+    def annotate(self, names=None, offset=None, angle=45, **kws):
+        '''
+        Annotate the apertures with text
+        
+        Parameters
+        ----------
+        names   :       sequence of name str's
+        offset  :       float or sequence of 2 floats, or (N,2) array-like
+            The offset from the center of the aperture
+            if float, use as radial offset with givel angle
+            if 2 floats, use as xy-offset and ignore angle
+            if (N, 2) array, use
+        angle   :       float
+            angle (in degrees) 
+        
+        Keywords
+        --------
+        all keyword arguments are passed directly to ax.annotate
+        
+        '''
+        if names is None:
+            #provide numbered annotations by default
+            names = np.arange(len(self)).astype(str)
+        
+        if len(names) != len(self):
+            raise ValueError('Inadequate name specs', names, 'for %i Apertures' % len(self))
+        
+        if self._axes is None:
+            raise Exception('First add the Collection to an axes')
+        
+
+        if offset is None:
+            offset = np.ones_like(self.coords) * self.radii - 2 #TODO: constant in display units?
+            #NOTE, this will skew the offsets for differing radii
+            
+        offset = np.atleast_1d(offset)
+        angle = np.radians(angle)
+        if len(offset)==1:
+            offset = offset * (np.cos(angle), np.sin(angle))
+            
+        self.annotations = [self._axes.annotate(name, coo, off, **kws)
+                                for coo, off, name in zip(self.coords, self.coords+ offset, names)]
+            
+    #==============================================================================================
+    #def numbering(self, TF): #convenience method for toggling number display?
+        
 
 #################################################################################################################################################################################################################          
 from matplotlib.collections import LineCollection
@@ -680,7 +736,7 @@ class ApLineCollection(LineCollection):
         #return lines
     
     #===============================================================================================
-    #@print_args( pre='='*100, post='?'*100 )
+    #@expose.args( pre='='*100, post='?'*100 )
     def make_segments( self, radii ):
         
         if radii.size:
@@ -802,11 +858,12 @@ class SkyApertures( ApertureCollection ):
 
 ######################################################################################################
 class SameSizeMixin( ):
-    AXIS = 0       #axis of the aperture radii along which values are to be set equal
+    SAME_SIZE_AXIS = 0       #axis of the aperture radii along which values are to be set equal
+    #eg. 1 ==> each column holds constant value.
     
     #===============================================================================================
-    @print_args()
-    @print_returns()
+    #@expose.args()
+    #@expose.returns()
     def samesize(self, index):
         '''
         Takes an index (eg. from the picker) and returns indeces of all apertures with the 
@@ -815,21 +872,24 @@ class SameSizeMixin( ):
         #index = list(index)
         #index[self.AXIS] = ...
         #return tuple(index)
+        x = self.SAME_SIZE_AXIS
         ix = [...]*len(index)
-        ix[self.AXIS] = index[self.AXIS]
+        ix[x] = index[x]
         return tuple(ix)        #tuple(ix if i==aps.AXIS else ... for i,ix in enumerate(index))
         
     #===============================================================================================
-    @unhookPyQt
-    def resize(self, relative_motion, idx=..., ):
-        print( 'RESIZING!', relative_motion, self.radii, idx )
+    #@unhookPyQt
+    def resize(self, relative_motion, idx=...):
+        print( 'RESIZING SAMESIZEMIXIN!', relative_motion, self.radii, idx )
         
         #embed()
-        
-        super().resize( relative_motion, self.samesize(idx) )
+        #Resize all apertures along the AXIS with linked radii
+        super().resize( relative_motion, self.samesize(idx) )   #NOTE: does not enforce the same size, only same relative increment
+        #self.samesize()
     
+    #@expose.args()
     #@unhookPyQt
-    #def set_radii(self, radii):
+    def set_radii(self, radii):
         
         #NOTE:  This constructs the index array that will be used to set all elements along
         # the required axis to the same value as the 0th element on that axis.  A column vector
@@ -840,10 +900,12 @@ class SameSizeMixin( ):
         
         #embed()
         
-        #radii = np.array(radii, ndmin=self.AXIS+1)
-        #ix = np.zeros( (radii.ndim,1), int )
-        #radii[...] = radii[ self.samesize(ix) ] 
-        #super().set_radii(radii)
+        x = self.SAME_SIZE_AXIS
+        #radii = np.array(radii, ndmin=x+1)
+        ix = list(np.zeros((radii.ndim,1), int))            #use zeroth radius for all radii
+        ix[x] = ...
+        radii[...] = radii[ix] 
+        super().set_radii(radii)
         
 
 ######################################################################################################
@@ -872,7 +934,7 @@ class InteractionMixin():
     #TODO:  deal with interactions between edge and other apertures separately  -->  different colour changes
     
     #===============================================================================================
-    #@print_args( pre='*'*100, post = '_'*100 )
+    #@expose.args( pre='*'*100, post = '_'*100 )
     def __init__(self, **kws ):
         print( 'InteractionMixin' )
         print( kws )
@@ -899,10 +961,11 @@ class InteractionMixin():
         
         print( 'super().__init__', kws )
         
+        self.badcolour = kws.pop('badcolour', rgba_array('y'))     #FIXME:  This will cause errors eventually.
+        
         super().__init__( broadcast=True, **kws )
         
         self.goodcolour = self._edgecolors_original     #HACK
-        self.badcolour = kws.pop('badcolour', rgba_array('y'))     #FIXME:  This will cause errors eventually.
         
         #if self.size and check:
         #self.auto_colour( check=check )
@@ -982,8 +1045,8 @@ class InteractionMixin():
         return props
     
     #===============================================================================================
-    @print_args( pre='*'*100, post = '_'*100 )
-    @unhookPyQt
+    #@expose.args( pre='*'*100, post = '_'*100 )
+    #@unhookPyQt
     def append(self, aps=None, **props ):
         '''Dynamically extend the ApertureCollection.
         params: aps - instance of ApertureCollection / keywords with properties of ApertureCollection to append
@@ -1040,8 +1103,6 @@ class InteractionMixin():
     def resize(self, relative_motion, idx=..., ):
         print( 'RESIZING!', relative_motion, self.radii, idx )
         
-        
-        
         if not relative_motion is None:
             rnew = self.radii
             rnew[idx] += relative_motion
@@ -1051,7 +1112,7 @@ class InteractionMixin():
             self.radii = rnew                   #remember this is a property
     
     #===============================================================================================
-    @unhookPyQt
+    #@unhookPyQt
     def intersection(self, aps=None, unique=1):
         ''' 
         Checks whether one set of apertures intersects (crosses) another set.
@@ -1088,8 +1149,8 @@ class InteractionMixin():
         return l
     
     #===============================================================================================
-    @unhookPyQt
-    @print_args()
+    #@unhookPyQt
+    #@expose.args()
     def check_edge(self, edges):
         '''
         Checks which apertures cross the image edge.
@@ -1151,7 +1212,7 @@ class InteractionMixin():
         self.colourise( lc )
         
     #===============================================================================================    
-    @unhookPyQt
+    #@unhookPyQt
     def colourise(self, lc):
         lc = lc.ravel()[None].T
         colours = np.where( lc, self.badcolour, self.goodcolour )

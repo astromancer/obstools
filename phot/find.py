@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.ndimage.measurements import center_of_mass
+from scipy.ndimage.measurements import center_of_mass as CoM
 
 from photutils.detection import detect_sources, detect_threshold
 
@@ -30,14 +30,15 @@ class SourceFinder():
         if self.edge_cutoff:
             im.remove_border_labels(self.edge_cutoff)
 
-        found = np.array(center_of_mass(data, im.data, im.labels)) #NOTE: ij coords
+        found = np.array(CoM(data, im.data, im.labels)) #NOTE: ij coords
         
         if self.Rcoo is None:
             return found
         else:
             #if one of the stars are not found during this call (e.g. eclipse or clouds etc.)
             #fall back to one of the following:
-            #WARNING: this conditional may be a hot-spot
+            #NOTE: this conditional may be a hot-spot??
+            #NOTE: all this stuff only works sequentially...
             if self.fallback == 'prev': #use the previous location for the source
                 new = self._prev_coords[:]
             elif self.fallback == 'mask':
@@ -51,7 +52,7 @@ class SourceFinder():
                 hw = w/2
                 new = np.empty(self.Rcoo.shape)
                 for i, (j,k) in enumerate(Rcoo):
-                    #TODO: use neighbours here for robustness
+                    #TODO: maybe use neighbours here for robustness
                     sub = data[j-hw:j+hw, k-hw,k+hw]
                     new[i] = np.add((j,k), divmod(sub.argmax(), w)) + 0.5
             else:

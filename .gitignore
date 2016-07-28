@@ -9,10 +9,11 @@ __pycache__
 *.~*#
 
 #devs
+*/dev/*
 EMvsCON_*.py
-lightcurve.1.3.py
 CVs.py
 
+lc/
 
 psf/gui.*.py
 psf/psf+find.*.py
