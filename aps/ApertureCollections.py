@@ -1,7 +1,7 @@
 import numpy as np
 import re
 
-from matplotlib.collections import EllipseCollection
+from matplotlib.collections import EllipseCollection as _EllipseCollection
 from matplotlib.colors import colorConverter
 from matplotlib.transforms import IdentityTransform
 
@@ -85,6 +85,48 @@ def pick_handler(artist, event):
     print( props )
     return anyhit, props
 
+def pick_handler(col, event):
+    '''
+    The picker function
+    '''
+    #TODO: ignore: scroll, button 2, 3???
+    
+    if not col.size:
+        return False, {}
+    
+    mouse_position = (event.xdata, event.ydata)
+    if None in mouse_position:
+        return False, {}
+    
+    pr = col.get_pickradius()        #NOTE: Can control pickability by making pickradius a sequence
+    
+    xyprox = col.coords[idx] - position
+    ang = np.arctan2(y,x)
+    
+    
+    
+    hit = abs(artist.edge_proximity(mouse_position)) < pr
+    #print( 'HIT! '*10 )
+    #print( hit )
+    #except:
+        #print( 'PICKER FAIL!' , artist )
+        #pyqtRemoveInputHook()
+        #embed()
+        #pyqtRestoreInputHook()
+        
+    #print( 'Picker', artist.edge_proximity( mouse_position )  )
+    #print( 'HITS', hit)
+    #hit &= artist.picable           #only hit if pickable
+    anyhit = np.any( hit )
+    #print( 'anyhit', anyhit)
+    #print()
+    props = { 'index' : np.where(hit) } if anyhit else {}
+    print( props )
+    return anyhit, props
+
+
+
+
 #################################################################################################################################################################################################################     
 #TODO: convension for class attribute names...
 
@@ -116,14 +158,15 @@ class TranslationLayer(TransDict):
     def __call__(self, dic=None, **kws):
         '''translate keywords'''
         dic = dic or {}
-        dic.update( kws )
+        dic.update(kws)
         
         #print()
         #print( 'inside translate' )
         #print( 'self', self )
         #print()
         
-        return { self._translations.get(key, key) : val for key, val in dic.items() }
+        return {self._translations.get(key, key): 
+                    val for key, val in dic.items()}
     
 
 
@@ -131,20 +174,22 @@ class PropertyConversion(SuperDict):
     '''Keyword value conversion'''
     #===============================================================================================
     def __init__(self):
-        super().__init__( { 'color'         : lambda val: rgba_array( as_sequence(val) ),
-                            'offsets'       : np.atleast_2d,
-                            'radii'         : np.atleast_1d, } )
+        super().__init__({'color'       : lambda val: rgba_array(as_sequence(val)),
+                          'offsets'     : np.atleast_2d,
+                          'radii'       : np.atleast_1d,
+                          'widths'      : np.atleast_1d,
+                          'heights'     : np.atleast_1d,
+                          'angles'      : np.atleast_1d,} )
         self._equivalence_maps = \
-            [lambda key: ''.join(re.search( '(colo)u?(r)', key ).groups())]
+            [lambda key: ''.join(re.search('(colo)u?(r)', key).groups())] #FIXME: simplify
         
     #===============================================================================================
     #@expose.args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )
     def __call__(self, dic=None, **kws):
-        dic = dic or {}
-        dic.update( **kws )
+        dic = dic   or   {}                 #WHY NOT as default arg
+        dic.update(**kws)
         for key, val in dic.items():
             if key in self:
-                 
                 #banner( key, val, self[key], bg='cyan' )
                 dic[key] = self[key](val)
                 #print( dic[key] )
@@ -162,10 +207,15 @@ class PropertyConversion(SuperDict):
         #self._equivalence_maps = \
             #[lambda key: ''.join(re.search( '(colo)u?(r)', key ).groups())]
 
+#TODO: as a class decorator / metaclass
+class EllipseCollection(_EllipseCollection):
+    #@expose.args(pre='Initializing EllipseCollection', post='\n'*2)
+    def __init__(self, *args, **kws):
+        _EllipseCollection.__init__(self,  *args, **kws)
+    
 
 
-
-class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
+class ApertureProperties(dict):            #ATTRIBUTE MANAGEMENT
     '''State class for ApertureCollection.'''
     
     WARN = True                                                 #Issue warnings?
@@ -175,23 +225,29 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     
     #dictionary with property, default value.  If one of these properties are not specified in the 
     #initialisation keyword dict, the default values here will be used.
-    __defaults__ = { 'radii'     :       [],
-                     'offsets'   :       [],
-                     #Convert the colours to array representation.  Easier this way to concatenate!
-                     'facecolor' :       ['none'],
-                     'edgecolor' :       'g',
-                     'linestyle' :       '-', 
-                     'linewidth' :       1.,
-                     'pickradius'   :    2    }
+    __defaults__ = {'widths'    :       [],
+                    'heights'   :       [],
+                    'angles'    :       [0],
+                    'offsets'   :       [],
+                    #Convert the colours to array representation.  Easier this way to concatenate!
+                    'facecolor' :       ['none'],
+                    'edgecolor' :       'g',
+                    'linestyle' :       '-', 
+                    'linewidth' :       1.,
+                    'pickradius':       2,
+                    'picker'    :       pick_handler}
     
-    __broadcast__ = 'radii', 'edgecolor'
+    __broadcast__ = 'edgecolor'
     
     translations = TranslationLayer()       #activate TranslationLayer for keyword translation
-    translations.add_vocab( { 'coords'        :       'offsets',
-                              'ls'            :       'linestyle',
-                              'lw'            :       'linewidth'  } )
-    translations.many2one( {('ec', 'color', 'colour', 'colours')               :'edgecolor',
-                            ('fc', 'facecolors', 'facecolour', 'facecolours' ) :'facecolor' } )
+    translations.add_vocab({'coords'        :       'offsets',
+                            'ls'            :       'linestyle',
+                            'lw'            :       'linewidth',
+                            'w'             :       'width',
+                            'h'             :       'height'})
+    many2one = {('ec', 'color', 'colour', 'colours')               :'edgecolor',
+                ('fc', 'facecolors', 'facecolour', 'facecolours' ) :'facecolor' }
+    translations.many2one(many2one)
     
     conversions = PropertyConversion()
     
@@ -216,20 +272,24 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
         #pprint( new )
         #print()
         
-        new.update( self.translations(**kws) )                          #translate keywords
+        #translate keywords
+        translated = self.translations(**kws)
+        for key, val in translated.items():
+            if val is not None:
+                new[key] = val
         
         #print( 'AFTER TRANSLATION UPDATE!!' )
         #pprint( new )
         #print()
         
-        new = self.conversions( new )
+        new = self.conversions(new)
         
         #print( 'AFTER CONVERSION!!' )
         #pprint( new )
         #print()
         
         if broadcast:
-            dmax = new['offsets'].size // 2                           #shape may have non-zeros even when size is 0
+            dmax = new['offsets'].size // 2          #shape may have non-zeros even when size is 0
             
             #print( 'SHITBALLS!!!' )
                 
@@ -238,10 +298,11 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
             #pyqtRestoreInputHook()
             
             if dmax:
-                new = self._prep_dict( new )      #map keywords and cast registered class properties to match self.shape (radii) 
+                #map keywords and cast registered class properties to match self.shape (coords/offsets) 
+                new = self._prep_dict(new)
         
         
-        dict.__init__( self, **new )
+        dict.__init__(self, **new)
         #NOTE: this is done purely so we can save a backup of the original properties
         
         #print( 'AFTER CASTING' )
@@ -251,7 +312,7 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     #===============================================================================================
     @classmethod
     #@expose.args( pre='*'*100, post = '_'*100 )
-    def _prep_dict( cls, dic ): #TODO: combine with append method?
+    def _prep_dict(cls, dic): #TODO: combine with append method?
         
         #radii, coords = dic.pop('radii'), dic.pop('offsets')
         coords = dic['offsets']
@@ -266,7 +327,7 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
                 if isinstance(obj, np.ndarray):
                     dic[key] = np.tile(obj,(l,1))
                 else:
-                    dic[key] = list( cycleN(as_sequence(obj), l) )
+                    dic[key] = list(cycleN(as_sequence(obj), l))
             
             #dic[ key ] = cls.broadcast( obj, key, dmax, True )
         
@@ -278,20 +339,20 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     #===============================================================================================
     @classmethod
     #@expose.args( pre='o'*100, post='~'*100 )
-    def concatenate( cls, current, adder ):
+    def concatenate(cls, current, adder):
         
-        if isinstance( current, np.ndarray ):
-            return stacker( current, adder )
+        if isinstance(current, np.ndarray):
+            return stacker(current, adder)
             #try:            #attempt to stack by column (will only work if current and adder have the same length
                 #return np.vstack( [current, adder] )
             #except ValueError:      #stack by appending
                 #return  np.hstack( [current, adder] )
         
-        elif isinstance( current, list ):
+        elif isinstance(current, list):
             return current + adder
         
         else:
-            banner( '%s not list' %type(current), '!', bg='red' )
+            banner('%s not list' %type(current), '!', bg='red')
             print( current, adder )
             print()
             return current
@@ -299,16 +360,18 @@ class ApertureProperties( dict ):            #ATTRIBUTE MANAGEMENT
     #===============================================================================================
 
 
-def stacker( *arrays ):
-    args = ('0',) + tuple( filter(np.size, arrays) )
-    return np.r_[ args ]
-    #NOTE:    A string with three comma-separated integers allows specification of the
+def stacker(*arrays):
+    '''Stack array, filtering out empty ones'''
+    args = ('0',) + tuple(filter(np.size, arrays))
+    #NOTE: A string with three comma-separated integers allows specification of the
     #axis to concatenate along, the minimum number of dimensions to force the
     #entries to, and which axis should contain the start of the arrays which
     #are less than the specified number of dimensions.
+    return np.r_[args]
+
 
 #################################################################################################################################################################################################################     
-_AliasMixin, alias = altflaggerFactory( collection='aliases' )
+_AliasMixin, alias = altflaggerFactory(collection='aliases')
 
 class AliasMixin(_AliasMixin):
     '''class for creating method aliases by decoration'''
@@ -316,24 +379,37 @@ class AliasMixin(_AliasMixin):
         super().__init__()
         for method, aliases in self.aliases.items():
             for alias in aliases:
-                setattr( self, alias, method )
+                setattr(self, alias, method)
 
 #AliasMixin,
 
+
+
 #################################################################################################################################################################################################################        
 class ApertureCollection(EllipseCollection):
-    #TODO: __index__ !!!!!!!!!!!!!!!!!  THIS WILL BE REALLY REALLY REALLY REALLY AWESOME, 
-    #TODO: Annotation
     '''
     Class that handles methods common to collection of image apertures.
     '''
+    
+    #TODO: __index__ !!!!!!!!!!!!!!!!!  THIS WILL BE REALLY REALLY REALLY REALLY AWESOME, 
+    #TODO: Annotation
+    
+    #FIXME: init with empty radii still draws unit circles??????
+    
+
     #===============================================================================================
     DEFAULT_RADIUS = 5.                                         #default radius
     _properties = ApertureProperties
     #===============================================================================================
     #@profile()
-    def __init__(self, **kws ):
-        ''' coords is the main parameter. all other parameters will be shaped accordingly '''
+    def __init__(self, widths=None, heights=None, angles=None, **kws):      #TODO: ALLOW positional arguments (same as EllipseCollection??)
+        '''coords is the main parameter. all other parameters will be shaped accordingly '''
+        
+        #NOTE: width, height, angles attributes can be any size, as long as they are all
+        #the same size.  if their size is less than the number of apertures 
+        #(as implied by the coordinates) (self.coords.size //2), their values will be cycled.
+        
+        #WARNING: will reshape the coordinates!!
         
         #print()
         #print( 'Initialising ApertureCollection' )
@@ -341,24 +417,35 @@ class ApertureCollection(EllipseCollection):
         #print()
         
         #AliasMixin.__init__(self)
-        
-        kws = self._properties( **kws )
+        kws['widths'] = widths
+        kws['heights'] = heights
+        kws['angles'] = angles
+        kws = self._properties(**kws)
         
         #Save a copy of the properties with which the object was instantiated (used for appending)
         #TODO: MOVE TO ApertureProperties class
-        self._original_properties = kws.copy()
-        self._original_properties.pop( 'offsets' )
+        self._original_properties = kws.copy()          #FIXME: misnomer - these are already shaped
+        off = self._original_properties.pop('offsets')
+        self._coord_shape = off.shape
         
         #print()
         #print( 'after ApertureProperties:' )
         #pprint( kws )
         #print()
         
-        #some values need to be popped from the kws dict before passing to superclass init
-        radii = kws.pop('radii', [])
-        self._radii = radii = np.asarray( radii, dtype=float )
+        #TODO: handle actual elliptical apertures!!!!!
         
-        angles = np.zeros_like( radii )
+        #some values need to be popped from the kws dict before passing to superclass init
+        #if 'radii' in kws:
+        radii = kws.pop('radii', [])
+        self._radii = radii = np.asarray(radii, dtype=float)
+        
+        #
+        #widths = 2 * radii
+        #heights = 2 * radii
+        
+        
+        #angles = np.zeros_like(radii)
         
         #TODO: assign a pickable method according to given pickradius
         #NOTE:  THIS IMPLEMENTATION ALLOWS FOR INDIVIDUAL APERTURES IN A COLLECTION TO HAVE VARIOUS PICKABLITY
@@ -372,7 +459,8 @@ class ApertureCollection(EllipseCollection):
         #print( 'RADII', radii )
         #print()
         
-        self.shape = np.shape( kws['offsets'] )
+        #NOTE: THIS WILL NOT REFLECT THE CORRECT SHAPE TO THE USER!!
+        
         
         #NOTE:  for some fucking bizarre reason the width / height passed to EllipseCollection 
         #are divided by 2 when self._width / self._height are set. We therefore 
@@ -382,11 +470,11 @@ class ApertureCollection(EllipseCollection):
         #allow for dynamically extending the instance.  This will be changed to
         #ax.transData when the collection is added to the axes via self.axadd
         EllipseCollection.__init__( self,
-                                    2 * radii,
-                                    2 * radii,
-                                    angles,
+                                    #widths,
+                                    #heights,
+                                    #angles,
                                     units='xy',
-                                    picker=pick_handler,
+                                    #picker=pick_handler,
                                     transOffset=IdentityTransform(),
                                     #offset_position='data',
                                     **kws )
@@ -406,8 +494,8 @@ class ApertureCollection(EllipseCollection):
     
     #===============================================================================================
     def __add__(self, other):
-        new = copy( self )
-        new.append( other )
+        new = copy(self)
+        new.append(other)
         return new
     
     #===============================================================================================
@@ -423,51 +511,80 @@ class ApertureCollection(EllipseCollection):
     #===============================================================================================
     #Properties
     #===============================================================================================
-    def get_coords(self):
-        '''Returns a view of the coordinates that retains shape info'''
-        return np.reshape( super().get_offsets(), self.shape )
-        
-    def set_coords(self, coords):
-        self.shape = np.shape( coords )
-        super().set_offsets( coords )
-    #alias
-    set_offsets = set_coords
-    get_offsets = get_coords
-    
-    #coords = property(EllipseCollection.get_offsets, EllipseCollection.set_offsets )
-    coords = property(get_coords, set_coords )
-   
-    #===============================================================================================
-    def set_radii( self, radii ):
-        rr = np.asarray(radii)
-        rrr = rr.ravel()
-        self._radii = rr
-        self._heights = rrr
-        self._widths = rrr
-        self._angles = np.zeros_like( rrr )
-
-    def get_radii( self ):
-        return self._radii
-
-    radii = property(get_radii, set_radii)    #pipes attribute access through the get_ and set_ functions above
-     
-    #===============================================================================================
-    #@property           #OR INHERIT FROM ARRAY??
-    #def shape(self):
-        #return self.coords.shape[:-1]
+    @property               #OR INHERIT FROM ARRAY??
+    def shape(self):
+        return self._coord_shape[:-1]
     
     @property
     def size(self):
         return self.coords.size // 2
     
     #===============================================================================================
+    def get_coords(self):
+        '''Returns a view of the coordinates that retains shape info'''
+        return np.reshape(super().get_offsets(), self._coord_shape)
+        
+    def set_coords(self, coords):
+        self._coord_shape = np.shape(coords)
+        super().set_offsets(coords)             #will make Nx2
+    #alias
+    set_offsets = set_coords
+    get_offsets = get_coords
+    
+    #coords = property(EllipseCollection.get_offsets, EllipseCollection.set_offsets )
+    coords = property(get_coords, set_coords )
+    #===============================================================================================
+    def set_radii(self, radii):
+        r = np.asarray(radii).ravel()
+        self._heights = r
+        self._widths = r
+        self._angles = np.zeros_like(r)
+
+    #def get_radii(self):
+        #return self._radii
+
+    radii = property(None, set_radii)    #pipes attribute access through the get_ and set_ functions above
+    
+    #===============================================================================================
+    @property
+    def semimajor(self):
+        return np.max([self._widths, self._heights], -1).reshape(self.shape)
+    
+    @property
+    def semiminor(self):
+        return np.min([self._widths, self._heights], -1).reshape(self.shape)
+    
+    #===============================================================================================
+    #def set_widths(self, widths):
+        #ww = np.asarray(widths)
+        #www = ww.ravel()
+        ##self._radii = rr
+        ##self._heights = rrr
+        
+        #if 
+        
+        #self._widths = www
+        ##BROADCAST ANGLES??
+        ##self._angles = np.zeros_like(rrr)
+    
+
+    
+    #def get_widths(self):
+        #return np.reshape(self._widths, self.shape)
+
+    #width = widths = property(get_widths)
+    
+    #def get_heights( self ):
+        #return np.reshape(self._heights, self.shape)
+
+    #height = heights = property(get_widths)
+
+    #===============================================================================================
     #Various aliases
-    #@alias( 'get_ec', 'get_colours' )
     def get_edgecolor(self):
         return super().get_edgecolor()
     get_ec = get_colours = get_edgecolor
     
-    #@alias( 'set_ec', 'set_colours' )
     def set_edgecolor(self, colours):
         return super().set_edgecolor(colours)
     set_ec = set_colours = set_edgecolor
@@ -576,19 +693,12 @@ class ApertureCollection(EllipseCollection):
     def remove( self, idx=None ):
         if idx:
             idx = idx[0]
-        
-            #shape = list(self.radii.shape) + [2]
-            #coords = self.coords.reshape( *shape )                  # RESHAPING IN THE GETTER????
-            self.coords = np.delete( coords, idx, axis=0 )
-            
-            self.radii = np.delete( self.radii, idx, axis=0 )       #self.radii.pop( idx )
+            self.coords = np.delete(coords, idx, axis=0)
+            #self.radii = np.delete(self.radii, idx, axis=0)
         else:
             self.coords = []
-            self.radii = []
-        #self.coords.pop( idx )                                 #YES, YOU NEED TO DEAL WITH THESE AS WELL, SIGH.....
-        #self.colours.pop( idx )
-        #self.badcolour.pop( idx )
-        #self.state.pop( idx )
+            #self.radii = []
+
 
     #===============================================================================================
     #def within_allowed_range(self, r):
@@ -607,15 +717,16 @@ class ApertureCollection(EllipseCollection):
             #self.radii = rnew                   #remember this is a property
             
     #===============================================================================================
-    def area( self, idx=... ):
-        '''return the area enclosed by the aperture radius given by idx.
-        Return the area of the largest aperture if no idx is given.'''
-        #idx = ... if idx is None else idx       #np.argmax( self.radii )
-        r = self.radii[idx]
-        return np.pi*r*r
+    def area(self, idx=...):
+        '''
+        Return the area enclosed by the aperture(s) 
+        Specific aperture can be specified by idx.
+        '''
+        return np.reshape(np.pi * self._widths * self._heights, self.shape)[idx]
+        
     
     #===============================================================================================
-    def area_between( self, idxs ):
+    def area_between(self, idxs):
         '''return the area enclosed between the two apertures given by idxs'''
         A = np.array( self.area( idxs ), ndmin=2 )
         area = np.abs( np.subtract( *A.T ) )
@@ -636,13 +747,15 @@ class ApertureCollection(EllipseCollection):
         #xyprox = np.array( coords - position, ndmin=2 )
         xyprox = self.coords[idx] - position
         
-        return np.linalg.norm(xyprox, axis=-1 )
+        return np.linalg.norm(xyprox, axis=-1)
     
     #===============================================================================================
     #@unhookPyQt
     def edge_proximity(self, position, idx=...):
         '''
-        Calculate the proximity of a given position to the aperture radius. Used for event control.
+        Calculate the proximity of a given position to the aperture edge. Used 
+        for event control.
+        
         Parameters
         ----------
         position : tuple with x, y coordinates
@@ -650,10 +763,30 @@ class ApertureCollection(EllipseCollection):
         Returns
         -------
         rp : array with radial distances in pixels from aperture radii.
+        
+        Notes
+        -----
+        https://en.wikipedia.org/wiki/Ellipse#In_trigonometry
         '''
         if None in position:
             return
-        return self.center_proximity( position, idx ) - self.radii[idx]
+        return self.center_proximity(position, idx) - self.radii[idx] #FIXME
+        
+        xyprox = self.coords[idx] - position
+        x, y = xyprox.T
+        theta = np.arctan2(y,x)         #angle between position and ellipse centers
+        phi = self._angles              #angle between x-axis and `width` axis
+        alpha = theta - phi             #angles between semimajor axes and position
+        #ellipse parameterization
+        a = self.width[idx]
+        b = self.height[idx]
+        cosa = np.cos(alpha);   sina = np.sin(alpha)
+        cosp = np.cos(phi);     sinp = np.sin(phi)
+        xe = a*cosa*cosp - b*sina*sinp
+        ye = a*cosa*sinp + b*sina*cosp
+        
+        x - xe, y-ye
+        
         
         
     #==============================================================================================

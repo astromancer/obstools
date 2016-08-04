@@ -35,18 +35,21 @@ from ansi.progress import ProgressBar
 #from IPython import embed
 
 #====================================================================================================
-def quickheader( filename ):
+def fastheader(filename):
     '''Get header from fits file.  Much quicker than pyfits.getheader for large files.  
     Works with pathlib.Path objects.'''
     with open(str(filename),'rb') as fp:
         return pyfits.Header.fromfile( fp )
-        
-def quickheadkeys( filename, keys, defaults=() ):
+    
+quickheader = fastheader
+    
+def fastheadkeys( filename, keys, defaults=() ):
     header = quickheader( str(filename) )
     if isinstance(keys, str):
         keys = keys,
     return [header.get(k,d) for (k, d) in itt.zip_longest( keys, defaults, fillvalue=None )]
-        
+
+quickheadkeys = fastheadkeys        
         
 #====================================================================================================
 class FITSFrame():
@@ -113,6 +116,22 @@ class FITSFrame():
             istop = istart + 1
             ispan = 1
             shape = self.ishape
+        
+        #TODO: tidy up here
+        #TODO: handle tuple
+        
+        elif isinstance(i, (list, np.ndarray)):
+            shape = (len(i),) +  self.ishape
+            
+            _buffer = BytesIO()
+            for j in i:
+                _start = self.data_start_bits + j*isize
+                _buffer.write(self.filemap[_start:(_start + isize)])
+            _buffer.seek(0)
+            return self.bzero + np.ndarray(shape, 
+                                            dtype=self.dtype, 
+                                            buffer=_buffer.read()
+                                            ).astype(float)
             
         elif isinstance(i, slice):
             
@@ -128,7 +147,7 @@ class FITSFrame():
             
             if i.step:
                 _buffer = BytesIO()
-                iframes = range(len(self))[i]
+                iframes = range(len(self))[i]   #extract frame numbers as sequence of integers
                 for j in iframes:
                     _start = self.data_start_bits + j*isize
                     _buffer.write(self.filemap[_start:(_start + isize)])
@@ -140,8 +159,8 @@ class FITSFrame():
                                                ).astype(float)
 
         else:
-            raise IndexError('only integers, and (continuous) slices are valid '
-                             'indices')
+            raise IndexError('Only integers, and (continuous) slices are valid '
+                             'indices. Received: {}, {}'.format(type(i), i))
     
         start = self.data_start_bits + isize * istart
         end = start + isize * ispan

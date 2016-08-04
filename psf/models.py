@@ -21,32 +21,7 @@ class GaussianPSF(_GaussianPSF):
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, params, grid):
         p = self.convert_params(params)
-        return _GaussianPSF.__call__(self, p, *grid[::-1])
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def residuals(self, p, data, grid):
-        '''Difference between data and model'''
-        return data - self(p, grid)
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def rs(self, p, data, grid):
-        return np.square(self.residuals(p, data, grid))
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def rss(self, p, data, grid):
-        return self.rs(p, data, grid).sum()
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def wrs(self, params, data, grid, data_stddev=None):
-        #pvd = params.valuesdict()
-        #p = [pvd[pn] for pn in self._pnames_ordered]
-        if data_stddev is None:
-            return self.rs(params, data, grid)
-        return self.rs(params, data, grid) / data_stddev
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def fwrs(self, params, data, grid, data_stdev=None):
-        return self.wrs(params, data, grid, data_stdev).flatten()
+        return _GaussianPSF.__call__(self, p, grid)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def coeff(self, covariance_matrix):
@@ -101,7 +76,6 @@ class GaussianPSF(_GaussianPSF):
     def fwhm(self, params):
         return self.get_fwhm(self.convert_params(params))
     
-    
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def param_hint(self, data):
         '''Return a guess of the fitting parameters based on the data'''
@@ -111,12 +85,28 @@ class GaussianPSF(_GaussianPSF):
         
         bg = np.median(data)
         z0 = data.max() - bg    #use core area only????
-        y0, x0 = CoM(data)
+        
+        #location
+        y0, x0 = np.divide(data.shape, 2)
+        #y0, x0 = CoM(data)
+        #y0, x0 = np.c_[np.where(data==data.max())][0]
 
-        p = np.empty(self.Npar)
-        p[self.no_cache] = x0, y0, z0, bg
+        #p = np.empty(self.Npar)
+        #p[self.to_hint] = x0, y0, z0, bg
         #cached parameters will be set by StarFit
-        return p
+        return x0, y0, z0, bg
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def p0guess(self, data, p0=None):
+        '''
+        Return best guess paramaters based on param_hint
+        if p0 is not given, the default parameters will be used as starting point
+        if p0 is given, data in its `to_hint` index positions will be set
+        '''
+        if p0 is None:
+            p0 = self.default_params
+        p0[self.to_hint] = self.param_hint(data)
+        return p0
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def convert_params(self, params):

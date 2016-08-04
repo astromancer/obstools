@@ -31,9 +31,9 @@ class PSF(object):
         ----------
         F       :       callable
             Function which evaluates PSF at given location(s).  
-            Call sequence is F(p,X,Y) where:
+            Call sequence is F(p,grid) where:
                 p - sequence of parameters
-                X,Y the grid positions to evaluate for.
+                grid -  the (2,...) grid positions to evaluate for. #TODO: infer if not given??
         to_cache:       sequence of ints or slice
             The index positions of parameters that will be cached by the StarFit class.
         default_params:  array-like
@@ -50,19 +50,19 @@ class PSF(object):
         self.Npar = Npar = len(default_params)
         self.default_params = defpar = np.asarray(default_params)
         if to_cache is None:
-            ix = np.arange( len(defpar) )
+            ix = np.arange(len(defpar))                 #cache all by default
         elif isinstance(to_cache, slice):
-           ix = np.arange( *to_cache.indices(Npar) )
+           ix = np.arange(*to_cache.indices(Npar))      #convert to array of int
         else:
-            ix = np.asarray( to_cache )
+            ix = np.asarray(to_cache)
         
         self.to_cache = ix
-        self.no_cache = np.array( find_missing_numbers( np.r_[-1, ix, Npar] ) )  #indeces of uncached params
+        self.to_hint = np.array(find_missing_numbers(np.r_[-1, ix, Npar]))  #indeces of uncached params
         #self.default_cache = #defpar[ix]
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def __call__(self, p, X, Y):
-        return self.F(p, X, Y)
+    def __call__(self, p, grid):        #TODO: infer grid if not given??
+        return self.F(p, grid)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __repr__(self):
@@ -70,19 +70,28 @@ class PSF(object):
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #@profile()
-    def param_hint(self, data):
+    #TODO: return array of len(self.to_hint) ????
+    def param_hint(self, data):     #NOTE: probably raise NotImplementedError here and define in subclasses
         '''Return a guess of the fitting parameters based on the data'''
-        
-        #location
-        #y0, x0 = np.c_[np.where(data==data.max())][0]              #center_of_mass( data ) #NOTE: in case of multiple maxima it only returns the first
-        
-        bg, bgsig = self.background_estimate( data )
+                
+        bg, bgsig = self.background_estimate(data)
         z0 = data.max() - bg
 
-        p = np.empty( self.Npar )
-        p[self.no_cache] = x0, y0, z0, bg
+        #location
+        y0, x0 = np.divide(data.shape, 2)
+        #y0, x0 = np.c_[np.where(data==data.max())][0]              #center_of_mass( data ) #NOTE: in case of multiple maxima it only returns the first
+
+        p = np.empty(self.Npar)         #FIXME: why empty and not default??
+        p[self.to_hint] = x0, y0, z0, bg
         #cached parameters will be set by StarFit
         return p
+    
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def p0guess(self, data):
+        p0 = self.default_params
+        p0[self.to_hint] = self.param_hint(data)[self.to_hint]
+        return p0
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     #@cache_last_return
@@ -95,32 +104,53 @@ class PSF(object):
                         data[tuple(np.mgrid[:shape[0], :bgix[1]])].ravel() ]
         
         return np.median(subset), np.std(subset)
-        
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    #TODO: memoize!!!!!!!!
-    def residuals(self, p, data, X, Y):
-        '''Difference between data and model'''
-        return data - self(p, X, Y)
-
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def err(self, p, data, X, Y):
-        return abs(self.residuals(p, data, X, Y).flatten())
+    
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def rss(self, p, data, X, Y):
-        return np.square(self.residuals(p, data, X, Y)).sum()
-
+    def residuals(self, p, data, grid):
+        '''Difference between data and model'''
+        return data - self(p, grid)
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rs(self, p, data, grid):
+        return np.square(self.residuals(p, data, grid))
+    
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def frs(self, p, data, grid):
+        return self.rs(p, data, grid).flatten()
+  
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def rss(self, p, data, grid):
+        return self.rs(p, data, grid).sum()
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def wrs(self, params, data, grid, data_stddev=None):
+        #pvd = params.valuesdict()
+        #p = [pvd[pn] for pn in self._pnames_ordered]
+        if data_stddev is None:
+            return self.rs(params, data, grid)
+        return self.rs(params, data, grid) / data_stddev
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def fwrs(self, params, data, grid, data_stdev=None):
+        return self.wrs(params, data, grid, data_stdev).flatten()
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    
+    #TODO: wrss etc #check psf.models
+    
 
 #****************************************************************************************************    
-def Gaussian2D(p, x, y):
-    #TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
+def Gaussian2D(p, grid):
     '''Elliptical Gaussian function for fitting star profiles.'''
     x0, y0, z0, a, b, c, d = p
-    return z0*np.exp(-(a*(x-x0)**2 -2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
+    y, x = grid
+    return z0 * np.exp(-(a*(x-x0)**2 -2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
 
 
 #****************************************************************************************************    
 class GaussianPSF(PSF):
+    #TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
     ''' 7 param 2D Gaussian '''
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self):
@@ -129,24 +159,20 @@ class GaussianPSF(PSF):
         PSF.__init__(self, Gaussian2D, default_params, to_cache)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def rss(self, p, data, X, Y):
-        return np.square(self.residuals(p, data, X, Y)).flatten()
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integrate(self, p):
         '''
         Analytical solution to the integral over R2,
         source: http://en.wikipedia.org/wiki/Gaussian_integral#n-dimensional_and_functional_generalization
         '''
         _, _, z0, a, b, c, _ = p
-        return z0*np.pi / np.sqrt(a*c - b*b)
+        return z0 * np.pi / np.sqrt(a*c - b*b)
         #A = 0.5*np.array([[a, b],
                          # [b, c]] )
         #detA = np.linalg.det(A)
         #return 2*z0*np.pi / np.sqrt(detA)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def int_err(self, p, punc):
+    def integration_uncertainty(self, p, punc):
         '''Uncertainty associated with integrated flux via propagation'''
         #NOTE: Error estimates for non-linear functions are biased on account of using a truncated series expansion.
         #SEE: https://en.wikipedia.org/wiki/Uncertainty_quantification
@@ -154,7 +180,8 @@ class GaussianPSF(PSF):
         _, _, z0v, av, bv, cv, _ = np.square(punc)
         detr = a*c - b*b
         return np.pi * np.sqrt(z0*z0 / detr**3 * (0.25*(c*c*av + a*a*cv) + b*b*bv) + z0v/detr)
-    
+        
+    int_err = integration_uncertainty
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_fwhm(self, p):
         '''calculate fwhm from semi-major and semi-minor axes.'''
@@ -439,13 +466,13 @@ class StarFit(object):
         
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
     #@profile()
-    def __call__(self, grid, data):
+    def __call__(self, grid, data):     #TODO: make grid optional...
         '''Fits the PSF model to the data on the grid given the input coordinates xy0'''
         psf = self.psf
         
         p0 = self.get_params_from_cache()       #just returns the default cache for the psf if caching is disabled
         if self.hints:
-            p0[psf.no_cache] = psf.param_hint( data )[psf.no_cache]
+            p0[psf.to_hint] = psf.param_hint(data)[psf.to_hint]
         
         #print('\n\nINIT PARAMS' )
         #print( p0, '\n\n' )
@@ -455,12 +482,11 @@ class StarFit(object):
         #pyqtRestoreInputHook()
         
         
-        Y, X = grid
-        args = data, X, Y
+        #Y, X = grid
+        args = data, grid
         
-        #print( 'p0', p0 )
         #minimize residual sum of squares
-        plsq, _, info, msg, success = self.algorithm(psf.rss, p0, args=args, full_output=1)
+        plsq, _, info, msg, success = self.algorithm(psf.frs, p0, args=args, full_output=1)
         
         
         if success != 1:
@@ -487,9 +513,10 @@ class StarFit(object):
     def get_params_from_cache(self):
         '''return the mean value of the cached parameters.  Useful as initial guess.'''
         if self.caching and self.call_count:
-            return self.cache.mean(0)  #The fitting function expects a tuple???
+            return self.cache.mean(0)
         else:
             return self.psf.default_params
     
+    get_cached = get_params_from_cache
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    
 
