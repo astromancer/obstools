@@ -1,5 +1,5 @@
 import numpy as np
-import lmfit as lm
+import lmfit as lm          #TODO: is this slow??
 
 from scipy.ndimage.measurements import center_of_mass as CoM
 
@@ -8,6 +8,7 @@ from obstools.psf.psf import GaussianPSF as _GaussianPSF
 
 #****************************************************************************************************
 class GaussianPSF(_GaussianPSF):
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     _pnames_ordered = 'x0, y0, z0, a, b, c, d'.split(', ')
     params = lm.Parameters()
     
@@ -19,8 +20,30 @@ class GaussianPSF(_GaussianPSF):
         params.add(pn, value=1)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def convert_params(self, p):
+        #reparameterize to more physically meaningful quantities
+        covm                = self.covariance_matrix(p)
+        sigx, sigy          = np.sqrt(np.diagonal(covm))
+        cov                 = covm[0,1]
+        theta               = self.theta(p)
+        ratio               = min(sigx, sigy) / max(sigx, sigy)
+        ellipticity         = np.sqrt(1 - ratio**2)
+        fwhm                = self.get_fwhm(p)
+        par_alt             = sigx, sigy, cov, theta, ellipticity, fwhm
+        
+        return par_alt
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def plist(self, params):
+        '''convert from lm.Parameters to ordered list of float values'''
+        if isinstance(params, lm.Parameters):
+            pv = params.valuesdict()
+            params = [pv[pn] for pn in self._pnames_ordered]
+        return np.array(params)
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, params, grid):
-        p = self.convert_params(params)
+        p = self.plist(params)
         return _GaussianPSF.__call__(self, p, grid)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -49,7 +72,7 @@ class GaussianPSF(_GaussianPSF):
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def covariance_matrix(self, params):
-        _, _, _, a, b, c, _ = self.convert_params(params)
+        _, _, _, a, b, c, _ = self.plist(params)
         #rho = self.correlation(params)
         #P = np.array([[a,   -b],
         #              [-b,  c ]]) * 2
@@ -61,7 +84,7 @@ class GaussianPSF(_GaussianPSF):
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def theta(self, params):
-        _, _, _, a, b, c, _ = self.convert_params(params)
+        _, _, _, a, b, c, _ = self.plist(params)
         return -0.5*np.arctan2( -2*b, a-c )
         
     
@@ -74,7 +97,7 @@ class GaussianPSF(_GaussianPSF):
         #coo = x+offset[0], y+offset[1]
     
     def fwhm(self, params):
-        return self.get_fwhm(self.convert_params(params))
+        return self.get_fwhm(self.plist(params))
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def param_hint(self, data):
@@ -107,20 +130,12 @@ class GaussianPSF(_GaussianPSF):
             p0 = self.default_params
         p0[self.to_hint] = self.param_hint(data)
         return p0
-    
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def convert_params(self, params):
-        '''from lm.Parameters to list of float values'''
-        if isinstance(params, lm.Parameters):
-            pv = params.valuesdict()
-            params = [pv[pn] for pn in self._pnames_ordered]
-        return np.array(params)
-    
+
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def _set_param_bounds(self, par0, data):
          #HACK-ish! better to explore full posterior
         '''set parameter bounds based on data'''
-        x0, y0, z0, a, b, c, d = self.convert_params(par0)
+        x0, y0, z0, a, b, c, d = self.plist(par0)
         #x0, y0 bounds
         #Let x, y only vary across half of window frame
         #sh = np.array(data.shape)
@@ -144,7 +159,7 @@ class GaussianPSF(_GaussianPSF):
    
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def validate(self, p, window):
-        p = self.convert_params(p)
+        p = self.plist(p)
         nans = np.isnan(p).any()
         negpars = any(p[self._ix_not_neg] < 0)
         badcoo = any(abs(p[:2] - window/2) >= window/2)

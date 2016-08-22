@@ -8,7 +8,7 @@ from decor.profile import timer
 
 #====================================================================================================
 @timer
-def diagnostics(AIC, psf_par, psf_par_alt, flux_psf, window):
+def diagnostics(psf_par, psf_par_alt, flux_psf, AIC, Rvec_fit, window):
     
     #np.isnan(flux_ap)
     #problematic = list(filter(None, res))
@@ -25,7 +25,7 @@ def diagnostics(AIC, psf_par, psf_par_alt, flux_psf, window):
     fpm = np.ma.masked_where(badflux, flux_psf)    
     
     #center coordinates outside of window grid - unphysical
-    badcoo = np.any(np.abs(psf_par[...,:2] - window/2) >= window/2, -1)
+    badcoo = np.any(np.abs(psf_par[...,:2] - Rvec_fit[::-1] - window/2) >= window/2, -1)
     #negative parameters ==> bad fit!
     ix = list(range(Npar))
     ix.pop(GaussianPSF._pnames_ordered.index('b'))       #parameter b is allowed to be negative
@@ -231,13 +231,13 @@ def plot_lcs(fpm, flux_ap, scale, filename=None):
     
     
     from grafico.multitab import MplMultiTab
-    ui = MplMultiTab()
+    #ui = MplMultiTab()
     for i, s in enumerate(scale):
         fig, art, *rest = lcplot(flux_ap[...,i].T,
                                 title='aperture flux (%.1f*fwhm)' %s,
                                 draggable=True,)
                                 #show_hist=True)
-        ui.add_tab(fig, 'Ap %i' %i)
+        #ui.add_tab(fig, 'Ap %i' %i)
     
     
     #ui.show()
@@ -250,7 +250,8 @@ def plot_lcs(fpm, flux_ap, scale, filename=None):
 
 #====================================================================================================
 @timer
-def diagnostic_figures(fitspath, AIC, psf_par, psf_par_alt, flux_psf, window):
+def diagnostic_figures(fitspath, flux_ap, flux_psf, psf_par, psf_par_alt, AIC,
+                       Rvec, scale, window):
     #plot some statistics on the parameters!!
     
     #create directory for figures to be saved
@@ -259,7 +260,7 @@ def diagnostic_figures(fitspath, AIC, psf_par, psf_par_alt, flux_psf, window):
         figdir.mkdir()
     
     #masked parameters, masked parameter variance
-    pm, pvm, fpm = diagnostics(AIC, psf_par, psf_par_alt, flux_psf, window)
+    pm, pvm, fpm = diagnostics(psf_par, psf_par_alt, flux_psf, AIC, Rvec, window)
     fitcoo = pm[...,:2]
     
     #plot histograms of parameters
@@ -272,7 +273,7 @@ def diagnostic_figures(fitspath, AIC, psf_par, psf_par_alt, flux_psf, window):
     #plot_coord_walk(fitcoo, str(figdir/'coo.walk.png'))
     plot_coord_jump(fitcoo, str(figdir/'coo.jump.png'))
 
-    plot_lcs(str(figdir/'lc.ap.png'))
+    plot_lcs(fpm, flux_ap, scale, str(figdir/'lc.ap.png'))
     
     
     #plot queue occupancy if available

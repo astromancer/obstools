@@ -105,7 +105,7 @@ class StarFitLM(StarFit):
         #else:
         
         if result.success and psf.validate(plsq, self.window):
-            self.logger.info('Successfully fit {} function to stellar profile.'
+            self.logger.debug('Successfully fit {} function to stellar profile.'
                              ''.format(psf))
             
             #if self.caching:
@@ -121,7 +121,7 @@ class StarFitLM(StarFit):
             return p, punc, aics
             
         else:    
-            self.logger.info('FIT DID NOT CONVERGE!')         
+            self.logger.info('FIT DID NOT CONVERGE!')
             self.logger.debug(result.message)
             #self.logger.debug(result.info)
             self.call_count += 1    #NOTE: This could be a simple decorator??
