@@ -83,6 +83,13 @@ class GaussianPSF(_GaussianPSF):
         #return np.linalg.inv(P)                              
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def precision_matrix(self, params):
+        _, _, _, a, b, c, _ = self.plist(params)
+        P = np.array([[a,   -b],
+                      [-b,  c ]]) * 2
+        return P
+    
+    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def theta(self, params):
         _, _, _, a, b, c, _ = self.plist(params)
         return -0.5*np.arctan2( -2*b, a-c )

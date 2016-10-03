@@ -141,12 +141,52 @@ class PSF(object):
     
 
 #****************************************************************************************************    
-def Gaussian2D(p, grid):
-    '''Elliptical Gaussian function for fitting star profiles.'''
-    x0, y0, z0, a, b, c, d = p
-    y, x = grid
-    return z0 * np.exp(-(a*(x-x0)**2 -2*b*(x-x0)*(y-y0) + c*(y-y0)**2 )) + d
+#def gaussian2D(p, grid):
+    #'''Elliptical Gaussian function for fitting star profiles.'''
+    #x0, y0, z0, a, b, c, d = p
+    #y, x = grid
+    #xm, ym = x-x0, y-y0
+    #return z0 * np.exp(-(a*xm**2 - 2*b*xm*ym + c*ym**2)) + d
 
+def gaussian2D(p, grid):
+    '''Elliptical Gaussian function for fitting star profiles.''' #slightly optimized
+    _, _, z0, a, b, c, d = p
+    yxm = grid - p[1::-1, np.newaxis, np.newaxis]
+    yxm2 = yxm * yxm
+    return z0 * np.exp(-(a*yxm2[1] - 2*b*yxm[0]*yxm[1] + c*yxm2[0])) + d
+
+#from scipy.stats import multivariate_normal
+#def gaussian2D(p, grid):
+    #'''Elliptical Gaussian function for fitting star profiles.'''
+    #_, _, z0, a, b, c, d = p
+    #detP = (a*c + b*b) * 4
+    ##inverse of precision matrix
+    #covm = (1 / detP) * np.array([[c,   b],
+                                  #[b,   a]]) * 2
+    
+    #return z0 * multivariate_normal.pdf(grid.T, p[1::-1], covm)
+
+#def gaussian2D(p, grid):
+    #'''Elliptical Gaussian function for fitting star profiles.''' #more optimized?
+    #_, _, z0, a, b, c, d = p
+    #P = np.array([[a,   -b],
+                  #[-b,  c ]])
+    #yxm = grid - p[1::-1, np.newaxis]
+    #return z0 * np.exp(-(np.einsum('...i,...i->...', yxm.T.dot(P), yxm.T))) + d
+
+#from scipy.linalg import blas
+#def gaussian2D(p, grid):
+    #'''Elliptical Gaussian function for fitting star profiles.''' #more optimized?
+    #_, _, z0, a, b, c, d = p
+    #P = np.array([[a,   -b],
+                  #[-b,  c ]])
+    #gs = grid.shape
+    #yxm = grid.reshape(2,-1) - p[1::-1, np.newaxis]
+    #return z0 * np.exp(-(np.einsum('...i,...i->...',
+                                   #blas.dgemm(1., yxm.T, P), yxm.T))
+                      #).reshape(gs[1:]) + d    
+
+    
 
 #****************************************************************************************************    
 class GaussianPSF(PSF):
@@ -156,7 +196,7 @@ class GaussianPSF(PSF):
     def __init__(self):
         default_params = (0, 0, 1, .2, 0, .2, 0)
         to_cache = slice(3,6)
-        PSF.__init__(self, Gaussian2D, default_params, to_cache)
+        PSF.__init__(self, gaussian2D, default_params, to_cache)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integrate(self, p):

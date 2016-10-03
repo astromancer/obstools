@@ -226,7 +226,7 @@ class VisPlot():
             #default behaviour of this function changes depending on the time of day.
             #if calling during early morning hours (at telescope) - let midnight refer to previous midnight
             #if calling during afternoon hours - let midnight refer to coming midnight
-            d = now.day + (now.hour > 7)
+            d = now.day# + (now.hour > 7)    #FIXME =32??
             date = datetime(now.year, now.month, d, 0, 0, 0)
         else:
             raise NotImplementedError

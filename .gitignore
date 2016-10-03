@@ -37,4 +37,6 @@ plan/plan.py
 
 transients/gaia/alerts.csv
 
+phot/find.test.py
+
 spectra

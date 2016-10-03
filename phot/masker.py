@@ -10,11 +10,12 @@ class Masker():     #TODO: optimize - combs of coords, r that yield the same mas
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def update(self, grid, coords):
-        self.d = self.get_pixel_distance(grid, coords)
+        self.d = self.get_pixel_distance(grid, coords)  #TODO: update simply with relative shift!!!
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_pixel_distance(self, grid, coords):
-        cxx = coords[:, None, None, :].T                       #cast for arithmetic 
+        _ix = (slice(None),) + (None,) * (grid.ndim-1)
+        cxx = coords[_ix].T                       #cast for arithmetic 
         return np.sqrt(np.square(grid[...,None] - cxx).sum(0))     #pixel distances from star centre
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -82,4 +83,9 @@ class Masker():     #TODO: optimize - combs of coords, r that yield the same mas
                 
     #return np.moveaxis(photmasks, -1, 1), np.moveaxis(bgmasks, -1, 1) #photmasks, bgmask 
 
-   
+#class Masker2(Masker):
+        ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    #def get_pixel_distance(self, grid, coords):
+        #cxx = coords[:, None].T                       #cast for arithmetic 
+        #return np.sqrt(np.square(grid[...,None] - cxx).sum(0))     #pixel distances from star centre
+    

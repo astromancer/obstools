@@ -1,29 +1,29 @@
 import logging
+
 import numpy as np
 import lmfit as lm
 from scipy.optimize import leastsq
 
 from obstools.psf.models import GaussianPSF, ConstantBG
 from obstools.psf.psf import StarFit
+from lll import SynchedCounter, LoggingMixin
+from recipes.string import minfloatformat
 
-from lll import SynchedCounter
 
-
-#TODO: logging
-
+#****************************************************************************************************
+#TODO
 class StarFieldFitter():
     pass
 
 #****************************************************************************************************
-class StarFitLM(StarFit):
+class StarFitLM(LoggingMixin):
     #FIXME: parameter caching not working in parallel implementation
-        #TODO: masked SynchedArray
+    #TODO: masked SynchedArray
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     bg = ConstantBG()
         
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def __init__(self, psf=None, algorithm=None, caching=False, hints=True, 
-                 _print=False, **kw):       #TODO: logging!!!!
+    def __init__(self, psf=None, algorithm=None, caching=False, hints=True, **kw):
         '''
         Parameters
         ----------
@@ -47,38 +47,24 @@ class StarFitLM(StarFit):
         #set the psf function
         self.psf        = psf           or      GaussianPSF()
         self.caching    = caching
-        #pre-allocate cache memory
-        if caching:
-            self.max_cache_size = n = kw.get('max_cache_size', 25)
-            m = len(psf.to_cache)
-            self.cache = np.ma.array(np.zeros((n, m)),
-                                     mask=np.ones((n, m), bool))
-            
         self.hints      = hints
-        #initialise parameter cache with psf defaults
-        #self.cache      = []                  #parameter cache
+        self.call_count = SynchedCounter(0)   #keeps track of how many times the class has been called
         
-        self.call_count = 0                    #keeps track of how many times the class has been called
-        self.logger = logging.getLogger('phot.aux.StarFit')
-        
-        self._print = _print
-        
-        
-        #StarFit.__init__(self, psf, algorithm, caching, hints, _print, **kw)
-        
-        self.call_count = SynchedCounter(0)
-            
+        #pre-allocate cache memory
+        self.max_cache_size = n = kw.get('max_cache_size', 25 if caching else 0)
+        m = len(psf.to_cache)
+        self.cache = np.ma.array(np.zeros((n, m)),
+                                 mask=np.ones((n, m), bool))
+
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, grid, data, data_stddev=None):
         
+        psf = self.psf
         Y, X = grid
         params = self.p0guess(data)
-        #params = self.psf._set_param_bounds(params, data)
-        #print( list(self.psf.params.valuesdict().values()) )
+        self.logger.debug('Guessed: (%s)' %', '.join(map(minfloatformat, psf.plist(params))))
         
         #Fit PSF here
-        psf = self.psf
-        #res = lm.minimize(psf.rss, params, 'leastsq', args=(data, grid))
         result = lm.minimize(psf.wrs, params, 'leastsq', args=(data, grid, data_stddev),
                              maxfev=2000)
         plsq = result.params
@@ -126,6 +112,7 @@ class StarFitLM(StarFit):
             #self.logger.debug(result.info)
             self.call_count += 1    #NOTE: This could be a simple decorator??
             #return
+            return None#, None, None
         
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def p0guess(self, data):

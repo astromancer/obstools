@@ -383,29 +383,31 @@ class FastExtractor(object):
         Extract frames from list of fits files.  Assuming all the files in the input list are
         fits complient and have the same basic structure, data extraction can be done ~10**6 
         times faster than it can with pyfits (even without multiprocessing!!) by skipping unneessary 
-        check ad other cuft.
+        check and other cuft.
         '''
-        self.start      = start         = kw.setdefault( 'start',       0               )
-        self.step       = step          = kw.setdefault( 'step',        1               )
-        self.stop       = stop          = kw.setdefault( 'stop',        None            )
+        self.start      = start         = kw.setdefault('start',       0)
+        self.step       = step          = kw.setdefault('step',        1)
+        self.stop       = stop          = kw.setdefault('stop',        None)
 
-        keys            = kw.setdefault( 'keygrab',     None            )
+        keys            = kw.setdefault('keygrab',     None            )
         self.headkeys                   = []
 
-        self.filelist                   = parsetolist( filelist )
+        self.filelist                   = parsetolist(filelist)
         self.Nfiles     = Nfiles        = len(filelist)
-        self.clobber                    = kw.setdefault( 'clobber',     True            )
+        self.clobber                    = kw.setdefault('clobber',     True)
         #self.outfiles                   = []
         
         self.data_buffer = BytesIO()
         self.text_buffer = []
         
         #keyword extraction setup
-        if isinstance( keys, (str,type(None)) ):        keys = keys,
-        self.match_keys = matchmaker( *keys )
+        if isinstance(keys, (str, type(None))):
+            keys = keys,
+            
+        self.match_keys = matchmaker(*keys)
         self.keygrab = keys
         
-        self.bar        = kw.pop( 'progressbar', ProgressBar()    )     #initialise progress bar unless False
+        self.bar        = kw.pop('progressbar', ProgressBar())     #initialise progress bar unless False
         
         self.filemem    = []            #memory buffer to reconstruct which frame came from which file
         self.setup( self.filelist[0] )
@@ -423,20 +425,20 @@ class FastExtractor(object):
         fileobj.close()
        
         #Find the index position of the first extension and data start
-        mo = self.match_end.search( filemap )
+        mo = self.match_end.search(filemap)
         estart = mo.end()                               #extension 1 starts here
         #NOTE: There ay not be extensions
-        mo = self.match_end.search( filemap, estart )
+        mo = self.match_end.search(filemap, estart)
         self.data_start = dstart = mo.end()             #data for extension 1 starts here
 
         #master header is before estart
         mheader_str = filemap[:estart].decode()
-        self.master_header = mheader = pyfits.Header.fromstring( mheader_str )
+        self.master_header = mheader = pyfits.Header.fromstring(mheader_str)
 
         #header of first extension is between *estart* and *dstart*
         self.header_size = hsize = dstart-estart                           #header size
         header_str = filemap[estart:dstart].decode()
-        header = pyfits.Header.fromstring( header_str )
+        header = pyfits.Header.fromstring(header_str)
 
         #figure out the size of a data block
         self.nax1, self.nax2 = header['naxis1'], header['naxis2']
@@ -461,7 +463,7 @@ class FastExtractor(object):
         self.count = 0
         
         if self.bar:
-            self.bar.create( stop or len(self.filelist) )
+            self.bar.create(stop or len(self.filelist))
         
         #TODO: MULTIPROCESS!!
         for i,filename in enumerate(self.filelist):
@@ -474,10 +476,10 @@ class FastExtractor(object):
             stop = filesize//dstep              #number of frames to extract from this file
             indices = dstart + dstep*np.arange(start,stop,step)
             for ix in indices:
-                self.data_buffer.write( filemap[ix:ix+dsize] )
+                self.data_buffer.write(filemap[ix:ix+dsize])
                 #grab header keys
-                raw_text = self.match_keys.findall( filemap[ix-hsize:ix] )
-                self.text_buffer.extend( raw_text )
+                raw_text = self.match_keys.findall(filemap[ix-hsize:ix])
+                self.text_buffer.extend(raw_text)
             
             self.count += 1
             self.bar.progress( self.count )
@@ -493,13 +495,13 @@ class FastExtractor(object):
         '''get the data from the buffer'''
         
         #dtype = 'float32'               #TODO: get data type from header info
-        raw_data = np.frombuffer( self.data_buffer.getbuffer(), '>f32' )        #data is big-endian??
+        raw_data = np.frombuffer(self.data_buffer.getbuffer(), '>f32')        #data is big-endian??
         
-        return raw_data.reshape( -1, self.nax2, self.nax1 )
+        return raw_data.reshape(-1, self.nax2, self.nax1)
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_keys(self, defaults=[], return_type='list'):
-        return merger( self.text_buffer, self.keygrab, defaults, return_type )
+        return merger(self.text_buffer, self.keygrab, defaults, return_type)
     
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def multiext(self):
@@ -509,11 +511,12 @@ class FastExtractor(object):
     def cube(self):
         self.loop()
         #header = self.master_header.copy()
-        return pyfits.PrimaryHDU( self.get_data(), self.master_header  )
+        return pyfits.PrimaryHDU(self.get_data(), self.master_header)
         
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def burst(self):
         raise NotImplementedError
+
 
 #****************************************************************************************************
 class NoDaemonProcess(mp.Process):
@@ -610,11 +613,12 @@ def matchmaker(*keys):
     #create the matching pattern for each keyword - consists of keyword followed by match for any
     #character following that up to total length of CARD_LENGTH (default 80) characters. 
     #eg. FOO.{77}
-    key_pattern_maker = lambda key, follow : '%s%s{%i}'%(key.upper(), follow, CARD_LENGTH-len(key))
+    key_pattern_maker = lambda key, follow : '%s%s{%i}'%(key.upper(), follow, 
+                                                         CARD_LENGTH-len(key))
     #Join the individual patterns with the re OR flag, so we match for any of the keyword lines
-    pattern = '|'.join( itt.starmap(key_pattern_maker, zip(keys, following)) )
+    pattern = '|'.join(itt.starmap(key_pattern_maker, zip(keys, following)))
     
-    return re.compile( pattern.encode() )
+    return re.compile(pattern.encode())
                 
 #====================================================================================================
 def extractor(chunk):
