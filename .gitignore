@@ -1,4 +1,5 @@
-
+#pycharm
+.idea/
 
 #kate tmp files
 *.kate-swp
@@ -38,5 +39,9 @@ plan/plan.py
 transients/gaia/alerts.csv
 
 phot/find.test.py
+phot/phot.scaled*.py
+phot/phot.MWE.test.py
+phot/phot.leak.py
+
 
 spectra
