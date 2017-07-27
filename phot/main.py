@@ -845,6 +845,9 @@ def catch_and_log(func):
 
     return wrapper
 
+class FrameProcessor():
+    
+
 
 # @catch_and_log
 def frame_proc(incoming):
