@@ -1,18 +1,29 @@
 import warnings
+import itertools as itt
 from pathlib import Path
+import multiprocessing as mp
+
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
-from grafico.lc import lcplot
+from grafico.ts import TSplotter
 # from obstools.psf.psf import GaussianPSF
 from obstools.psf.lm_compat import EllipticalGaussianPSF
-from decor.profile import timer
+from decor.profile.timers import timer
+from ansi.table import Table
+from recipes.misc import is_interactive
 
+from IPython import embed
+
+tsplt = TSplotter()
+
+#TODO: plot best model balance for each star
 
 #====================================================================================================
 @timer
-def diagnostics(modelDb):
+def diagnostics(modelDb, locData):
 
     #np.isnan(flux_ap)
     #problematic = list(filter(None, res))
@@ -22,7 +33,13 @@ def diagnostics(modelDb):
     #Diagnostics
     #bad_aic = (np.isnan(AIC) | (abs(AIC) == np.inf))
 
-    # Check which model is preferredmod
+    # Print fitting summary table
+    # FIXME: error if not fitting
+    # tbl = fit_summary(modelDb, locData)
+    # print(tbl)
+
+
+    # Check which model is preferred
     lbgb = modelDb.best.ix == modelDb._ix[modelDb.db.bg]  #this is where the pure bg model is the best fit
 
     badflux = np.isnan(modelDb.best.flux) | lbgb
@@ -34,7 +51,7 @@ def diagnostics(modelDb):
 
     #TODO: circular??
 
-    badfits = np.isnan(par).any(-1)
+    badfits = np.isnan(par).any(-1) | np.isinf(par).any(-1)
     #ibad = np.where(badfits)
 
     pm = np.ma.array(par, copy=True)
@@ -48,66 +65,107 @@ def diagnostics(modelDb):
 
 
 #====================================================================================================
+def fit_summary(modelDb, locData):
+    names, tbl = [], []
+    for model in modelDb.gaussians:
+        par = modelDb.data[model].params
+        badfits = np.isnan(par).any(-1)
+        s = badfits.sum(0)  # number of bad fits per star
+        f = (s / par.shape[0])  # percentage
+        d = map('{:d} ({:.2%})'.format, s, f)
+        tbl.append(list(d))
+        names.append(modelDb.model_names[modelDb._ix[model]])
+
+    # summary table
+    coo = locData.rcoo[modelDb.ix_fit]
+    col_headers = list(map('Star {0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, modelDb.ix_fit, coo))
+    tbl = Table(tbl,
+                title='Fitting summary: Unconvergent', title_props=dict(txt='bold', bg='m'),
+                row_headers=names, col_headers=col_headers)
+
+    return tbl
+
+#====================================================================================================
 @timer
 def diagnostic_figures(locData, apData, modelDb, fitspath=None, save=True):
 
-    #     apData.flux, flux_bg_pp, aps_scale_fwhm,
-    #                    flux_psf, psf_par, psf_par_alt, AIC,
-    #                    Rcoo, window, ix_fit, fitspath=None, save=True):
+    # labels for legends
+    nstars = apData.bg.shape[-1]
+    ix = modelDb.ix_fit or range(nstars)
+    rcoo = locData.rcoo     # finder.Rcoo[ix]
+    ir = locData.ir         # finder.ir
+    w = locData.window      # finder.window
+    star_labels = list(map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, ix, rcoo))
+
     # #plot some statistics on the parameters!!
-    #
-    Rcoo_fit = locData.rcoo[list(modelDb.ix_fit)]
-
-    # Rcoo_fit = Rcoo[list(ix_fit)]
-
-    if save:
-        #create directory for figures to be saved
-        figdir = fitspath.with_suffix('.figs')
-        if not figdir.exists():
-            figdir.mkdir()
-
-        @timer
-        def save(fig, filename):
-            #NOTE existing files will be clobbered
-            trg = str(figdir / filename)
-            fig.savefig(trg)
-    else:
-        save = lambda *a: '' #null func
-
-    # from IPython import embed
-    # embed()
-
-    # modelDb
-
     # masked parameters, masked parameter variance
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # nans cause Runtimewarning
-        pm, paltm, fpm = diagnostics(modelDb)
-    fitcoo = pm[..., 1::-1] - Rcoo_fit
+        pm, paltm, fpm = diagnostics(modelDb, locData)
+    fitcoo = pm[..., 1::-1]    #- locData.rcoo[list(modelDb.ix_fit)]
+    fitcoo -= np.nanmedian(fitcoo, 0)
 
-    #plot histograms of parameters
-    pm[..., :2] -= pm[..., :2].mean(0)      # subtract mean coordinates
-    fig = plot_param_hist(pm, EllipticalGaussianPSF.pnames_ordered)
-    save(fig, 'p.hist.png')
+    figs = {}
+    # plot histograms of parameters
+    if pm.size:
+        pm[..., :2] -= pm[..., :2].mean(0)      # subtract mean coordinates
+        fig = plot_param_hist(pm, EllipticalGaussianPSF.pnames_ordered)
+        figs['p.hist.png'] = fig
 
-    pnames = 'sigx, sigy, cov, theta, ellipticity, fwhm'.split(', ')
-    fig = plot_param_hist(paltm, pnames)
-    save(fig, 'p.alt.hist.png')
+        pnames = 'sigx, sigy, cov, theta, ellipticity, fwhm'.split(', ')
+        fig = plot_param_hist(paltm, pnames)
+        figs['p.alt.hist.png'] = fig
 
+    if fitcoo.size:
+        fig = plot_coord_scatter(fitcoo, rcoo[ir], w)
+        figs['coo.fit.scatter.png'] = fig
 
-    fig = plot_coord_scatter(fitcoo, locData.rcoo[locData.ir], locData.window)
-    save(fig, 'coo.scatter.png')
-    #plot_coord_walk(fitcoo, str(figdir/'coo.walk.png'))
-    fig = plot_coord_jump(fitcoo)
-    save(fig, 'coo.jump.png')
+        fig = plot_coord_jump(fitcoo)
+        figs['coo.fit.jump.png'] = fig
+    elif not locData.find_with_fit:
+        #
+        fig = plot_coord_scatter(locData.coords, rcoo[ir], w)
+        figs['coo.found.scatter.png'] = fig
 
-    fig = plot_lc_psf(fpm)
-    save(fig, 'lc.psf.png')
+        fig = plot_coord_jump(locData.coords)
+        figs['coo.found.jump.png'] = fig
 
-    *figs_lc, fig_bg  = plot_lc_aps(apData)
+    if fpm.size:
+        fig = plot_lc_psf(fpm, star_labels)
+        figs['lc.psf.png'] = fig
+
+    *figs_lc, fig_bg  = plot_lc_aps(apData, star_labels)
     for i, fig in enumerate(figs_lc):
-        save(fig, 'lc.aps.%i.png' % i)
-    save(fig, 'lc.bg.png')
+        figs['lc.aps.%i.png' % i] = fig
+    figs['lc.bg.png'] = fig_bg
+
+    if save:
+        save_figures(figs, fitspath)
+
+
+@timer
+def save_figures(figures, path):
+    # create directory for figures to be saved
+    figdir = path.with_suffix('.figs')
+    if not figdir.exists():
+        figdir.mkdir()
+    # NOTE existing files will be clobbered
+
+    fnames = [str(figdir / filename) for filename in figures.keys()]
+    figs = figures.values()
+
+    if is_interactive():
+        list(map(saver, figs, fnames))
+    else:
+        #TODO: figure out why this does not work in ipython
+        pool = mp.Pool()
+        pool.starmap(saver, zip(figs, fnames))
+        pool.close()
+        pool.join()
+
+
+def saver(fig, filename):
+    fig.savefig(filename)
 
 
 #====================================================================================================
@@ -201,6 +259,9 @@ def plot_coord_scatter(coo, rcoo, window, filename=None, **kws):
 
     fig.tight_layout()
 
+    # print('fix coo scatter ' * 100)
+    # embed()
+
     return fig
 
 #@timer
@@ -227,6 +288,12 @@ def plot_coord_jump(coords):    #coords
     coords_1 = np.roll(coords, -1, axis=0)
     jumps = np.sqrt(np.square(coords - coords_1).sum(-1))
 
+    # index outliers
+    l = jumps > 3
+    if l.any():
+        for w, j in zip(np.where(l)[0], jumps[l]):
+            ax.text(w, j, str(w), fontsize=6)       #FIXME: May have overlapping text here...
+
     ax.plot(jumps, 'x', alpha=0.75)
     ax.set_title('Coordinate jumps')
     Nstars = coords.shape[1]
@@ -237,93 +304,391 @@ def plot_coord_jump(coords):    #coords
 
     return fig
 
+
+def get_proxy_art(art):
+    #TODO: maybe move to tsplt???
+    proxies = []
+    for a in art:
+        clr = a.get_children()[0].get_color()
+        r = Rectangle((0, 0), 1, 1, color=clr)
+        proxies.append(r)
+    return proxies
+
+
 @timer
-def plot_lc_psf(fpm):
+def plot_lc_psf(fpm, labels):
     #PSF photometry light curves
-    fig, art, *rest = lcplot(fpm.T, title='psf flux',
+    fig, art, *rest = tsplt(fpm.T, title='psf flux',
                              draggable=False,
                              show_hist=True)
+
+    # legend
+    hax = fig.axes[1]
+    proxies = []
+    for a in art:
+        clr = a.get_children()[0].get_color()
+        r = Rectangle((0,0), 1, 1, color=clr)
+        proxies.append(r)
+    hax.legend(proxies, labels, loc='upper right', markerscale=3)
+
+    return fig
+
+
+def plot_lc(args):
+    data, s, labels = args
+    print('plotting lc aps', s)
+    fig, art, *rest = tsplt.plot(data,
+                             title='aperture flux (%.1f*fwhm)' %s,
+                             draggable=False,
+                             show_hist=True)
+    # legend
+    hax = fig.axes[1]
+    proxies = get_proxy_art(art)
+    hax.legend(proxies, labels, loc='upper right', markerscale=3)
+
     return fig
 
 @timer
-def plot_lc_aps(apdata):
+def plot_lc_aps(apdata, labels):
     #from grafico.multitab import MplMultiTab
     ##ui = MplMultiTab()
     figs = []
-    for i, s in enumerate(apdata.scale):
-        print('plotting lc aps', i, s)
-        fig, art, *rest = lcplot(apdata.flux[...,i].T,
-                                 title='aperture flux (%.1f*fwhm)' %s,
-                                 draggable=False,
-                                 show_hist=True)
-        figs.append(fig)
+
+    with mp.Pool() as pool:
+        figs = pool.map(plot_lc,
+                        zip(apdata.flux.T, apdata.scale, itt.repeat(labels)))
+
+    # for i, s in enumerate(apdata.scale):
+    #     print('plotting lc aps', i, s)
+    #     fig, art, *rest = tsplt.plot(apdata.flux[...,i].T,
+    #                              title='aperture flux (%.1f*fwhm)' %s,
+    #                              draggable=False,
+    #                              show_hist=True)
+    #     # legend
+    #     hax = fig.axes[1]
+    #     proxies = get_proxy_art(art)
+    #     hax.legend(proxies, labels, loc='upper right', markerscale=3)
+    #
+    #     figs.append(fig)
         #ui.add_tab(fig, 'Ap %i' %i)
     #ui.show()
 
-    fig, art, *rest = lcplot(apdata.bg.T,
+    # Background light curves
+    fig, art, *rest = tsplt.plot(apdata.bg.T,
                              title='bg flux (per pix.)',
                              draggable=False,
                              show_hist=True)
+    # legend
+    hax = fig.axes[1]
+    proxies = get_proxy_art(art)
+    hax.legend(proxies, labels, loc='upper right', markerscale=3)
+
+    pool.join()
     figs.append(fig)
 
     return figs
 
 
+from obstools.aps import ApertureCollection
 #====================================================================================================
-from matplotlib import pyplot as plt
-def display_frame_coords(data, coords, window, vectors=None, ref=None, outlines=None,
-                         **kws):
+def from_params(model, params, scale=3, **kws):
 
-    from grafico.imagine import ImageDisplay #FITSCubeDisplay,
-    from obstools.aps import ApertureCollection
+    converged = ~np.isnan(params).any(1)
+    ap_data = np.array([model.get_aperture_params(p) for p in params])
+    coords = ap_data[converged, :2] #::-1
+    sigma_xy = ap_data[converged, 2:4]
+    widths, heights = sigma_xy.T * scale * 2
+    angles = np.degrees(ap_data[converged, -1])
 
-    fig, ax = plt.subplots()
-    imd = ImageDisplay(ax, data, origin='llc')
-    imd.connect()
+    aps = ApertureCollection(coords=coords, widths=widths, heights=heights, angles=angles, **kws)
+    return aps, ap_data
 
-    apc = 'darkorange'
-    aps = ApertureCollection(coords=coords[:,::-1], radii=7,
-                             ec=apc, lw=1, ls='--',
-                             **kws)
-    aps.axadd(ax)
-    aps.annotate(color=apc, size='small')
 
-    if window:
+# def window_panes(coords, window):
+#     from matplotlib.patches import Rectangle
+#     from matplotlib.collections import PatchCollection
+#     from scipy.spatial.distance import cdist
+#
+#     sdist = cdist(coords, coords)
+#     sdist[np.tril_indices(len(coords))] = np.inf  # since the distance matrix is symmetric, ignore lower half
+#     ix = np.where(sdist < window / 2)
+#     overlapped = np.unique(ix)
+#
+#     llc = coords[:, ::-1] - window / 2
+#     patches = [Rectangle(coo, window, window) for coo in llc]
+#     c = np.array(['g'] * len(coords))
+#     c[overlapped] = 'r'
+#     rcol = PatchCollection(patches, edgecolor=c, facecolor='none',
+#                            lw=1, linestyle=':')
+#     return rcol
+
+#====================================================================================================
+
+from grafico.imagine import FitsCubeDisplay
+
+class FrameDisplay(FitsCubeDisplay):
+    # TODO: blit
+    # TODO: let the home button restore the original config
+
+    # TODO: enable scroll through - ie inherit from ImageCubeDisplayA
+    #     - middle mouse to switch between prePlot and current frame
+    #     - toggle legend elements
+
+    # TODO: make sure annotation appear on image area or on top of other stars
+
+    def __init__(self, filename, *args, **kwargs):
+        # self.foundCoords = found # TODO: let model carry centroid coords?
+        FitsCubeDisplay.__init__(self, filename, *args, **kwargs)
+
+
+        # FIXME:  this is not always appropriate
+        self.ax.invert_xaxis() # so that it matches sky orientation
+
+
+    def add_aperture_from_model(self, model, params, r_scale_sigma, rsky_sigma,  **kws):
+        # apertures from elliptical fit
+
+        apColour = 'g'
+        aps, ap_data = from_params(model, params, r_scale_sigma,
+                                   ec=apColour, lw=1, ls='--', **kws)
+        aps.axadd(self.ax)
+        # aps.annotate(color=apColour, size='small')
+
+        # apertures based on finder + scaled by fit
+        # from obstools.aps import ApertureCollection
+        apColMdl = 'c'
+        sigma_xy = ap_data[:, 2:4]
+        r = np.nanmean(sigma_xy) * r_scale_sigma * np.ones(len(foundCoords))
+        aps2 = ApertureCollection(coords=foundCoords[:, ::-1], radii=r,
+                                  ec=apColMdl, ls='--', lw=1)
+        aps2.axadd(self.ax)
+        # aps2.annotate(color=apColMdl, size='small')
+
+        # skyaps
+        rsky = np.multiply(np.nanmean(sigma_xy), rsky_sigma)
+        #rsky = np.nanmean(sigma_xy) * rsky_sigma * np.ones_like(foundCoords)
+        coosky = [foundCoords[:, ::-1]] * 2
+        coosky = np.vstack(list(zip(*coosky)))
+        apssky = ApertureCollection(coords=coosky, radii=rsky,
+                                    ec='b', ls='-', lw=1)
+        apssky.axadd(self.ax)
+
+        # Mark aperture centers
+        self.ax.plot(*params[:, 1::-1].T, 'x', color=apColour)
+
+    def mark_found(self, xy, style='rx'):
+        # Mark coordinates from finder algorithm
+        return self.ax.plot(*xy, style)
+
+    def add_windows(self, xy,  window, sdist=None, enumerate=True):
         from matplotlib.patches import Rectangle
         from matplotlib.collections import PatchCollection
-        from scipy.spatial.distance import cdist
 
-        sdist = cdist(coords, coords)
-        sdist[np.tril_indices(len(coords))] = np.inf  # since the distance matrix is symmetric, ignore lower half
-        ix = np.where(sdist < window/2)
+        n = len(xy)
+        if sdist is None:
+            from scipy.spatial.distance import cdist
+            sdist = cdist(xy, xy)
+
+        # since the distance matrix is symmetric, ignore lower half
+        try:
+            sdist[np.tril_indices(n)] = np.inf
+        except:
+            print('FUCKUP with add_windows ' *100)
+            embed()
+            raise
+        ix = np.where(sdist < window / 2)
         overlapped = np.unique(ix)
 
-        llc = coords[:,::-1] - window/2
+        # corners
+        llc = xy - window / 2
+        urc = llc + window
+        #patches
         patches = [Rectangle(coo, window, window) for coo in llc]
-        c = np.array(['g'] * len(coords))
+        #colours
+        c = np.array(['g'] * n)
         c[overlapped] = 'r'
-        rcol = PatchCollection(patches, edgecolor=c, facecolor='none',
-                               lw=1, linestyle=':')
-        ax.add_collection(rcol)
+        rectangles = PatchCollection(patches,
+                                     edgecolor=c, facecolor='none',
+                                     lw=1, linestyle=':')
+        self.ax.add_collection(rectangles)
+
+        # annotation
+        text = []
+        if enumerate:
+            # names = np.arange(n).astype(str)
+            for i in range(n):
+                txt = self.ax.text(*urc[i], str(i), color=c[i])
+                text.append(txt)
+                # ax.annotate(str(i), urc[i], (0,0), color=c[i],
+                #                  transform=ax.transData)
+
+            # print('enum_'*100)
+            # embed()
+        return rectangles, text
 
 
-    if outlines is not None:
+    def add_detection_outlines(self, outlines):
         from matplotlib.colors import to_rgba
-        overlay = np.empty(data.shape+(4,))
+        overlay = np.empty(self.data.shape+(4,))
         overlay[...] = to_rgba('0.8', 0)
         overlay[...,-1][~outlines.mask] = 1
-        ax.hold(True)
-        ax.imshow(overlay)
+        # ax.hold(True) # triggers MatplotlibDeprecationWarning
+        self.ax.imshow(overlay)
 
-    if vectors is not None:
+    def add_vectors(self, vectors, ref=None):
         if ref is None:
             'cannot plot vectors without reference star'
-        Y, X = coords[ref]
+        Y, X = self.foundCoords[ref]
         V, U = vectors.T
-        ax.quiver(X, Y, U, V, color='r', scale_units='xy', scale=1, alpha=0.6)
+        self.ax.quiver(X, Y, U, V, color='r', scale_units='xy', scale=1, alpha=0.6)
+
+    def add_legend(self):
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Rectangle, Ellipse, Circle
+        from matplotlib.legend_handler import HandlerPatch, HandlerLine2D
+
+        def handleSquare(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+            w = width  # / 1.75
+            xy = (xdescent, ydescent - width / 3)
+            return Rectangle(xy, w, w)
+
+        def handleEllipse(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+            return Ellipse((xdescent + width / 2, ydescent + height / 2), width / 1.25, height * 1.25, angle=45, lw=1)
+
+        def handleCircle(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+            w = width / 2
+            return Circle((xdescent + width / 2, ydescent + width / 8), width / 3.5, lw=1)
+
+        apColCir = 'c'
+        apColEll = 'g'
+        apColSky = 'b'
+
+        # Sky annulus
+        pnts = [0], [0]
+        kws = dict(c=apColSky, marker='o', ls='None', mfc='None')
+        annulus = (Line2D(*pnts, ms=6, **kws),
+                   Line2D(*pnts, ms=14, **kws))
+
+        # Fitting
+        apEll = Ellipse((0, 0), 0.15, 0.15, ls='--', ec=apColEll, fc='none', lw=1)  # aperture
+        rect = Rectangle((0, 0), 1, 1, ec=apColEll, fc='none', ls=':')  # window
+        xfit = Line2D(*pnts, mec=apColEll, marker='x', ms=3, ls='none')  # fit position
+
+        # Circular aps
+        apCir = Circle((0, 0), 1, ls='--', ec=apColCir, fc='none', lw=1)
+        xcom = Line2D(*pnts, mec=apColCir, marker='x', ms=6, ls='none')  # CoM markers
+
+        proxies = (((apEll, xfit, rect), 'Elliptical aps. ($%g\sigma$)' % 3),
+                   (apCir, 'Circular aps. ($%g\sigma$)' % 3),
+                   (annulus, 'Sky annulus'),
+                   # (rect, 'Fitting window'),
+                   # ( xfit, 'Fit position'),
+                   (xcom, 'Centre of Mass'))
+
+        # proxies = [apfit, annulus, rect, xfit, xcom] # markers in nested tuples are plotted over each other in the legend YAY!
+        # labels = [, 'Sky annulus', 'Fitting window', 'Fit position', 'Centre of Mass']
+
+        handler_map = {  # Line2D : HandlerDelegateLine2D(),
+            rect: HandlerPatch(handleSquare),
+            apEll: HandlerPatch(handleEllipse),
+            apCir: HandlerPatch(handleCircle)
+        }
+
+        leg1 = self.ax.legend(*zip(*proxies),  # proxies, labels,
+                         framealpha=0.5, ncol=2, loc=3,
+                         handler_map=handler_map,
+                         bbox_to_anchor=(0., 1.02, 1., .102),
+                         # bbox_to_anchor=(0, 0.5),
+                         # bbox_transform=fig.transFigure,
+                         )
+        leg1.draggable()
+
+        fig = self.figure
+        fig.subplots_adjust(top=0.83)
+        figsize = fig.get_size_inches() + [0, 1]
+        fig.set_size_inches(figsize)
+
+
+from grafico.imagine import FitsCubeDisplay
+
+def displayCube(fitsfile, coords, rvec=None):
+
+    #TODO: colour the specific stars used to track differently
+
+    def updater(aps, i):
+        cxx = coords[i, None]
+        if rvec is not None:
+            cxx = cxx + rvec  # relative positions of all other stars
+        else:
+            cxx = cxx[None]        # make 2d else aps doesn't work
+        # print('setting:', aps, i, cxx)
+        aps.coords = cxx[:, ::-1]
+
+    im = FitsCubeDisplay(fitsfile, {}, updater,
+                         autoscale_figure=False, sidebar=False)
+    im.ax.invert_xaxis() # so that it matches sky orientation
+    return im
+
+
+# def display_frame_coords(data, foundCoords, params=None, model=None, window=None,
+#                          vectors=None, ref=None, outlines=None, save=False,
+#                          **kws):
+#
+#     #imd = ImageDisplay(data, origin='llc')
+#
+#     if params is not None:
+#
+#
+#
+#
+#     if window:
+#
+#
+#     if outlines is not None:
+#
+#
+#     if vectors is not None:
+#
+#
+#     fig.tight_layout()
+#     if save:
+#         fig.savefig(save)
+#
+#     return fig
+
+
+#====================================================================================================
+def plot_mean_residuals(modelDb):
+    # Plot mean residuals
+    from mpl_toolkits.axes_grid1 import AxesGrid
+
+    db = modelDb
+    names = {m: m.__class__.__bases__[0].__name__ for m in db.models}
+
+    fig = plt.figure()
+    fig.suptitle('Mean Residuals', fontweight='bold')
+    grid_images = AxesGrid(fig, 111,  # similar to subplot(212)
+                           nrows_ncols=(len(db.gaussians), len(db.ix_fit)),
+                           axes_pad=0.1,
+                           label_mode="L",  # THIS DOESN'T FUCKING WORK!
+                           # share_all = True,
+                           cbar_location="right",
+                           cbar_mode="edge",
+                           cbar_size="7.5%",
+                           cbar_pad="0%")
+
+    for i, model in enumerate(db.gaussians):
+        name = names[model]
+        for j, res in enumerate(db.resData[name]):
+            ax = grid_images.axes_column[j][i]
+            if i == 0:
+                ax.set_title('Star %i' % db.ix_fit[i])
+            im = ax.imshow(res)
+            ax.set_ylabel(name)
+        cbax = grid_images.cbar_axes[i]
+        ax.figure.colorbar(im, cax=cbax)
 
     return fig
-
 
 #====================================================================================================
 #TODO: plot class
@@ -359,7 +724,7 @@ def plot_q_mon(mon_q_file, save=False): #fitspath
 
     #if monitor_cpu:
         #t, *occ = np.loadtxt(monitor, delimiter=',', unpack=True)
-        #fig, ax, *stuff = lcplot(t, occ, errorbar={'ls':'-', 'marker':None},
+        #fig, ax, *stuff = tsplt.plot(t, occ, errorbar={'ls':'-', 'marker':None},
                             #show_hist=True,
                             #labels=['cpu%d'%i for i in range(Ncpus)])
         #fig.savefig(monitor+'.png')

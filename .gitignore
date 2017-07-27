@@ -28,10 +28,12 @@ psf/psffit.*py
 psf/psffind.py
 
 plan/.coordcache
+plan/.sitecache
 plan/.ipynb_checkpoints
+plan/.legend.fix
 plan/viz.ipynb
 plan/visibilities.py
-plan/viz.0.py
+plan/viz.[01].py
 plan/viz.py.bak
 plan/viztest.py
 plan/plan.py

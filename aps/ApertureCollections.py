@@ -3,7 +3,7 @@
 
 import re
 from copy import copy
-from pprint import pprint
+# from pprint import pprint
 
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -13,14 +13,13 @@ from matplotlib.transforms import IdentityTransform
 from matplotlib.colors import colorConverter
 rgba_array = colorConverter.to_rgba_array
 
-from myio import warn as Warn
 
 from recipes.iter import as_sequence, cycleN
-#from magic.array import grid_like
+from recipes.io import warn as Warn
 from recipes.dict import TransDict, SmartDict
 from recipes.meta import altflaggerFactory
-from ansi.str import banner
-from decor import expose, profile
+from ansi import banner
+# from decor import expose, profile
 #from decor.misc import unhookPyQt
 
 #from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
@@ -413,12 +412,13 @@ class ApertureCollection(EllipseCollection):
         #pprint( kws )
         #print()
 
+
         #AliasMixin.__init__(self)
         radii = kws.pop('radii', [])
         #radii = np.asarray(radii, dtype=float)
 
-        kws['widths'] = widths or radii
-        kws['heights'] = heights or radii
+        kws['widths'] = 2 * radii if widths is None else widths
+        kws['heights'] = 2 * radii if heights is None else heights
         kws['angles'] = angles
         kws = self._properties(**kws)
 
@@ -430,10 +430,10 @@ class ApertureCollection(EllipseCollection):
         off = self._original_properties.pop('offsets')
         self._coord_shape = off.shape
 
-        #print()
-        #print( 'after ApertureProperties:' )
-        #pprint( kws )
-        #print()
+        # print()
+        # print( 'after ApertureProperties:' )
+        # pprint( kws )
+        # print()
 
         #TODO: handle actual elliptical apertures!!!!!
 
