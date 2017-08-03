@@ -117,26 +117,62 @@ from obstools.phot.masker import MaskMachine
 from recipes.array import ndgrid
 from scipy.spatial.distance import cdist
 
+from scipy import ndimage
 from photutils.segmentation import SegmentationImage
 from photutils.detection import detect_threshold
 from photutils.segmentation import detect_sources
 
+
 class SegmentationHelper(SegmentationImage):
-    def counts(self, image):
-        # Will not return flux for stars that have None as a slice
-        data = image - np.median(image[self.data == 0)       # bg subtract
-        counts = np.empty(self.nlabels)
+    @classmethod
+    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_sort=True):
+        # detect
+        threshold = detect_threshold(image, snr)
+        segm = detect_sources(image, threshold, npixels)
+        # initialize
+        ins = cls(segm.data)
 
-        for i, sl in enumerate(filter(None, self.slices)):
-            counts[i] = data[sl][self.data[sl].astype(bool)].sum()
+        if edge_cutoff:
+            ins.remove_border_labels(edge_cutoff, partial_overlap=False)
+            # ins.relabel_sequential()
 
-        return counts
-        return flux_est / segm.areas[segm.areas != 0][1:]
+        if deblend:
+            from photutils import deblend_sources
+            ins = deblend_sources(image, ins, npixels)
 
-    def com(self, image):
-        """Center of mass for segments"""
-        return np.array(CoM(image, self.data, self.labels))
-        # NOTE: row, col coords
+        if flux_sort:
+            flx = ins.flux(image)
+            flx_srt, ix = zip(*sorted(zip(flx, ins.labels), reverse=1))
+
+            # re-order segmented image labels
+            offset = 100
+            for new, old in enumerate(ix):
+                old += 1  # ignore background label
+                new += offset + 1
+                ins.relabel(old, new)
+            ins.data[ins.data != 0] -= offset
+
+        return ins
+
+    def counts(self, image, labels=None):
+        if labels is None:
+            labels = self.labels
+        return ndimage.sum(image, self.data, labels)
+
+    def flux(self, image, labels=None, bgfunc=np.median):
+        if labels is None:
+            labels = self.labels
+
+        counts = self.counts(image, labels)
+        areas = self.area(labels)
+        bg = bgfunc(image[self.data == 0])
+        return (counts / areas) - bg
+
+    def com(self, image, labels=None):
+        if labels is None:
+            labels = self.labels
+        return np.array(CoM(image, self.data, labels))
+
 
 class StarTracker():
 
