@@ -85,6 +85,7 @@ class SegmentationHelper(SegmentationImage):
     def com(self, image, labels=None):
         if labels is None:
             labels = self.labels
+
         return np.array(ndimage.center_of_mass(image, self.data, labels))
 
     def snr(self, image, labels=None):
@@ -123,10 +124,9 @@ class StarTracker():
 
     def get_shift(self, image):
 
-        # bg = np.median(image[self.segm.data == 0])
-        # image -
+        bg = np.median(image[self.segm.data == 0])
 
-        com = self.segm.com(image)
+        com = self.segm.com(image - bg)
         l = ~self.is_outlier(com)
         shift = np.mean(self.rcoo[l] - com[l], 0)
         return shift
