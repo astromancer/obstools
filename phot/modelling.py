@@ -127,7 +127,7 @@ class SegmentationHelper(SegmentationImage):
 
     @classmethod
     def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False,
-                   flux_sort=True, **dilate):
+                   flux_sort=True, dilate=True):
         # detect
         threshold = detect_threshold(image, snr)
         segm = detect_sources(image, threshold, npixels)
@@ -157,7 +157,7 @@ class SegmentationHelper(SegmentationImage):
         if dilate:
             masks = (ins.data[None] == ins.labels[:, None, None])
             struct = ndimage.generate_binary_structure(2, 1)[None]
-            masks = ndimage.binary_dilation(masks, struct, **dilate)
+            masks = ndimage.binary_dilation(masks, struct)
             data = np.zeros_like(ins.data)
             for i, mask in enumerate(masks):
                 data[mask] = i
