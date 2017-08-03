@@ -9,7 +9,7 @@ from obstools.phot.utils import mad
 
 class SegmentationHelper(SegmentationImage):
     @classmethod
-    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False,
+    def from_image(cls, image, snr=3., npixels=7, edge_cutoff=3, deblend=False,
                    flux_sort=True, dilate=True):
 
         from photutils.detection import detect_threshold
@@ -60,7 +60,7 @@ class SegmentationHelper(SegmentationImage):
         # re-order segmented image labels
         data = np.zeros_like(self.data)
         for new, old in enumerate(lbl_srt):
-            data[self.data == old] = new
+            data[self.data == old] = (new + 1)
         self.data = data
 
     def dilate(self, connectivity=4):
@@ -79,7 +79,7 @@ class SegmentationHelper(SegmentationImage):
         masks = ndimage.binary_dilation(masks, selem)
         data = np.zeros_like(self.data)
         for i, mask in enumerate(masks):
-            data[mask] = i
+            data[mask] = (i + 1)
         self.data = data
 
     def com(self, image, labels=None):
@@ -102,7 +102,7 @@ class SegmentationHelper(SegmentationImage):
 
 class StarTracker():
     @classmethod
-    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False,
+    def from_image(cls, image, snr=3., npixels=7, edge_cutoff=3, deblend=False,
                    flux_sort=True, dilate=True):
         sh = SegmentationHelper.from_image(
             image, snr, npixels, edge_cutoff, deblend, flux_sort, dilate)
