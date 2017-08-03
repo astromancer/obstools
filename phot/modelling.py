@@ -145,14 +145,11 @@ class SegmentationHelper(SegmentationImage):
             flx = ins.flux(image)
             flx_srt, lbl_srt = zip(*sorted(zip(flx, ins.labels), reverse=1))
 
-            print(flx_srt, lbl_srt)
-
             # re-order segmented image labels
             offset = 100
             for new, old in enumerate(lbl_srt):
                 # old += 1
                 new += (offset + 1) # ignore background label
-                print(old, new)
                 ins.relabel(old, new)
             ins.data[ins.data != 0] -= offset
 
@@ -185,6 +182,10 @@ class SegmentationHelper(SegmentationImage):
         bgstd = image[self.data == 0].std()
         return flx / bgstd
 
+
+class StarTracker(SegmentationHelper):
+    def __init__(self, data, ):
+        ''
 
     # def best_for_tracking(self, close_cut=None, snr_cut=_snr_cut, saturation=None):
     #     """
