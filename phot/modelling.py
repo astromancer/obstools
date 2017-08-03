@@ -158,7 +158,10 @@ class SegmentationHelper(SegmentationImage):
             masks = (ins.data[None] == ins.labels[:, None, None])
             struct = ndimage.generate_binary_structure(2, 1)[None]
             masks = ndimage.binary_dilation(masks, struct, **dilate)
-
+            data = np.zeros_like(ins.data)
+            for i, mask in enumerate(masks):
+                data[mask] = i
+            ins.data = data
 
         return ins
 
@@ -189,10 +192,45 @@ class SegmentationHelper(SegmentationImage):
         bgstd = image[self.data == 0].std()
         return flx / bgstd
 
+    def shift(self, offset):
+        self.data = ndimage.shift(self.data, offset)
 
-class StarTracker(SegmentationHelper):
-    def __init__(self, data, ):
-        ''
+
+from obstools.phot.utils import mad
+
+class StarTracker():
+
+    def __init__(self, rcoo, segm):
+        self.rcoo = rcoo
+        self.segm = segm
+
+    def __call__(self, image):
+        shift = self.get_shift(image)
+        if (shift > 1).any():
+            # shift the segmentation data
+            shift = np.round(shift).astype(int)
+            self.segm.shift(shift)
+        return self.rcoo + shift
+
+    def get_shift(self, image):
+        com = self.segm.com(image)
+        l = ~self.is_outlier(com)
+        shift = np.mean(self.rcoo[l] - com[l], 0)
+        return shift
+
+
+    def is_outlier(self, coo, mad_thresh=5):
+        """
+        improve the robustness of the algorithm by removing centroids that are
+        outliers.  Here an outlier is any point further that 5 median absolute
+        deviations away. This helps track stars in low snr conditions.
+        """
+        if len(coo) < 6:  # scatter large for small sample sizes
+            return np.zeros(len(coo), bool)
+
+        r = np.sqrt(np.square(self.rcoo - coo).sum(1))
+        return r - np.median(r) > mad_thresh * mad(r)
+
 
     # def best_for_tracking(self, close_cut=None, snr_cut=_snr_cut, saturation=None):
     #     """
@@ -592,57 +630,57 @@ class CentroidModel():
         return coo, None, None
 
 
-from obstools.phot.utils import mad
-
-class StarTracker(ImageSegmentsModeller):
-    # @classmethod
-    # def from_image(cls, image, window, max_stars=None, cfunc=None, bgfunc=None,
-    #                **findkws):
-    #
-    #     finder = SourceFinder(image, **findkws)
-    #     ixLoc = finder.best_for_tracking()
-    #     #window = finder.sdist.min()
-    #
-    #     instance = cls(finder.found, window, image.shape, ixLoc, )
-    #     return instance
-    #
-
-    mad_thresh = 10.
-
-    def __init__(self, centres, window, ishape, use, handle_prox='mask'):
-
-        model = CentroidModel(CoM, np.median)
-        ImageSegmentsModeller.__init__(self, centres, window, ishape, use,
-                                       (model,),                # models
-                                       (None, ),                # metrics
-                                       handle_prox='mask')
-
-    # def (self, make_grids):
-
-    def combine_results(self, com):
-        yxshift = np.nanmedian(com + self.corners.llc - self.centres, 0)
-        newCoords = self.centres + yxshift
-        #return newCoords
 
 
-    def calculate_shift(self, coo):
-        """Calculate x,y shift of frame from reference by combining measured star positions"""
-        l = ~self.is_outlier(coo)
-        shift = np.mean(coo[l] - self.centres[l], 0)
-        return shift
-
-    def is_outlier(self, coo, mad_thresh=mad_thresh):
-        """
-        improve the robustness of the algorithm by removing centroids that are
-        outliers.  Here an outlier is any point further that 5 median absolute
-        deviations away. This helps track stars in low snr conditions.
-        """
-        # anything larger than 6 is a sample
-        if len(coo) < 6:  # expect large scatter for small sample sizes - cannot flag
-            return np.zeros(len(coo), bool)
-
-        r = np.sqrt(np.square(self.centres - coo).sum(1))
-        return r - np.median(r) > mad_thresh * mad(r)
+# class StarTracker(ImageSegmentsModeller):
+#     # @classmethod
+#     # def from_image(cls, image, window, max_stars=None, cfunc=None, bgfunc=None,
+#     #                **findkws):
+#     #
+#     #     finder = SourceFinder(image, **findkws)
+#     #     ixLoc = finder.best_for_tracking()
+#     #     #window = finder.sdist.min()
+#     #
+#     #     instance = cls(finder.found, window, image.shape, ixLoc, )
+#     #     return instance
+#     #
+#
+#     mad_thresh = 10.
+#
+#     def __init__(self, centres, window, ishape, use, handle_prox='mask'):
+#
+#         model = CentroidModel(CoM, np.median)
+#         ImageSegmentsModeller.__init__(self, centres, window, ishape, use,
+#                                        (model,),                # models
+#                                        (None, ),                # metrics
+#                                        handle_prox='mask')
+#
+#     # def (self, make_grids):
+#
+#     def combine_results(self, com):
+#         yxshift = np.nanmedian(com + self.corners.llc - self.centres, 0)
+#         newCoords = self.centres + yxshift
+#         #return newCoords
+#
+#
+#     def calculate_shift(self, coo):
+#         """Calculate x,y shift of frame from reference by combining measured star positions"""
+#         l = ~self.is_outlier(coo)
+#         shift = np.mean(coo[l] - self.centres[l], 0)
+#         return shift
+#
+#     def is_outlier(self, coo, mad_thresh=mad_thresh):
+#         """
+#         improve the robustness of the algorithm by removing centroids that are
+#         outliers.  Here an outlier is any point further that 5 median absolute
+#         deviations away. This helps track stars in low snr conditions.
+#         """
+#         # anything larger than 6 is a sample
+#         if len(coo) < 6:  # expect large scatter for small sample sizes - cannot flag
+#             return np.zeros(len(coo), bool)
+#
+#         r = np.sqrt(np.square(self.centres - coo).sum(1))
+#         return r - np.median(r) > mad_thresh * mad(r)
 
 
 
