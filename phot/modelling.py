@@ -143,15 +143,15 @@ class SegmentationHelper(SegmentationImage):
 
         if flux_sort:
             flx = ins.flux(image)
-            flx_srt, ix = zip(*sorted(zip(flx, ins.labels), reverse=1))
+            flx_srt, lbl_srt = zip(*sorted(zip(flx, ins.labels), reverse=1))
 
-            print(flx_srt, ix)
+            print(flx_srt, lbl_srt)
 
             # re-order segmented image labels
             offset = 100
-            for new, old in enumerate(ix):
-                old += 1  # ignore background label
-                new += offset + 1
+            for new, old in enumerate(lbl_srt):
+                # old += 1
+                new += (offset + 1) # ignore background label
                 print(old, new)
                 ins.relabel(old, new)
             ins.data[ins.data != 0] -= offset
