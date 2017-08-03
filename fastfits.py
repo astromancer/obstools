@@ -100,7 +100,7 @@ class FitsCube():
         bitpix = header['bitpix']
         if bitpix == 16:
             self.dtype = '>i2'  # .format(bitpix//8)
-        if bitpix == -32:
+        elif bitpix == -32:
             self.dtype = '>f4'
         else:
             self.dtype = '>f8'
@@ -165,6 +165,7 @@ class FitsCube():
 
         start = self.data_start_bits + isize * istart
         end = start + isize * ispan
+
         return self.bzero + np.ndarray(shape,
                                        dtype=self.dtype,
                                        buffer=self.filemap[start:end]

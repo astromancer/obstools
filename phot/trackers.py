@@ -37,7 +37,7 @@ class SourceFinder():  #FitsCube
     _saturation_cut = 1 # percentage (closeness to saturation)
 
     # @chrono.timer
-    def __init__(self, image, snr=2.5, npixels=7, edge_cutoff=3,
+    def __init__(self, image, snr=2.75, npixels=7, edge_cutoff=3,
                  deblend=False, flux_sort=True):
 
         image_bg = image - np.median(image)
@@ -108,10 +108,17 @@ class SourceFinder():  #FitsCube
         w, = np.where(np.all(b, 1))
         return w
 
+
+
+
 class StarTracker():
     """Track stars in sub-regions of the image"""
 
-    # TODO: let call update shared coords. Then move to external lib
+    # FIXME: THIS IS A MODEL... Centroid
+    # then method: combine_results
+    # which combines individual fit data to yield combined for frame
+    # then aperture parameters
+
 
     # cfunc = CoM                 # default for locating stars
     # bgfunc = np.median         # default for determining background level

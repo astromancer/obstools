@@ -29,7 +29,7 @@ def constant(p, grid):
 
 # ****************************************************************************************************
 def circularGaussian(p, grid):
-    """Circular Gaussian function for fitting star profiles."""  # somewhat optimized
+    """Circular Gaussian function for fitting star profiles."""
     _, _, z0, a, d = p
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]
     r = (yxm * yxm).sum(0)  # squared radial distance from centre
@@ -45,7 +45,10 @@ def circularGaussian(p, grid):
 # return z0 * np.exp(-(a*xm**2 - 2*b*xm*ym + c*ym**2)) + d
 
 def gaussian2D(p, grid):
-    """Elliptical Gaussian function for fitting star profiles."""  # slightly optimized
+    """Elliptical Gaussian function for fitting star profiles."""
+    # recasting in terms of (a, b, c) parameters (instead of sigma)
+    # yields faster computation times and better convergence results
+    # at lower signal to noise ratios.
     _, _, z0, a, b, c, d = p
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]
     yxm2 = yxm * yxm
@@ -54,7 +57,6 @@ def gaussian2D(p, grid):
 
 # alias
 ellipticalGaussian = gaussian2D
-
 
 # from scipy.stats import multivariate_normal
 # def gaussian2D(p, grid):
@@ -86,6 +88,7 @@ ellipticalGaussian = gaussian2D
 # return z0 * np.exp(-(np.einsum('...i,...i->...',
 # blas.dgemm(1., yxm.T, P), yxm.T))
 # ).reshape(gs[1:]) + d
+
 
 def no_nan(p):
     return ~np.isnan(p).any()
@@ -120,17 +123,17 @@ class PSF(object):
 
         self.F = F
         self.objective = self.fwrs  # use flattened weighted square residuals as objective
-        self.Npar = Npar = len(default_params)
+        self.npar = npar = len(default_params)
         self.default_params = defpar = np.asarray(default_params, float)
         if to_cache is None:
             ix = np.arange(len(defpar))  # cache all by default
         elif isinstance(to_cache, slice):
-            ix = np.arange(*to_cache.indices(Npar))  # convert to array of int
+            ix = np.arange(*to_cache.indices(npar))  # convert to array of int
         else:
             ix = np.asarray(to_cache).astype(int)
 
         self.to_cache = ix
-        self.to_guess = np.array(find_missing_numbers(np.r_[-1, ix, Npar]))  # indeces of uncached params
+        self.to_guess = np.array(find_missing_numbers(np.r_[-1, ix, npar]))  # indeces of uncached params
         # self.default_cache = #defpar[ix]
 
         self.validations = [no_nan]
@@ -250,6 +253,7 @@ class ConstantBG(PSF):
     def param_hint(self, data):
         return data.mean()
 
+    # def get_aperture_params
 
 # TODO: class Gaussian parent class
 # ****************************************************************************************************
@@ -344,6 +348,23 @@ class CircularGaussianPSF(PSF):
         #     return par_alt
 
 
+    # def reparameterize(self, p):
+    #     """
+    #     Reparameterize to the more physically intuitive space of
+    #     (sigma_x, sigma_y, theta) quantities.  This
+    #     """
+    #
+    #     # covm = self.covariance_matrix(p)
+    #     # sigx, sigy = np.sqrt(np.diagonal(covm))
+    #     q = p.copy()
+    #     q[3] = sigma
+    #     sigma = self.get_sigma(p)
+    #     p
+    #
+    #     return p[0], p[1], sigma, 0, 0, 0
+
+
+
 # ****************************************************************************************************
 class GaussianPSF(CircularGaussianPSF):
     # TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
@@ -351,7 +372,7 @@ class GaussianPSF(CircularGaussianPSF):
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # used for validation
-    _ix_not_neg = list(range(7))  # _GaussianPSF.Npar
+    _ix_not_neg = list(range(7))  # _GaussianPSF.npar
     _ix_not_neg.pop(4)  # parameter b is allowed to be negative
 
     name = 'elliptical'
@@ -382,7 +403,6 @@ class GaussianPSF(CircularGaussianPSF):
         ellipticity = np.sqrt(1 - ratio ** 2)
         fwhm = self.get_fwhm(p)
         par_alt = sigx, sigy, cov, theta, ellipticity, fwhm
-
         return par_alt
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -753,7 +773,7 @@ class StarFit(object):
         # pre-allocate cache memory
         if caching:
             self.max_cache_size = n = kw.get('max_cache_size', 25)
-            m = psf.Npar
+            m = psf.npar
             self.cache = np.ma.array(np.zeros((n, m)),
                                      mask=np.ones((n, m), bool))
 

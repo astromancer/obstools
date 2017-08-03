@@ -86,8 +86,8 @@ class lmMixin(LoggingMixin):
                 self.logger.warning('Fit did not converge!')
                 self.logger.debug('input parameters identical to output')
 
-            self.logger.debug('Successfully fit {} function to stellar profile.'
-                              ''.format(self))
+            self.logger.debug('Successfully fit %s function to stellar profile.',
+                              self)
             #gof = {m: getattr(result, m) for m in self.metrics}
             gof = [getattr(result, m) for m in self.metrics]
             return p, punc, gof
@@ -112,31 +112,30 @@ class lmMixin(LoggingMixin):
         return params
 
 
-        # #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def _set_param_bounds(self, par0, data):
-        #      #HACK-ish! better to explore full posterior
-        #     """set parameter bounds based on data"""
-        #     x0, y0, z0, a, b, c, d = self.plist(par0)
-        #     #x0, y0 bounds
-        #     #Let x, y only vary across half of window frame
-        #     #sh = np.array(data.shape)
-        #     #(xbl, xbu), (ybl, ybu) = (x0, y0) + (sh/2)[None].T * [1, -1]
-        #     #par0['x0'].set(min=xbl, max=xbu)
-        #     #par0['y0'].set(min=ybl, max=ybu)
-        #
-        #     #z0 - (0 to 3 times frame max value)
-        #     #zbl, zbu = (0, z0*3)    #NOTE: hope your initial guess is robust
-        #     #par0['z0'].set(min=zbl, max=zbu)
-        #
-        #     ##d - sky background
-        #     #dbl, dbu = (0, d*5)
-        #     #par0['d'].set(min=dbl, max=dbu)
-        #
-        #     for pn in self._pnames_ordered:
-        #         par0[pn].set(min=0)
-        #
-        #     #NOTE: not sure how to constrain a,b,c params...
-        #     return par0
+    # #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # def _set_param_bounds(self, par0, data):
+    #     """set parameter bounds based on data"""
+    #     x0, y0, z0, a, b, c, d = self.plist(par0)
+    #     #x0, y0 bounds
+    #     #Let x, y only vary across half of window frame
+    #     #sh = np.array(data.shape)
+    #     #(xbl, xbu), (ybl, ybu) = (x0, y0) + (sh/2)[None].T * [1, -1]
+    #     #par0['x0'].set(min=xbl, max=xbu)
+    #     #par0['y0'].set(min=ybl, max=ybu)
+    #
+    #     #z0 - (0 to 3 times frame max value)
+    #     #zbl, zbu = (0, z0*3)    #NOTE: hope your initial guess is robust
+    #     #par0['z0'].set(min=zbl, max=zbu)
+    #
+    #     ##d - sky background
+    #     #dbl, dbu = (0, d*5)
+    #     #par0['d'].set(min=dbl, max=dbu)
+    #
+    #     for pn in self._pnames_ordered:
+    #         par0[pn].set(min=0)
+    #
+    #     #NOTE: not sure how to constrain a,b,c params...
+    #     return par0
 
 
 #===============================================================================

@@ -6,7 +6,7 @@ import numpy as np
 class MaskMachine():
     # FIXME: implement the functionality here as methods Aperture class?
     # Can you attach a mask to the aperture? that will allow these methods
-    # to be implemented there
+    # to be implemented there like ap.mask_overlapping(ap2)
 
     def shrink_on(self):
         self.shrinker = self.shrink

@@ -14,8 +14,6 @@
 # profiling
 from decor.profile.timers import Chrono, timer, timer_extra
 
-from phot.trackers import StarTrackerFixedWindow, StarTrackerFit, SourceFinder
-
 chrono = Chrono()
 # NOTE do this first so we can profile import times
 
@@ -83,12 +81,11 @@ from recipes.parallel.pool import ConservativePool
 is_interactive = is_interactive()
 
 from obstools.fastfits import FitsCube
+from obstools.phot.trackers import *
 from obstools.phot.masker import MaskMachine
 from obstools.phot.modelling import ModelDb, FrameModellerBase, FrameModeller
 from obstools.phot.diagnostics import FrameDisplay
 from obstools.phot.utils import progressFactory, table_coords, table_cdist
-
-import pySHOC.readnoise as shocRNT
 
 # profiler = profile()
 from IPython import embed
@@ -248,27 +245,27 @@ if monitor_mem:
 chrono.mark('Setup')
 
 # ===============================================================================
-@chrono.timer
-def init_shared_memory(N, Nstars, Naps, Nfit):
-    global modlr, apData
-
-    # NOTE: You should check how efficient these memory structures are.
-    # We might be spending a lot of our time synching access??
-
-    # Initialize shared memory with nans...
-    SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
-
-    apData = AttrDict()
-    apData.bg = SyncedArray(shape=(N, Nstars))
-    apData.flux = SyncedArray(shape=(N, Nstars, Naps))
-    # FIXME: efficiency - don't need all the modeldb stuff if you are saving these here
-    apData.sigma_xy = SyncedArray(shape=(N, 2))      #TODO: for Nstars (optionally) ???
-    # apData.rsky = SyncedArray(shape=(N, 2))
-    # apData.theta = SyncedArray(shape=(N,))
-
-    # cog_data = np.empty((N, Nstars, 2, window*window))
-
-    mdlr.init_mem(N, Nfit)
+# @chrono.timer
+# def init_shared_memory(N, Nstars, Naps, Nfit):
+#     global modlr, apData
+#
+#     # NOTE: You should check how efficient these memory structures are.
+#     # We might be spending a lot of our time synching access??
+#
+#     # Initialize shared memory with nans...
+#     SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
+#
+#     apData = AttrDict()
+#     apData.bg = SyncedArray(shape=(N, Nstars))
+#     apData.flux = SyncedArray(shape=(N, Nstars, Naps))
+#     # FIXME: efficiency - don't need all the modeldb stuff if you are saving these here
+#     apData.sigma_xy = SyncedArray(shape=(N, 2))      #TODO: for Nstars (optionally) ???
+#     # apData.rsky = SyncedArray(shape=(N, 2))
+#     # apData.theta = SyncedArray(shape=(N,))
+#
+#     # cog_data = np.empty((N, Nstars, 2, window*window))
+#
+#     mdlr.init_mem(N, Nfit)
 
 # ===============================================================================
 
@@ -377,29 +374,30 @@ def trackerFactory(how='centroid 5 brightest'):
     #def loop(self):
 
 
-def save_params(i, j, model, results):
-    """save fitted paramers for this model"""
-    p, punc, gof = results
-
-    # Set shared memory
-    psfData = modelDb.data[model]
-    psfData.params[i, j] = p
-    psfData.params_stddev[i, j] = punc
-    # calculate psf flux
-    if hasattr(model, 'integrate'):
-        # FIXME: you can avoid this by having two classes - BGModel, PSFModel...
-        psfData.flux[i, j] = model.integrate(p)
-        psfData.flux_stddev[i, j] = model.int_err(p, punc)
-
-    # Re-parameterize to more physically meaningful quantities
-    if hasattr(model, 'reparameterize'):  # model in gaussianModels: #
-        # FIXME: just work with converted parameters already !!!!!!!!!!!!!!!!!!!!!!!
-        psfData.alt[i, j] = model.reparameterize(p)
-        # FUCK!!
-
-    # Goodness of fit statistics
-    for metric in modelDb.metrics:
-        modelDb.metricData[metric][i, j, modelDb._ix[model]] = gof[metric]
+# def save_params(i, j, model, results):
+#     """save fitted paramers for this model"""
+#     p, punc, gof = results
+#
+#     # Set shared memory
+#     psfData = modelDb.data[model]
+#     psfData.params[i, j] = p
+#     psfData.params_stddev[i, j] = punc
+#
+#     # calculate psf flux
+#     if hasattr(model, 'integrate'):
+#         # FIXME: you can avoid this by having two classes - BGModel, PSFModel...
+#         psfData.flux[i, j] = model.integrate(p)
+#         psfData.flux_stddev[i, j] = model.int_err(p, punc)
+#
+#     # Re-parameterize to more physically meaningful quantities
+#     if hasattr(model, 'reparameterize'):  # model in gaussianModels: #
+#         # FIXME: just work with converted parameters already !!!!!!!!!!!!!!!!!!!!!!!
+#         psfData.alt[i, j] = model.reparameterize(p)
+#         # FUCK!!
+#
+#     # Goodness of fit statistics
+#     for metric in modelDb.metrics:
+#         modelDb.metricData[metric][i, j, modelDb._ix[model]] = gof[metric]
 
 
 
@@ -423,7 +421,7 @@ def do_bg_phot(data, mask, cxx, rsky):
     # NOTE:  do_photometry below will automatically exclude masked data from calculation
 
     ann = CircularAnnulus(xypos, r_in=rskyin, r_out=rskyout)
-    flx_bg, flx_bg_err = ann.do_photometry(data,
+    flxBG, flxBGu = ann.do_photometry(data,
                                 # error,
                                 mask=mask,
                                 # effective_gain,#  must have same shape as data
@@ -443,9 +441,10 @@ def do_bg_phot(data, mask, cxx, rsky):
         embed()
         raise
     # TODO: warn if area is below some threshold ?
-    flux_bg_pp = flx_bg / area  # Background Flux per pixel
+    fluxBGpp = flxBG / area  # Background Flux per pixel
+    flxBGppu = flxBGu / area
 
-    return flux_bg_pp
+    return fluxBGpp, flxBGppu
 
     # WARNING:
     # With elliptical star profiles:  scaling aperture radii with fwhm as geometric mean
@@ -509,18 +508,7 @@ def do_multi_phot(data, masks, cxx, rxy, theta, flux_bg_pp):
     return np.transpose(Flux)
 
 # ===============================================================================
-def estimate_max_shift(fitscube, nframes, snr=5, npixels=7):
-    """Estimate the maximal positional shift for stars"""
-    step = len(fitscube) // nframes  # take `nframes` frames evenly spaced across data set
-    maxImage = fitscube[::step].max(0)      #
-    threshold = detect_threshold(maxImage, snr)  # detection at snr of 5
-    segImage = detect_sources(maxImage, threshold, npixels)
-    mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
-                      for (xs, ys) in segImage.slices], 0)
 
-    #TODO: check for cosmic rays inside sky apertures!
-
-    return mxshift, maxImage, segImage
 
 
 def plot_max_shift(image_max, seg_image, filename=None):
@@ -845,56 +833,154 @@ def catch_and_log(func):
 
     return wrapper
 
-class FrameProcessor():
-    
 
+
+class FrameProcessor(FitsCube):
+
+    def __init__(self, tracker=None, masker=None, scaler=None, modeller=None):
+
+        self.tracker = tracker
+        self.masker = masker
+        self.scaler = scaler
+        self.modeller = modeller
+
+
+    def init_mem(self, n):
+        # reference star coordinates
+
+        #global modlr, apData
+
+        self.coords = SyncedArray(shape=(n, 2))
+
+        # NOTE: You should check how efficient these memory structures are.
+        # We might be spending a lot of our time synching access??
+
+        # Initialize shared memory with nans...
+        SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
+
+        apData = self.apData = AttrDict()
+        apData.bg = SyncedArray(shape=(N, Nstars))
+        apData.flux = SyncedArray(shape=(N, Nstars, Naps))
+
+        apData.sigma_xy = SyncedArray(shape=(N, 2))  # TODO: for Nstars (optionally) ???
+        apData.rsky = SyncedArray(shape=(N, 2))
+        apData.theta = SyncedArray(shape=(N,))
+        # cog_data = np.empty((N, Nstars, 2, window*window))
+
+        self.modeller.init_mem(N, Nfit)
+
+
+    def __call__(self, i):
+
+        data = self[i]
+        mdlr = self.modeller
+        trk = self.tracker
+        sclr = self.scaler
+        apD = self.apData
+
+        # track stars
+        coo = trk(data, i)
+        cxx = coo + trk.Rvec  # now relative to frame
+        # save coordinates in shared data array.
+        self.coords[i] = coo
+
+        # First guess params from previous frames if available
+        _, sigma_xy0, theta0 = mdlr.guess_params(i)
+
+        # mask
+        fitmasks = self.masker.get_masks(cxx, sigma_xy0.mean())
+
+        # PSF photometry
+        # Calculate the standard deviation of the data distribution of each pixel
+        data_std = np.ones_like(data)        # FIXME:
+        coo_fit, sigma_xy, theta = mdlr.fit(cxx, data, data_std, fitmasks, i=i)
+
+        # save coordinates in shared data array.
+        # if
+        # self.coords[i] = coo_fit
+        # only overwrites coordinates if mdlr.tracker is None
+
+        self.create_apertures(coo_fit, sigma_xy, theta)
+
+        # Aperture photometry
+        cxx = self.coords[i] + trk.Rvec  # coordinates via requested method
+        photmasks, skymask, cxx, rxy, rsky, theta = sclr.prepare_phot(cxx, sigma_xy, theta)
+        check_aps_sky(i, rsky)
+
+        # a quantity is needed for photutils
+        udata = u.Quantity(data, copy=False)
+
+        # BG phot
+        flux_bg_pp = do_bg_phot(udata, skymask, cxx[:Nstars], rsky)  # for Nstars
+        apD.bg[i] = flux_bg_pp
+
+        # Do aperture photometry
+        if np.size(photmasks):
+            # same stars are close together
+            apD.flux[i] = do_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
+        else:
+            apD.flux[i] = do_multi_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
+
+    # def scale_model_results
+
+    # def prepare_phot(self, cxx, sigma_xy, theta):
+    #     """
+    #     Scale aperture radii, and sky annulus for frame i by the mean / median sigma (std_dev)
+    #     of the fit params in ix_scale.
+    #     """
+    #     # cxx = coo + tracker.Rvec
+    #     rxy, rsky, sigma_xy, theta = self.scaler.get_radii(sigma_xy, theta)
+    #
+    #     # update (recalculate) the star/bg masks based on coo and sigma_xy from fits
+    #     # TODO: use photutils aperture methods to deal with masks?
+    #     photmasks, skymasks = self.masker.get_masks(cxx, np.mean(sigma_xy), with_sky=True)
+    #
+    #     return photmasks, skymasks, cxx, rxy, rsky, theta
+
+
+    def save_params(self, i, coo):
+        if self.tracker is not None:
+            self.coords[i] = coo
+            self.sigma[i] =
+
+
+        # Re-parameterize to more physically meaningful quantities
+        # psfData.sigma
+
+        # if hasattr(model, 'reparameterize'):
+            # FIXME: just work with converted parameters already !!!!!!!!!!!!!!!!!!!!!!!
+            #FIXME: move inside
+            # psfData.alt[i, j] = model.reparameterize(p)
+            # FUCK!!
+
+        # calculate psf flux
+        # if hasattr(model, 'integrate'):
+        #     # FIXME: you can avoid this by having two classes - BGModel, PSFModel...
+        #     psfData.flux[i, j] = model.integrate(p)
+        #     psfData.flux_std[i, j] = model.int_err(p, pu)
+
+
+    def estimate_max_shift(self, nframes, snr=5, npixels=7):
+        """Estimate the maximal positional shift for stars"""
+        step = len(self) // nframes  # take `nframes` frames evenly spaced across data set
+        maxImage = self[::step].max(0)  #
+
+        threshold = detect_threshold(maxImage, snr)  # detection at snr of 5
+        segImage = detect_sources(maxImage, threshold, npixels)
+        mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
+                          for (xs, ys) in segImage.slices], 0)
+
+        # TODO: check for cosmic rays inside sky apertures!
+
+        return mxshift, maxImage, segImage
 
 # @catch_and_log
 def frame_proc(incoming):
     """Process frame i"""
     i, data = incoming
-    data_stddev = np.ones_like(data)        # FIXME:
+    data_std = np.ones_like(data)        # FIXME:
 
-    # track stars
-    coo = mdlr.tracker(i, data)
-    cxx = coo + mdlr.tracker.Rvec # now relative to frame
-    # save coordinates in shared data array.
-    # NOTE: do this here for multiprocessing. since the fitting below is potentially slow, and we
-    #       want *coo_tr* of this frame to be available to other processes. if the tracker is
-    #       StarTrackerFit, the call below effectively does nothing
-    tracker.save_coords(i, coo)
 
-    # First guess params from previous frames if available
-    _, sigma_xy0, theta0 = mdlr.average_best_params(i)
-
-    # mask
-    fitmasks = apscaler.get_masks(cxx, sigma_xy0.mean())
-
-    # PSF photometry
-    coo_fit, sigma_xy, theta = mdlr.fit(cxx, data, data_stddev, fitmasks, i=i)
-
-    # save coordinates in shared data array.
-    mdlr.save_coords(i, coo_fit)
-    # only overwrites coordinates if mdlr.tracker is None
-
-    # Aperture photometry
-    cxx = coords[i] + tracker.Rvec       # coordinates via requested method
-    photmasks, skymask, cxx, rxy, rsky, theta = apscaler.prepare_phot(cxx, sigma_xy, theta)
-    check_aps_sky(i, rsky)
-
-    # a quantity is needed for photutils
-    udata = u.Quantity(data, copy=False)
-
-    # BG phot
-    flux_bg_pp = do_bg_phot(udata, skymask, cxx[:Nstars], rsky)  #for Nstars
-    apData.bg[i] = flux_bg_pp
-
-    # Do aperture photometry
-    if np.size(photmasks):
-        # same stars are close together
-        apData.flux[i] = do_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
-    else:
-        apData.flux[i] = do_multi_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
 
     # for k in range(Naps):
 
@@ -922,8 +1008,9 @@ def per_frame(t, N, Nstars, Naps):
 
 def get_saturation(h):
     try:
+        import pySHOC.readnoise as shocRNT
         return shocRNT.get_saturation(h)
-    except Exception as err:
+    except ValueError as err:
         logging.info('NOT SHOC DATA')
         logging.debug(str(err))
 
@@ -999,10 +1086,6 @@ Grid = ndgrid.like(ff[0])  # grid for full frame
 Nmean = 3
 preImage = np.median(ff[:Nmean], 0)
 preFind = SourceFinder(preImage, snr=3, npixels=7, deblend=True)
-
-
-
-
 
 
 #TODO: Gui here. add stars? resize apertures / sky / window interactively
