@@ -124,11 +124,13 @@ from photutils.segmentation import detect_sources
 class SegmentationHelper(SegmentationImage):
     def counts(self, image):
         # Will not return flux for stars that have None as a slice
-        data = image - np.median(image[segm.])       # bg subtract
-        flux_est = np.empty(segm.nlabels)
-        for i, sl in enumerate(filter(None, segm.slices)):
-            flux_est[i] = data[sl][segm.data[sl].astype(bool)].sum()
+        data = image - np.median(image[self.data == 0)       # bg subtract
+        counts = np.empty(self.nlabels)
 
+        for i, sl in enumerate(filter(None, self.slices)):
+            counts[i] = data[sl][self.data[sl].astype(bool)].sum()
+
+        return counts
         return flux_est / segm.areas[segm.areas != 0][1:]
 
     def com(self, image):
