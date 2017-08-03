@@ -18,7 +18,7 @@ def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_so
     # TODO: evolve a class that partitions the input frame spatially based on
     # window, and data value thresholds (upper and lower) as input for fitting
     # NOTE: Pretty damn slow.... can you generalize to higher dimension?
-    # Making npixels large avoids false flagging of cosmic rays
+    # NOTE: Making npixels large avoids false flagging of cosmic rays
 
     threshold = detect_threshold(data, snr)
     segm = detect_sources(data, threshold, npixels)

@@ -113,15 +113,60 @@ def cdist_tri(coo):
 
 from collections import defaultdict, namedtuple
 from obstools.phot.masker import MaskMachine
+# from phot.trackers import
 from recipes.array import ndgrid
 from scipy.spatial.distance import cdist
 
 from photutils.segmentation import SegmentationImage
+from photutils.detection import detect_threshold
+from photutils.segmentation import detect_sources
 
 class SegmentationHelper(SegmentationImage):
+    def counts(self, image):
+        # Will not return flux for stars that have None as a slice
+        data = image - np.median(image[segm.])       # bg subtract
+        flux_est = np.empty(segm.nlabels)
+        for i, sl in enumerate(filter(None, segm.slices)):
+            flux_est[i] = data[sl][segm.data[sl].astype(bool)].sum()
+
+        return flux_est / segm.areas[segm.areas != 0][1:]
+
+    def com(self, image):
+        """Center of mass for segments"""
+        return np.array(CoM(image, self.data, self.labels))
+        # NOTE: row, col coords
+
+class StarTracker():
 
     @classmethod
-    def from_image(cls, image, window, **findkws):
+    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_sort=True):
+
+        threshold = detect_threshold(image, snr)
+        segm = detect_sources(image, threshold, npixels)
+
+        if edge_cutoff:
+            segm.remove_border_labels(edge_cutoff, partial_overlap=False)
+
+        if deblend:
+            from photutils import deblend_sources
+            segm = deblend_sources(image, segm, npixels)
+
+        found = np.array(CoM(image, segm.data, segm.labels))  # NOTE: ij coords
+        try:
+            flux_est = detected_flux(image, segm)
+        except:
+            from IPython import embed
+            embed()
+            raise
+
+        if flux_sort:
+            found, flux_est, segm, ix = sort_flux(found, flux_est, segm)
+
+        returns = found, flux_est, segm
+        if return_index:
+            returns += (ix, )
+
+
 
         finder = SourceFinder(image, **findkws)
         return cls(finder.found, window, image.shape)
@@ -134,8 +179,11 @@ class SegmentationHelper(SegmentationImage):
         for i, mask in enumerate(MaskMachine(grid, coords).mask_circles(sizes)):
             data[mask] = i
 
-#
+        return cls(data)
 
+    # def squares(cls):
+    # def rectanges(cls):
+    # def ellipses
 
 
 
