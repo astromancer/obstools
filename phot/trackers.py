@@ -59,54 +59,7 @@ class SourceFinder():  #FitsCube
 
     # def
 
-    def best_for_tracking(self, close_cut=None, snr_cut=_snr_cut, saturation=None):
-        """
-        Find stars that are best suited for centroid tracking based on the
-        following criteria:
-        """
-        too_bright, too_close, too_faint = [], [], []
-        msg = 'Stars: %s too %s for tracking'
-        if saturation:
-            too_bright = self.too_bright(self.image, saturation)
-            if len(too_bright):
-                logging.debug(msg, str(too_bright), 'bright')
-        if close_cut:
-            too_close = self.too_close(close_cut)
-            if len(too_close):
-                logging.debug(msg, str(too_close), 'close')
-        if snr_cut:
-            too_faint = self.too_faint(snr_cut)
-            if len(too_faint):
-                logging.debug(msg, str(too_faint), 'faint')
 
-        ignore = functools.reduce(np.union1d, (too_bright, too_close, too_faint))
-        ix = np.setdiff1d(np.arange(len(self.found)), ignore)
-        if len(ix) == 0:
-            logging.warning('No suitable stars found for tracking!')
-        return ix
-
-    # def auto_window(self):
-    #     sdist_b = self.sdist[snr > self._snr_thresh]
-
-    def too_faint(self, threshold=_snr_cut):
-        crude_snr = self.flux / self.image[self.segm.data_masked.mask].std()
-        return np.where(crude_snr < threshold)[0]
-
-    def too_close(self, threshold=_distance_cut):
-        # Check for potential interference problems from stars that are close together
-        # threshold = threshold or self.window
-        return np.unique(np.ma.where(self.sdist < threshold))
-        # return np.intersect1d(self.ix_loc, too_close)
-
-    def too_bright(self, data, saturation, threshold=_saturation_cut):
-        # Check for saturated stars by flagging pixels withing 1% of saturation level
-        # TODO: make exact
-        lower, upper = saturation * (threshold + np.array([-1, 1]) / 100)
-        # TODO check if you can improve speed here - dont have to check entire array?
-        satpix = np.where((lower < data) & (data < upper))
-        b = np.any(np.abs(np.array(satpix)[:, None].T - self.found) < 3, 0)
-        w, = np.where(np.all(b, 1))
-        return w
 
 
 
