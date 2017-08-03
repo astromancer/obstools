@@ -126,7 +126,8 @@ from photutils.segmentation import detect_sources
 class SegmentationHelper(SegmentationImage):
 
     @classmethod
-    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_sort=True):
+    def from_image(cls, image, snr=3., npixels=12, edge_cutoff=3, deblend=False,
+                   flux_sort=True, **dilate):
         # detect
         threshold = detect_threshold(image, snr)
         segm = detect_sources(image, threshold, npixels)
@@ -152,6 +153,12 @@ class SegmentationHelper(SegmentationImage):
                 new += (offset + 1) # ignore background label
                 ins.relabel(old, new)
             ins.data[ins.data != 0] -= offset
+
+        if dilate:
+            masks = (ins.data[None] == ins.labels[:, None, None])
+            struct = ndimage.generate_binary_structure(2, 1)[None]
+            masks = ndimage.binary_dilation(masks, struct, **dilate)
+
 
         return ins
 
