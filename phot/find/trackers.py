@@ -39,6 +39,13 @@ class SegmentationHelper(SegmentationImage):
 
         return ins
 
+    @classmethod
+    def from_masks(cls, masks):
+        data = np.zeros_like(masks.shape[1:])
+        for i, mask in enumerate(masks):
+            data[mask] = (i + 1)
+        return cls(data)
+
     def counts(self, image, labels=None):
         if labels is None:
             labels = self.labels
@@ -115,16 +122,16 @@ class StarTracker():
         sh = SegmentationHelper.from_image(
             image, snr, npixels, edge_cutoff, deblend, flux_sort, dilate)
         found = sh.com(image)
-
+        
         # bg regions
         masks = tracker.segm.masks3D()
         struct = ndimage.generate_binary_structure(2, 1)
         # structure array needs to have same rank as masks
         struct = struct[None]
         m0 = ndimage.binary_dilation(masks, struct, iterations=3)
-        m1 = ndimage.binary_dilation(m3, struct, iterations=5)
-        msky = m1 & ~m0 & ~m3.any(0)
-        
+        m1 = ndimage.binary_dilation(m0, struct, iterations=5)
+        msky = (m1 & ~(m0 | ~m0.any(0)))
+        sky_segm = SegmentationHelper.from_masks(msky)
 
         return cls(found, sh)
 
