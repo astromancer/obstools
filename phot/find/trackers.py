@@ -63,20 +63,27 @@ class SegmentationHelper(SegmentationImage):
             data[self.data == old] = (new + 1)
         self.data = data
 
-    def dilate(self, connectivity=4):
+    # @lazyproperty
+    def masks3D(self): #labels=None
+        # expand segments into 3D sequence of masks, one segment per image
+        # if labels is None:
+        #     labels = self.labels
+        return self.data[None] == self.labels[:, None, None]
+
+    def dilate(self, connectivity=4, iterations=1, mask=None,):
         # expand masks to 3D sequence
-        masks = (self.data[None] == self.labels[:, None, None])
+        masks = self.masks3D()
 
         if connectivity == 4:
-            selem = ndimage.generate_binary_structure(2, 1)
+            struct = ndimage.generate_binary_structure(2, 1)
         elif connectivity == 8:
-            selem = ndimage.generate_binary_structure(2, 2)
+            struct = ndimage.generate_binary_structure(2, 2)
         else:
             raise ValueError('Invalid connectivity={0}.  '
                              'Options are 4 or 8'.format(connectivity))
         # structure array needs to have same rank as masks
-        selem = selem[None]
-        masks = ndimage.binary_dilation(masks, selem)
+        struct = struct[None]
+        masks = ndimage.binary_dilation(masks, struct, iterations, mask)
         data = np.zeros_like(self.data)
         for i, mask in enumerate(masks):
             data[mask] = (i + 1)
@@ -108,6 +115,17 @@ class StarTracker():
         sh = SegmentationHelper.from_image(
             image, snr, npixels, edge_cutoff, deblend, flux_sort, dilate)
         found = sh.com(image)
+
+        # bg regions
+        masks = tracker.segm.masks3D()
+        struct = ndimage.generate_binary_structure(2, 1)
+        # structure array needs to have same rank as masks
+        struct = struct[None]
+        m0 = ndimage.binary_dilation(masks, struct, iterations=3)
+        m1 = ndimage.binary_dilation(m3, struct, iterations=5)
+        msky = m1 & ~m0 & ~m3.any(0)
+        
+
         return cls(found, sh)
 
     def __init__(self, rcoo, segm):
@@ -127,6 +145,9 @@ class StarTracker():
         bg = np.median(image[self.segm.data == 0])
 
         com = self.segm.com(image - bg)
+
+
+
         l = ~self.is_outlier(com)
         shift = np.mean(self.rcoo[l] - com[l], 0)
         return shift
