@@ -41,7 +41,7 @@ class SegmentationHelper(SegmentationImage):
 
     @classmethod
     def from_masks(cls, masks):
-        data = np.zeros_like(masks.shape[1:])
+        data = np.zeros(masks[0])
         print(masks.shape)
         for i, mask in enumerate(masks):
             print(data.shape, mask.shape)
