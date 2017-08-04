@@ -113,25 +113,29 @@ class SegmentationHelper(SegmentationImage):
     def shift(self, offset):
         self.data = ndimage.shift(self.data, offset)
 
-
+    def to_annuli(self, buffer=3, width=5):
+        # bg regions
+        masks = sh.masks3D()
+        struct = ndimage.generate_binary_structure(2, 1)
+        # structure array needs to have same rank as masks
+        struct = struct[None]
+        m0 = ndimage.binary_dilation(masks, struct, iterations=buffer)
+        m1 = ndimage.binary_dilation(m0, struct, iterations=width)
+        msky = (m1 & ~(m0 | ~m0.any(0)))
+        sky_segm = SegmentationHelper.from_masks(msky)
 
 class StarTracker():
     @classmethod
     def from_image(cls, image, snr=3., npixels=7, edge_cutoff=3, deblend=False,
                    flux_sort=True, dilate=True):
+        # create segmentationHelper
         sh = SegmentationHelper.from_image(
             image, snr, npixels, edge_cutoff, deblend, flux_sort, dilate)
+
+        # Center of mass
         found = sh.com(image)
-        
-        # bg regions
-        masks = tracker.segm.masks3D()
-        struct = ndimage.generate_binary_structure(2, 1)
-        # structure array needs to have same rank as masks
-        struct = struct[None]
-        m0 = ndimage.binary_dilation(masks, struct, iterations=3)
-        m1 = ndimage.binary_dilation(m0, struct, iterations=5)
-        msky = (m1 & ~(m0 | ~m0.any(0)))
-        sky_segm = SegmentationHelper.from_masks(msky)
+
+
 
         return cls(found, sh)
 
