@@ -1,6 +1,6 @@
-'''
+"""
 Tools for visualising object tracks across the night sky
-'''
+"""
 
 import time
 import inspect
@@ -15,7 +15,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.optimize import brentq
 
-#Import the packages necessary for finding coordinates and making coordinate transformations
+# Import the packages necessary for finding coordinates and making coordinate transformations
 import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import (SkyCoord, EarthLocation, AltAz,
@@ -34,14 +34,15 @@ from matplotlib.transforms import (Transform, IdentityTransform, Affine2D,
                                    blended_transform_factory as btf)
 from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
+# local libs
 from grafico.ticks import DegreeFormatter, TransFormatter
 from recipes.list import sorter
 
 from decor.misc import persistant_memoizer
-from decor.profile import profiler
+from decor import profiler
 # profiler = profile()        #truncate_lines=50
 
-#====================================================================================================
+# ====================================================================================================
 # setup persistant coordinate cache - faster object coordinate retrieval via sesame query
 here = inspect.getfile(inspect.currentframe())
 moduleDir = Path(here).parent
@@ -50,9 +51,10 @@ siteCacheName = '.sitecache'
 cooCachePath = moduleDir / cooCacheName
 siteCachePath = moduleDir / siteCacheName
 
+
 @persistant_memoizer(cooCachePath)
 def resolver(name):
-    '''Get the target coordinates from object name if known'''
+    """Get the target coordinates from object name if known"""
     # try extract J coordinates from name.  We do this first, since it is faster than a sesame query
     try:
         return Jparser(name).skycoord()
@@ -67,27 +69,49 @@ def resolver(name):
 def get_site(name):
     return EarthLocation.of_site(name)
 
-#====================================================================================================
-#def OOOOh(t):
-    #'''hours since midnight'''
-    #return (t - midnight).sec / 3600
 
-#====================================================================================================
-def local_time_str(t, tz=2*u.hour, precision='m'):
+# ====================================================================================================
+# def OOOOh(t):
+# """hours since midnight"""
+# return (t - midnight).sec / 3600
+
+# ====================================================================================================
+def local_time_str(t, tz=2 * u.hour, precision='m'):
     scales = (24, 60, 60)
     ix = 'hms'.index(precision)
-    t = (t+tz).to_datetime().timetuple()
-    tt = np.round(t[3:4+ix])
-    inc = tt // scales[:ix+1]
-    tt = (tt + inc) % scales[:ix+1]
-    fmt = ':'.join(('{:02,d}',)*(ix+1))
+    t = (t + tz).to_datetime().timetuple()
+    tt = np.round(t[3:4 + ix])
+    inc = tt // scales[:ix + 1]
+    tt = (tt + inc) % scales[:ix + 1]
+    fmt = ':'.join(('{:02,d}',) * (ix + 1))
     return fmt.format(*tt)
 
     # timeTxt = (t+tz).iso.split()[1].split('.')[0]   # up to seconds
     # timeTxt = ':'.join(timeTxt.split(':')[:ix+1])   # up to requested precision
     # return (t+tz).iso.split()[1].split('.')[0]
 
-#====================================================================================================
+
+def nearest_midnight_date(switchHour=9):
+    """
+    default behaviour of this function changes depending on the time of day
+    when called:
+    if calling during early morning hours (presumably at telescope):
+        time returned is current date 00:00:00
+    if calling during afternoon hours:
+        time returned is midnight of the next day
+    """
+    now = datetime.now()  # current local time
+    day_inc = int(now.hour > switchHour)  # int((now.hour - 12) > 12)
+    midnight = datetime(now.year, now.month, now.day, 0, 0, 0)
+    return midnight + timedelta(day_inc)
+
+
+def nearest_midnight_time():
+    """Return time of nearest midnight utc"""
+    return Time(nearest_midnight_date())
+
+
+# ====================================================================================================
 def get_sid_trans(date, longitude):
     """Initialize matplotlib transform for local time - sidereal time conversion"""
     midnight = Time(date)  # midnight UTC
@@ -102,8 +126,7 @@ def get_sid_trans(date, longitude):
     return Affine2D().translate(-p0, 0).scale(scale).translate(p0 + offset, 0).inverted()
 
 
-
-#****************************************************************************************************
+# ****************************************************************************************************
 class SeczTransform(Transform):
     input_dims = 1
     output_dims = 1
@@ -114,70 +137,68 @@ class SeczTransform(Transform):
         return 1. / np.cos(np.radians(90. - alt))
 
 
-#****************************************************************************************************
+# ****************************************************************************************************
 class SeczFormatter(TransFormatter):
     _transform = SeczTransform()
 
 
-
-#****************************************************************************************************
+# ****************************************************************************************************
 class VizAxes(SubplotHost):
-    '''The standard axes class for visibility tracks'''
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    #def __init__(self, *args, **kw):
+    """The standard axes class for visibility tracks"""
 
-        ##self.ytrans = SeczTransform()
-        ##self._aux_trans = btf(ReciprocalTransform(), IdentityTransform())
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # def __init__(self, *args, **kw):
 
-        #kws.pop('site')
+    ##self.ytrans = SeczTransform()
+    ##self._aux_trans = btf(ReciprocalTransform(), IdentityTransform())
 
-        #date = '2016-07-08'
-        #lon = viz.siteLoc.longitude
-        #sid_trans = get_sid_trans(date, lon, 2)
-        #aux_trans = btf(sid_trans, IdentityTransform())
+    # kws.pop('site')
 
-        #SubplotHost.__init__(self, *args, **kw)
-        #self.parasite = self.twin(aux_trans)
+    # date = '2016-07-08'
+    # lon = viz.siteLoc.longitude
+    # sid_trans = get_sid_trans(date, lon, 2)
+    # aux_trans = btf(sid_trans, IdentityTransform())
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # SubplotHost.__init__(self, *args, **kw)
+    # self.parasite = self.twin(aux_trans)
+
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def setup_ticks(self):
-
-        #Tick setup for both axes
+        # Tick setup for both axes
         minorTickSize = 8
         for axis in (self.yaxis, self.parasite.yaxis):
             axis.set_tick_params('both', tickdir='out')
-            #axis.set_tick_params('minor', labelsize=minorTickSize, pad=0)
+            # axis.set_tick_params('minor', labelsize=minorTickSize, pad=0)
 
-        #TODO:  colors='' #For sidereal time axis
+        # TODO:  colors='' #For sidereal time axis
         self.xaxis.set_tick_params('major', pad=10)
         self.yaxis.set_tick_params('minor', labelsize=6, pad=5)
 
-
-        #Tick setup for main axes
-#         self.xaxis.set_tick_params('major', pad=10)
-#         self.yaxis.set_tick_params('minor', labelsize=6, pad=5)
+        # Tick setup for main axes
+        #         self.xaxis.set_tick_params('major', pad=10)
+        #         self.yaxis.set_tick_params('minor', labelsize=6, pad=5)
         dloc = AutoDateLocator()
-        #self.xaxis.tick_bottom()
+        # self.xaxis.tick_bottom()
         self.xaxis.set_major_locator(dloc)
         self.xaxis.set_minor_locator(AutoMinorLocator())
         fmt = AutoDateFormatter(dloc)
-        fmt.scaled[1/24] = '%H:%M'
+        fmt.scaled[1 / 24] = '%H:%M'
         self.xaxis.set_major_formatter(fmt)
 
         self.yaxis.set_minor_locator(AutoMinorLocator())
         self.yaxis.set_major_formatter(DegreeFormatter())
         self.yaxis.set_minor_formatter(DegreeFormatter())
 
-        #Tick setup for main axes
+        # Tick setup for main axes
 
 
-        #self.parasite.axis['right'].major_ticklabels.set_visible(False)
+        # self.parasite.axis['right'].major_ticklabels.set_visible(False)
 
 
         ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        #def set_formatters(self):
+        # def set_formatters(self):
 
-        #self.xaxis.set_minor_formatter(ticker.ScalarFormatter())
+        # self.xaxis.set_minor_formatter(ticker.ScalarFormatter())
         self.parasite.xaxis.tick_top()
         self.parasite.xaxis.offsetText.set_visible(False)
         #
@@ -196,7 +217,7 @@ class VizAxes(SubplotHost):
 
         # fine grained formatting for coord display subtext
         fgfmt = AutoDateFormatter(dloc)
-        fgfmt.scaled[1/24] = '%H:%M:%S'
+        fgfmt.scaled[1 / 24] = '%H:%M:%S'
         self._xcoord_formatter = fgfmt
         self._ycoord_formatter = DegreeFormatter(precision=2)
 
@@ -204,36 +225,35 @@ class VizAxes(SubplotHost):
         self.parasite.yaxis.tick_right()
         self.parasite.yaxis.set_major_formatter(SeczFormatter())
 
-        #self.parasite.yaxis.set_minor_locator(AutoMinorLocator())
+        # self.parasite.yaxis.set_minor_locator(AutoMinorLocator())
         self.parasite.yaxis.set_minor_formatter(SeczFormatter())
 
 
-        #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        #def set_locators(self):
-        #formatter_factory(AutoMinorLocator(n=5))
-        #self.xaxis.set_minor_locator(AutoMinorLocator(n=5))
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # def set_locators(self):
+        # formatter_factory(AutoMinorLocator(n=5))
+        # self.xaxis.set_minor_locator(AutoMinorLocator(n=5))
 
-        #self.parasite.xaxis.set_minor_locator(AutoMinorLocator(n=5))
+        # self.parasite.xaxis.set_minor_locator(AutoMinorLocator(n=5))
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def format_coord(self, x, y):
-        #print('fmt')
-        #s = super().format_coord(x, y)
+        # print('fmt')
+        # s = super().format_coord(x, y)
         xs = self._xcoord_formatter(x)
         ys = self._ycoord_formatter(y)
 
-        xt, _ = self.parasite.transAux.inverted().transform([x,y])
+        xt, _ = self.parasite.transAux.inverted().transform([x, y])
         xts = self._xcoord_formatter(xt)
 
-        _, yt = self.parasite.yaxis.get_major_formatter()._transform.transform([x,y]) #HACK!!
+        _, yt = self.parasite.yaxis.get_major_formatter()._transform.transform([x, y])  # HACK!!
         yts = '%.3f' % yt
 
         return 'UTC=%s\talt=%s\tsid.T=%s\tairmass=%s' % (xs, ys, xts, yts)
 
 
-
 class Sun():
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, frames, midnight):
 
         t = frames.obstime
@@ -242,16 +262,16 @@ class Sun():
         self.dusk, self.dawn = self.get_rise_set(t, midnight)
         self.set, self.rise = self.dusk['sunset'], self.dawn['sunrise']
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_rise_set(self, t, midnight):
-        '''calculate dawn / dusk / twighlight times'''
+        """calculate dawn / dusk / twighlight times"""
 
         # We interpolate the calculated sun positions to get dusk/dawn times.  Should still be accurate to ~1s
-        h = (t - midnight).to('h').value                # hours since midnight ut
+        h = (t - midnight).to('h').value  # hours since midnight ut
         ip = interp1d(h, self.coords.alt.degree)
 
         def twilight(h, angle):
-            '''civil / nautical / astronomical twighlight solver'''
+            """civil / nautical / astronomical twighlight solver"""
             return ip(h) + angle
 
         angles = np.arange(0, 4) * 6.
@@ -268,35 +288,35 @@ class Sun():
         for i, times in enumerate(zip(dusk, dawn)):
             j = bool(i)
             for k, t in enumerate(times):
-                words = (' '*j).join((which[i], when[j][k]))
+                words = (' ' * j).join((which[i], when[j][k]))
                 up[k][words] = t
 
         return up
-
 
 
 class Moon():
     def __init__(self, frames, midnight):
         # get moon rise/set times, phase, illumination etc...
         t = frames.obstime
-        self.coords = get_moon(t).transform_to(frames)      #WARNING: slow!!!!
+        self.coords = get_moon(t).transform_to(frames)  # WARNING: slow!!!!
         self.up = self.get_rise_set(t, midnight)
         self.phase, self.illumination = self.get_phase(midnight, frames.location)
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_rise_set(self, t, midnight):
-        '''get moon rising and setting times'''
+        """get moon rising and setting times"""
 
-        h = (t - midnight).to('h').value                # hours since midnight ut
+        h = (t - midnight).to('h').value  # hours since midnight ut
         malt = self.coords.alt.degree
         # interpolator
         ip = interp1d(h, malt)
 
-        # find horizon crossing interval
+        # find horizon crossing interval (# index of sign changes)
         smalt = np.sign(malt)
-        wsc = np.where(abs(smalt - np.roll(smalt, -1)) == 2)[0]  # index of sign changes
+        wsc = np.where(abs(smalt - np.roll(smalt, -1))[:-1] == 2)[0]
         ix_ = np.c_[wsc - 1, wsc + 1]  # check for sign changes: malt[ix_]
         up = {}
+
         for ix in ix_:
             crossint = h[ix]  # hour interval when moon crosses horizon
             rise_or_set = np.subtract(*malt[ix]) > 1
@@ -308,7 +328,7 @@ class Moon():
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_phase(self, t, location):
-        '''calculate moon phase and illumination at local midnight'''
+        """calculate moon phase and illumination at local midnight"""
 
         altaz = AltAz(obstime=t, location=location)
         moon = get_moon(t).transform_to(altaz)
@@ -344,25 +364,25 @@ class Moon():
         return mplPath(verts, codes)
 
 
-def nearest_midnight_date(switchHour=9):
-    """
-    default behaviour of this function changes depending on the time of day when called.
-    if calling during early morning hours (presumably at telescope):
-        time returned is current date 00:00:00
-    if calling during afternoon hours:
-        time returned is midnight of the next day
-    """
-    now = datetime.now()  # current local time
-    day_inc = int(now.hour > switchHour)        # int((now.hour - 12) > 12)
-    return datetime(now.year, now.month, now.day, 0, 0, 0) + timedelta(day_inc)
 
-def nearest_midnight_time():
-    '''Return time of nearest midnight utc'''
-    return Time(nearest_midnight_date())
-
-#****************************************************************************************************
+# ****************************************************************************************************
 class VisPlot():
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    """
+    A tool for plotting visibility tracks of astronomical objects.
+
+    Initializing the class without arguments will set up the plot for the
+    current date and default location (sutherland)
+
+    Objects tracks can be added to the plot by passing an object name,
+    (and optionally coordinates for objects not resolvable in SIMBAD) to
+    the `add_target` method.
+
+    Examples
+    --------
+    vis = VisPlot()
+    vis.add_target('FO Aqr')
+    """
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     default_cmap = 'jet'
 
     # TODO: figure cross-hairs indicating altitude etc of objects on hover.
@@ -372,18 +392,25 @@ class VisPlot():
     # FIXME: hover highlight not playing well with current time indicator
     # FIXME: Moonrise text at bottom
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    # @profiler.histogram # FIXME
-    # from decor.profile import ProfileStatsDisplay
-    # @ProfileStatsDisplay # FIXME  TypeError: __init__() missing 1 required positional argument: 'self'
-    # @profiler
-    def __init__(self, date=None, site='sutherland', targets=None, tz=2*u.h, **options): #res
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    @profiler.histogram
+    def __init__(self, date=None, site='sutherland', targets=None, tz=2 * u.h, **options):  # res
+        """
+
+        Parameters
+        ----------
+        date
+        site
+        targets
+        tz
+        options
+        """
 
         self.siteName = site.title()
         self.siteLoc = get_site(self.siteName)
         # TODO from time import timezone
-        self.tz = tz        # TODO: can you get this from the site location??
-
+        self.tz = tz
+        # TODO: can you get this from the site location??
         # http://stackoverflow.com/questions/16086962/how-to-get-a-time-zone-from-a-location-using-latitude-and-longitude-coordinates
         # https://developers.google.com/maps/documentation/timezone/start
 
@@ -410,7 +437,7 @@ class VisPlot():
             # FIXME: however, we need to flag here that plotting has not been done yet
             self.add_coordinates(targets)
 
-        #TODO: the next two lines are slow! do in thread / or interpolate position somehow
+        # TODO: the next two lines are slow! do in thread / or interpolate position somehow
         # Get sun, moon coordinates  #TODO: other bright stars / planets
         self.sun = Sun(frames, midnight)
         self.moon = Moon(frames, midnight)
@@ -424,20 +451,20 @@ class VisPlot():
 
         # current time indicator
         self.nowLine, = self.ax.plot([self.midnight.plot_date] * 2, [0, 1],
-                              ls=':', c='g',
-                              transform=btf(self.ax.transData, self.ax.transAxes),
-                              animated=True)    # prevent redrawing the canvas
+                                     ls=':', c='g',
+                                     transform=btf(self.ax.transData, self.ax.transAxes),
+                                     animated=True)  # prevent redrawing the canvas
         self.nowText = self.vertical_txt('', t[0], y='bottom', color='g', animated=True)
         self.nowLineThreadAlive = threading.Event()
         self.nowLineThread = threading.Thread(target=self.show_current_time,
                                               args=(self.nowLineThreadAlive,))
-        #TODO: text to indicate current time UTC / sidereal
+        # TODO: text to indicate current time UTC / sidereal
 
         # HACK
         self.cid = self.figure.canvas.mpl_connect('draw_event', self._on_first_draw)
         # At this point the background with everything except the tracks is saved
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def show_current_time(self, alive, interval=30):
         """thread to update line indicating current time"""
         while not alive.isSet():
@@ -446,7 +473,7 @@ class VisPlot():
             now = Time.now()
             s = local_time_str(now)
             t = now.plot_date
-            self.nowLine.set_xdata([t,t])
+            self.nowLine.set_xdata([t, t])
             self.nowText.set_text(s)
             tmin, tmax = self.ax.get_xlim()
             if (tmin < t) & (t < tmax):
@@ -457,7 +484,7 @@ class VisPlot():
                 self.nowText.draw(renderer)
                 self.figure.canvas.blit(self.figure.bbox)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_coordinate(self, name, coo=None):
         """
         Resolve coordinates from object name and add to cache. Issue a warning when name cannot be resolved.
@@ -477,7 +504,7 @@ class VisPlot():
 
         return success
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_target(self, name, coo=None, do_legend=True):
         success = self.add_coordinate(name, coo)
         if success:
@@ -485,7 +512,7 @@ class VisPlot():
             if do_legend:
                 self.do_legend()
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def remove_target(self, name):
         if name in self.targetCoords:
             self.targetCoords.pop(name)
@@ -493,7 +520,7 @@ class VisPlot():
             self.plots.pop(name)
             self.labels.pop(name)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_targets(self, names):
         for name in names:
             self.add_target(name, do_legend=False)
@@ -502,14 +529,14 @@ class VisPlot():
 
         # self.cid = self.figure.canvas.mpl_connect('draw_event', self.fix_legend())
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_coordinates(self, names):
         for name in names:
             self.add_coordinate(name)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_curve(self, name):
-        '''Calculate track and plot'''
+        """Calculate track and plot"""
         # NOTE there is a difference between adding and plotting. #TODO: choose better name. refactor
         coords = self.targetCoords[name]
 
@@ -527,7 +554,7 @@ class VisPlot():
         # add name text at axes edges
         self.add_annotation(name)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_annotation(self, name):
         """
         Add target name to visibility curve - helps more easily distinguish
@@ -565,40 +592,40 @@ class VisPlot():
             # create the text
             text = ax.text(x[0], y[0] + 0.5, name, color=colour,
                            size='x-small', fontweight='bold', ha='left',
-                           rotation=angles[0], rotation_mode='anchor',)
+                           rotation=angles[0], rotation_mode='anchor', )
             self.labels[name].append(text)
             bb = text.get_window_extent(ax.figure.canvas.get_renderer())
-            c = bb.corners()[[0,-1]]  # lower left, top right
+            c = bb.corners()[[0, -1]]  # lower left, top right
             xyD = ax.transData.inverted().transform(c)
-            txtL = np.sqrt(np.square(np.diff(xyD.T)).sum())     # length of rendered text in data space
-            space = segL.sum()                                  # curve length of track segment
-            close = txtL * 2 > space     # if entry & exit point are close, only make 1 label
+            txtL = np.sqrt(np.square(np.diff(xyD.T)).sum())  # length of rendered text in data space
+            space = segL.sum()  # curve length of track segment
+            close = txtL * 2 > space  # if entry & exit point are close, only make 1 label
 
             # second label for segment
             if not close:
                 text = ax.text(x[-1], y[-1] + 0.5, name, color=colour,
-                           size='x-small', fontweight='bold', ha='right',
-                           rotation=angles[-1], rotation_mode='anchor',)
+                               size='x-small', fontweight='bold', ha='right',
+                               rotation=angles[-1], rotation_mode='anchor', )
                 self.labels[name].append(text)
 
-        # TODO: Curved text
-            # - interpolators for each track
-            # split text at n positions, where n is decided based on str length
-            # place each text segment at position along line with angle of slope at that position
+                # TODO: Curved text
+                # - interpolators for each track
+                # split text at n positions, where n is decided based on str length
+                # place each text segment at position along line with angle of slope at that position
 
-        # FIXME: labels don't stay in right position when zooming / resizing.  will need custom callback to fix this...
+                # FIXME: labels don't stay in right position when zooming / resizing.  will need custom callback to fix this...
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def setup_figure(self):
 
-        self.figure = fig = plt.figure(figsize=(18,10))
+        self.figure = fig = plt.figure(figsize=(18, 10))
         fig.subplots_adjust(top=0.94,
                             left=0.05,
                             right=0.85,
                             bottom=0.05)
-        #setup axes with
+        # setup axes with
         self.ax = ax = VizAxes(fig, 111)
-        sid_trans = get_sid_trans(self.date, self.siteLoc.longitude)
+        sid_trans = get_sid_trans(self.date, self.siteLoc.lon)  # gitude)
         aux_trans = btf(sid_trans, IdentityTransform())
         ax.parasite = ax.twin(aux_trans)
 
@@ -624,15 +651,15 @@ class VisPlot():
             ax.axvline(time.plot_date, c='y', ls='--')
             self.vertical_txt(rise_set, time, y='bottom', color='y')
 
-        #TODO: enable picking for sun / moon
+        # TODO: enable picking for sun / moon
         sun_pl, = ax.plot(self.tp, self.sun.coords.alt,
-                         'orangered', ls='none', markevery=2,
-                         marker='o', ms=10,
-                         label='sun')
+                          'orangered', ls='none', markevery=2,
+                          marker='o', ms=10,
+                          label='sun')
         moon_pl, = ax.plot(self.tp, self.moon.coords.alt,
-                          'yellow',  ls='none',  markevery=2,
-                          marker=self.moon.get_marker(), ms=10,
-                          label='moon ({:.0%})'.format(self.moon.illumination))
+                           'yellow', ls='none', markevery=2,
+                           marker=self.moon.get_marker(), ms=10,
+                           label='moon ({:.0%})'.format(self.moon.illumination))
 
         # site / date info text
         ax.text(0, 1.04, self.date_info_txt(self.midnight),
@@ -640,33 +667,32 @@ class VisPlot():
         ax.text(1, 1.04, self.site_info_txt(), fontweight='bold',
                 ha='right', transform=ax.transAxes)
 
-
-        #setup axes
-        #dloc = AutoDateLocator()
-        #ax.xaxis.set_major_locator(dloc)
-        #ax.xaxis.set_minor_locator(AutoMinorLocator())
-        #ax.yaxis.set_minor_locator(AutoMinorLocator())
-        #ax.yaxis.set_major_formatter(DegreeFormatter())
-        #ax.xaxis.set_major_formatter(AutoDateFormatter(dloc))
-        #ax.yaxis.set_minor_formatter(DegreeFormatter())
+        # setup axes
+        # dloc = AutoDateLocator()
+        # ax.xaxis.set_major_locator(dloc)
+        # ax.xaxis.set_minor_locator(AutoMinorLocator())
+        # ax.yaxis.set_minor_locator(AutoMinorLocator())
+        # ax.yaxis.set_major_formatter(DegreeFormatter())
+        # ax.xaxis.set_major_formatter(AutoDateFormatter(dloc))
+        # ax.yaxis.set_minor_formatter(DegreeFormatter())
 
         just_before_sunset = (self.sun.set - 0.25 * u.h).plot_date
         just_after_sunrise = (self.sun.rise + 0.25 * u.h).plot_date
         ax.set_xlim(just_before_sunset, just_after_sunrise)
         ax.set_ylim(-10, 90)
 
-        #HACK
+        # HACK
         # qq = aux_trans.transform(np.c_[ax.get_xlim(), ax.get_ylim()])
         # ax.parasite.viewLim.intervalx = qq[:,0]
 
-        #which part of the visibility curves are visible within axes
+        # which part of the visibility curves are visible within axes
         self._lt = (just_before_sunset < self.tp) & (self.tp < just_after_sunrise)
 
-        #labels for axes
+        # labels for axes
         ax.set_ylabel('Altitude', fontweight='bold')
         ax.parasite.set_ylabel('Airmass', fontweight='bold')
 
-        #sun / moon legend
+        # sun / moon legend
         leg = self.ax.legend(bbox_to_anchor=(1.05, 0), loc=3,
                              borderaxespad=0., frameon=True)
         leg.get_frame().set_edgecolor('k')
@@ -674,7 +700,7 @@ class VisPlot():
 
         ax.grid()
 
-    #====================================================================================================
+    # ====================================================================================================
     # @staticmethod
     def vertical_txt(self, s, t, y=1, **kw):
         va = 'top'
@@ -691,20 +717,20 @@ class VisPlot():
                       **kw)
         return txt
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def site_info_txt(self):
-        #eg:
-        lat = self.siteLoc.latitude
-        lon = self.siteLoc.longitude
-        ns = 'NS'[bool(lat>0)]
-        ew = 'WE'[bool(lon>0)]
+        # eg:
+        lat = self.siteLoc.lat  # itude
+        lon = self.siteLoc.lon  # gitude
+        ns = 'NS'[bool(lat > 0)]
+        ew = 'WE'[bool(lon > 0)]
 
         lat = abs(lat).to_string(precision=0, format='latex')
         lon = abs(lon).to_string(precision=0, format='latex')
         h = '{0.value:.0f} {0.unit:s}'.format(self.siteLoc.height)
         return '{} @ {} {}; {} {}; {}'.format(self.siteName, lat, ns, lon, ew, h)
 
-    #====================================================================================================
+    # ====================================================================================================
     @staticmethod
     def date_info_txt(t):
         weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -712,7 +738,7 @@ class VisPlot():
         datestr = t.iso.split()[0]
         return ', '.join((dayname, datestr))
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def make_time_ticks(self):
         # Create ticklabels for SAST
         ax = self.ax
@@ -722,7 +748,7 @@ class VisPlot():
         sast_lbls = list(map(fmt, (Time(num2date(xticklocs)) + self.tz).plot_date))
 
         for sast, tck in zip(sast_lbls, xticklabels):
-            #FIXME: does not update when zooming / panning!  better to have another parasite?
+            # FIXME: does not update when zooming / panning!  better to have another parasite?
             xy = x, y = tck.get_position()
             trans = tck.get_transform()
             self.ax.text(*xy, sast,
@@ -738,9 +764,9 @@ class VisPlot():
                      va='bottom', ha='left',
                      transform=btrans)
         self.ax.text(x, y, 'UTC',
-                    color='k', fontweight='bold',
-                    va='top', ha='left',
-                    transform=btrans)
+                     color='k', fontweight='bold',
+                     va='top', ha='left',
+                     transform=btrans)
 
         # change color of sidereal time labels
         for tck in self.ax.parasite.get_xmajorticklabels():
@@ -751,25 +777,25 @@ class VisPlot():
         x, y = tck.get_position()
         x = self._get_tick_x(tck)
         self.ax.text(x, y, 'Sid.T.',
-                    color='c', fontweight='bold',
-                    va = 'bottom', ha='left',
-                    transform=btrans)
+                     color='c', fontweight='bold',
+                     va='bottom', ha='left',
+                     transform=btrans)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def _get_tick_x(self, tck):
         bb = tck.get_window_extent()
         c = bb.corners()[[0, 2]]  # lower left, lower right
         xyAx = self.ax.transAxes.inverted().transform(c)  # text box in axes coordinates
-        w = np.diff(xyAx[:, 0])     #textbox width in axes coordinates
+        w = np.diff(xyAx[:, 0])  # textbox width in axes coordinates
         return max(xyAx[1, 0] + w * 0.1, 1)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def plot_vis(self, **kws): # MAYBE option for colour coding azimuth
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def plot_vis(self, **kws):  # MAYBE option for colour coding azimuth
         ax = self.ax
 
-        cmap    = kws.get('cmap')
+        cmap = kws.get('cmap')
         colours = kws.get('colours', [])
-        sort    = kws.get('sort', True)
+        sort = kws.get('sort', True)
 
         self.set_colour_cycle(colours, cmap)
         names, coords = zip(*self.targetCoords.items())
@@ -779,28 +805,27 @@ class VisPlot():
         for name in names:
             self.add_curve(name)
 
-        #self.plots += [sun_pl, moon_pl]
+        # self.plots += [sun_pl, moon_pl]
 
         self.do_legend()
 
-
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def set_colour_cycle(self, colours=[], cmap=None):
-        #Ensure we plot with unique colours
+        # Ensure we plot with unique colours
         N = len(self.targetCoords)
 
-        #default behaviour - use colourmap
+        # default behaviour - use colourmap
         if (not len(colours)) and (cmap is None):
             cmap = self.default_cmap
 
-        #if colour map given or colours not given and default colour sequence insufficien
-        if ((cmap is not None) #colour map given - superceeds colours arg
-        or ((not len(colours)) #colours not given
-            and len(rcParams['axes.prop_cycle']) < N)): #default colour sequence insufficient for uniqueness
-            cm =  plt.get_cmap(cmap)
-            colours =  cm(np.linspace(0, 1, N))
+        # if colour map given or colours not given and default colour sequence insufficien
+        if ((cmap is not None)  # colour map given - superceeds colours arg
+            or ((not len(colours))  # colours not given
+                and len(rcParams['axes.prop_cycle']) < N)):  # default colour sequence insufficient for uniqueness
+            cm = plt.get_cmap(cmap)
+            colours = cm(np.linspace(0, 1, N))
 
-        #Colours provided explicitly and no colourmap given
+        # Colours provided explicitly and no colourmap given
         elif len(colours) < N:
             'Given colour sequence less than number of time series. Colours will repeat'
 
@@ -809,12 +834,12 @@ class VisPlot():
             ccyc = cycler('color', colours)
             self.ax.set_prop_cycle(ccyc)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def do_legend(self):    #TODO: maybe use you DynamicLegend class ??
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def do_legend(self):  # TODO: maybe use you DynamicLegend class ??
         """
         Create a legend with pickable elements to toggle visibility of tracks
         """
-        leg = self.ax.legend(self.plots.values(), self.plots.keys(),            #*reversed(zip(*self.plots.items()))
+        leg = self.ax.legend(self.plots.values(), self.plots.keys(),  # *reversed(zip(*self.plots.items()))
                              bbox_to_anchor=(1.05, 1), loc=2,
                              borderaxespad=0., frameon=True)
         leg.get_frame().set_edgecolor('k')
@@ -826,11 +851,11 @@ class VisPlot():
 
         self.legLineMapInv = dict(zip(self.legLineMap.values(), self.legLineMap.keys()))
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def fix_legend(self):
         # Shift axes position to fit the legend nicely (long names get clipped)
 
-        print('Fixing Legend')      #TODO: logging
+        print('Fixing Legend')  # TODO: logging
 
         leg = self.ax.get_legend()
         bb = leg.get_window_extent(self.figure._cachedRenderer)
@@ -846,7 +871,7 @@ class VisPlot():
             fp.write(str((longest_name, right)))
             fp.write('\n')
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def _on_pick(self, event):
         # on the pick event, find the orig line corresponding to the
         # legend proxy line, and toggle the visibility
@@ -864,15 +889,14 @@ class VisPlot():
         else:
             legline.set_alpha(0.2)
 
-        self.figure.canvas.draw()        #TODO: blit
+        self.figure.canvas.draw()  # TODO: blit
 
-
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def highlight(self, legLine, plotLine, factor=2):
         """ """
-        legLine.set_lw(legLine.get_lw() * factor)           # thicken legend line
-        plotLine.set_lw(plotLine.get_lw() * factor)         # thicken track line
-        plotLine.set_zorder(plotLine.get_zorder() * factor) # plot over everything else
+        legLine.set_lw(legLine.get_lw() * factor)  # thicken legend line
+        plotLine.set_lw(plotLine.get_lw() * factor)  # thicken track line
+        plotLine.set_zorder(plotLine.get_zorder() * factor)  # plot over everything else
 
         self.figure.canvas.restore_region(self.background)
         renderer = self.figure.canvas.get_renderer()
@@ -880,14 +904,14 @@ class VisPlot():
         legLine.draw(renderer)
         self.figure.canvas.blit(self.figure.bbox)
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def _on_motion(self, event):        #TODO: move this to the DynamicLegend class!!!!!!
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    def _on_motion(self, event):  # TODO: move this to the DynamicLegend class!!!!!!
 
         leg = self.ax.get_legend()
         in_legend, props = leg.contains(event)
         hit = False
         if in_legend:
-            #TODO: save background here.. including nowLine so that it remains when we blit
+            # TODO: save background here.. including nowLine so that it remains when we blit
 
             # t = time.time()
             # print('IN LEGEND', t)
@@ -898,7 +922,7 @@ class VisPlot():
                     # print('HIT', name)
                     break
 
-            if hit and self.highlighted != name:    # new track to highlight
+            if hit and self.highlighted != name:  # new track to highlight
                 # print('NEW HIGHLIGHT')
                 self.highlighted = name
                 track = self.plots[name]
@@ -909,12 +933,12 @@ class VisPlot():
             # print('RESTORE', self.highlighted)
             track = self.plots[self.highlighted]
             legLine = self.legLineMapInv[track]
-            self.highlight(legLine, track, 0.5)     # restore
+            self.highlight(legLine, track, 0.5)  # restore
             self.highlighted = None
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def _on_first_draw(self, event):
-        #HACK! this method creates the SAST labels upon the first call to draw
+        # HACK! this method creates the SAST labels upon the first call to draw
         print('FIRST DRAW')
         fig = self.figure
         canvas = fig.canvas
@@ -923,7 +947,7 @@ class VisPlot():
         self.nowLineThread.start()
 
         # fix the legend if necessary
-        if self.tracks:     # some tracks have been added ==> we have a legend
+        if self.tracks:  # some tracks have been added ==> we have a legend
             self.fix_legend()
 
         # disconnect callback to this function
@@ -933,8 +957,7 @@ class VisPlot():
         self.cid = self.figure.canvas.mpl_connect('draw_event', self.save_background)
         # canvas.draw()
 
-
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def save_background(self, event):
 
         print('DRAW')
@@ -943,13 +966,13 @@ class VisPlot():
         # if self.use_blit:
         self.background = self.figure.canvas.copy_from_bbox(self.figure.bbox)  # save the background for blitting
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def closing(self, event):
         self.nowLineThreadAlive.set()
 
-    #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def connect(self):
-        #Setup legend picking
+        # Setup legend picking
         self.figure.canvas.mpl_connect('pick_event', self._on_pick)
         self.figure.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.figure.canvas.mpl_connect('close_event', self.closing)
