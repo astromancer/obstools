@@ -34,7 +34,7 @@ from grafico.ticks import DegreeFormatter, TransFormatter
 from recipes.list import sorter
 
 from decor.misc import persistant_memoizer
-from decor.profile import profiler
+# from decor.profiler import profiler
 # profiler = profile()        #truncate_lines=50
 
 #====================================================================================================
@@ -355,7 +355,7 @@ class VisPlot():
 
     #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # @profiler.histogram # FIXME
-    # from decor.profile import ProfileStatsDisplay
+    # from decor.profiler import ProfileStatsDisplay
     # @ProfileStatsDisplay # FIXME  TypeError: __init__() missing 1 required positional argument: 'self'
     # @profiler
     def __init__(self, date=None, site='sutherland', targets=None, tz=2*u.h, **options): #res

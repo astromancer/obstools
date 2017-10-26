@@ -1,17 +1,20 @@
-#pycharm
+# pycharm
 .idea/
 
-#kate tmp files
+# kate tmp files
 *.kate-swp
 *~
 
-#python files
+# python files
 __pycache__
 
-#libre office
+# libre office
 *.~*#
 
-#devs
+# backups
+*.bak*
+
+# devs
 */dev/*
 EMvsCON_*.py
 CVs.py

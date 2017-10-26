@@ -4,7 +4,7 @@ Tools for visualising object tracks across the night sky
 
 import time
 import inspect
-import warnings
+import logging
 import threading
 from functools import partial
 from collections import OrderedDict, defaultdict
@@ -146,7 +146,7 @@ class SeczFormatter(TransFormatter):
 class VizAxes(SubplotHost):
     """The standard axes class for visibility tracks"""
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     # def __init__(self, *args, **kw):
 
     ##self.ytrans = SeczTransform()
@@ -162,7 +162,7 @@ class VizAxes(SubplotHost):
     # SubplotHost.__init__(self, *args, **kw)
     # self.parasite = self.twin(aux_trans)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def setup_ticks(self):
         # Tick setup for both axes
         minorTickSize = 8
@@ -229,14 +229,14 @@ class VizAxes(SubplotHost):
         self.parasite.yaxis.set_minor_formatter(SeczFormatter())
 
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
         # def set_locators(self):
         # formatter_factory(AutoMinorLocator(n=5))
         # self.xaxis.set_minor_locator(AutoMinorLocator(n=5))
 
         # self.parasite.xaxis.set_minor_locator(AutoMinorLocator(n=5))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def format_coord(self, x, y):
         # print('fmt')
         # s = super().format_coord(x, y)
@@ -253,7 +253,7 @@ class VizAxes(SubplotHost):
 
 
 class Sun():
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def __init__(self, frames, midnight):
 
         t = frames.obstime
@@ -262,7 +262,7 @@ class Sun():
         self.dusk, self.dawn = self.get_rise_set(t, midnight)
         self.set, self.rise = self.dusk['sunset'], self.dawn['sunrise']
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def get_rise_set(self, t, midnight):
         """calculate dawn / dusk / twighlight times"""
 
@@ -302,7 +302,7 @@ class Moon():
         self.up = self.get_rise_set(t, midnight)
         self.phase, self.illumination = self.get_phase(midnight, frames.location)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def get_rise_set(self, t, midnight):
         """get moon rising and setting times"""
 
@@ -326,7 +326,7 @@ class Moon():
 
         return up
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def get_phase(self, t, location):
         """calculate moon phase and illumination at local midnight"""
 
@@ -343,7 +343,7 @@ class Moon():
 
         return phase.value, illumination.value
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def get_marker(self):  # NOTE: could be a fuction
 
         if np.abs(self.phase - np.pi) % np.pi < 0.1:
@@ -368,32 +368,52 @@ class Moon():
 # ****************************************************************************************************
 class VisPlot():
     """
-    A tool for plotting visibility tracks of astronomical objects.
+    A tool for plotting visibility tracks of astronomical objects to aid
+    observational planning and scheduling.
 
     Initializing the class without arguments will set up the plot for the
-    current date and default location (sutherland)
+    current date and default location (sutherland). Date, location and targets
+    can optionally be passed upon initialization.
 
-    Objects tracks can be added to the plot by passing an object name,
-    (and optionally coordinates for objects not resolvable in SIMBAD) to
-    the `add_target` method.
+    Objects tracks can be added to the plot by passing an object name to the
+    `add_target` method. In the case of objects in the SIMBAD database,
+    or objects which have coordinates in their names (eg. SDSS J015543.40+002807.2)
+    the coordinates will be resolved automatically. Objects for which the name
+    cannot be resolved into coordinates (eg. recent uncatalogued transient sources)
+    can be added by explicitly passing coordinates.
+
+    To aid visualizing many objects simultaneously, hovering over entries in
+    the legend will highlight the object track in the main plot.
+    Tracks can be hidden by clicking on the corresponing legend entry
+    Current time is indicated by a vertical line (dashed green) that updates
+    at a specified interval.
+    To activate the dynamic features (highlight, current time indicator line),
+    use the `connect` method.
 
     Examples
     --------
-    vis = VisPlot()
-    vis.add_target('FO Aqr')
+    >>> vis = VisPlot()
+    >>> vis.add_target('FO Aqr')
+    >>> vis.add_targets('SN 1987A', 'M31')
+    >>> vis.connect()
     """
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     default_cmap = 'jet'
 
     # TODO: figure cross-hairs indicating altitude etc of objects on hover.
-    # TODO: indicate 'current' distance from moon somehow
-    # TODO: Option for displaying coordinates vin legend
+    # TODO: indicate 'current' distance from moon when hovering
+    # TODO: Option for displaying coordinates in legend
+    # TODO: text for current time
+    # TODO: let text labels for tracks curve along the track - long labels
+    # TODO: Moon / sun pickable
+    # FIXME: legend being cut off
+    #
 
     # FIXME: hover highlight not playing well with current time indicator
     # FIXME: Moonrise text at bottom
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    @profiler.histogram
+
+    # @profiler.histogram
     def __init__(self, date=None, site='sutherland', targets=None, tz=2 * u.h, **options):  # res
         """
 
@@ -419,6 +439,9 @@ class VisPlot():
         self.plots = OrderedDict()
         self.labels = defaultdict(list)
 
+        #
+        self.use_blit = options.get('use_blit', True)
+
         if date:
             self.date = Time(date).to_datetime()
         else:
@@ -437,7 +460,8 @@ class VisPlot():
             # FIXME: however, we need to flag here that plotting has not been done yet
             self.add_coordinates(targets)
 
-        # TODO: the next two lines are slow! do in thread / or interpolate position somehow
+        # TODO: the next two lines are slow!
+        # tODO: do in thread / or interpolate position / memoize
         # Get sun, moon coordinates  #TODO: other bright stars / planets
         self.sun = Sun(frames, midnight)
         self.moon = Moon(frames, midnight)
@@ -445,7 +469,7 @@ class VisPlot():
         # self._drawn = False
         self.setup_figure()
 
-        self.use_blit = options.get('use_blit', True)
+
 
         self.highlighted = None
 
@@ -464,7 +488,7 @@ class VisPlot():
         self.cid = self.figure.canvas.mpl_connect('draw_event', self._on_first_draw)
         # At this point the background with everything except the tracks is saved
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def show_current_time(self, alive, interval=30):
         """thread to update line indicating current time"""
         while not alive.isSet():
@@ -484,13 +508,18 @@ class VisPlot():
                 self.nowText.draw(renderer)
                 self.figure.canvas.blit(self.figure.bbox)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_coordinate(self, name, coo=None):
         """
         Resolve coordinates from object name and add to cache. Issue a warning when name cannot be resolved.
         If coordinates provided, simply add to list with associated name
         :returns True if successfully resolved name
         """
+
+        if name in self.targetCoords:
+            logging.info('%s already in target list' % name)
+            return False
+
         success = True
         if coo is not None:
             self.targetCoords[name] = SkyCoord(*coo, unit=('h', 'deg'))
@@ -500,11 +529,11 @@ class VisPlot():
             except NameResolveError as err:
                 # name not in SIMBAD database
                 success = False
-                warnings.warn(str(err))
+                logging.warning(str(err))
 
         return success
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_target(self, name, coo=None, do_legend=True):
         success = self.add_coordinate(name, coo)
         if success:
@@ -512,7 +541,7 @@ class VisPlot():
             if do_legend:
                 self.do_legend()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def remove_target(self, name):
         if name in self.targetCoords:
             self.targetCoords.pop(name)
@@ -520,7 +549,7 @@ class VisPlot():
             self.plots.pop(name)
             self.labels.pop(name)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_targets(self, names):
         for name in names:
             self.add_target(name, do_legend=False)
@@ -529,12 +558,12 @@ class VisPlot():
 
         # self.cid = self.figure.canvas.mpl_connect('draw_event', self.fix_legend())
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_coordinates(self, names):
         for name in names:
             self.add_coordinate(name)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_curve(self, name):
         """Calculate track and plot"""
         # NOTE there is a difference between adding and plotting. #TODO: choose better name. refactor
@@ -554,7 +583,7 @@ class VisPlot():
         # add name text at axes edges
         self.add_annotation(name)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def add_annotation(self, name):
         """
         Add target name to visibility curve - helps more easily distinguish
@@ -567,9 +596,9 @@ class VisPlot():
         y0, y1 = ax.get_ylim()
         ly = (y0 < alt) & (alt < y1)
         # region within axes (possibly manyfold for tracks that pass out, and then in again)
-        li = (ly & self._lt).astype(int)  # gives edge intersecting points in boolean array
-        l0 = (li - np.roll(li, 1)) == 1  # first points inside axes (might be more than one per curve)
-        l1 = (li - np.roll(li, -1)) == 1  # last points inside axes (")
+        li = (ly & self._lt).astype(int)    # gives edge intersecting points in boolean array
+        l0 = (li - np.roll(li, 1)) == 1     # first points inside axes (might be more than one per curve)
+        l1 = (li - np.roll(li, -1)) == 1    # last points inside axes (")
         first, = np.where(l0)
         last, = np.where(l1)
         ixSeg = np.c_[first, last]
@@ -591,8 +620,9 @@ class VisPlot():
 
             # create the text
             text = ax.text(x[0], y[0] + 0.5, name, color=colour,
-                           size='x-small', fontweight='bold', ha='left',
-                           rotation=angles[0], rotation_mode='anchor', )
+                           size='small', fontweight='bold', ha='left',
+                           rotation=angles[0], rotation_mode='anchor',
+                           clip_on=True)
             self.labels[name].append(text)
             bb = text.get_window_extent(ax.figure.canvas.get_renderer())
             c = bb.corners()[[0, -1]]  # lower left, top right
@@ -604,18 +634,19 @@ class VisPlot():
             # second label for segment
             if not close:
                 text = ax.text(x[-1], y[-1] + 0.5, name, color=colour,
-                               size='x-small', fontweight='bold', ha='right',
-                               rotation=angles[-1], rotation_mode='anchor', )
+                               size='small', fontweight='bold', ha='right',
+                               rotation=angles[-1], rotation_mode='anchor',
+                               clip_on=True)
                 self.labels[name].append(text)
 
-                # TODO: Curved text
-                # - interpolators for each track
-                # split text at n positions, where n is decided based on str length
-                # place each text segment at position along line with angle of slope at that position
+        # TODO: Curved text
+        # - interpolators for each track
+        # split text at n positions, where n is decided based on str length
+        # place each text segment at position along line with angle of slope at that position
 
-                # FIXME: labels don't stay in right position when zooming / resizing.  will need custom callback to fix this...
+        # FIXME: labels don't stay in right position when zooming / resizing.  will need custom callback to fix this...
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def setup_figure(self):
 
         self.figure = fig = plt.figure(figsize=(18, 10))
@@ -717,7 +748,7 @@ class VisPlot():
                       **kw)
         return txt
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def site_info_txt(self):
         # eg:
         lat = self.siteLoc.lat  # itude
@@ -738,7 +769,7 @@ class VisPlot():
         datestr = t.iso.split()[0]
         return ', '.join((dayname, datestr))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def make_time_ticks(self):
         # Create ticklabels for SAST
         ax = self.ax
@@ -781,7 +812,7 @@ class VisPlot():
                      va='bottom', ha='left',
                      transform=btrans)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def _get_tick_x(self, tck):
         bb = tck.get_window_extent()
         c = bb.corners()[[0, 2]]  # lower left, lower right
@@ -789,7 +820,7 @@ class VisPlot():
         w = np.diff(xyAx[:, 0])  # textbox width in axes coordinates
         return max(xyAx[1, 0] + w * 0.1, 1)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def plot_vis(self, **kws):  # MAYBE option for colour coding azimuth
         ax = self.ax
 
@@ -809,7 +840,7 @@ class VisPlot():
 
         self.do_legend()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def set_colour_cycle(self, colours=[], cmap=None):
         # Ensure we plot with unique colours
         N = len(self.targetCoords)
@@ -834,15 +865,41 @@ class VisPlot():
             ccyc = cycler('color', colours)
             self.ax.set_prop_cycle(ccyc)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def do_legend(self):  # TODO: maybe use you DynamicLegend class ??
+
+    def get_legend_labels(self, show_coords=True):
+        # TODO: maybe have option for shortening the J---- names
+        # if show_coords:
+            # add amsmath so we can make short minus in math mode
+            # from matplotlib import rcParams
+            # rcParams["text.latex.preamble"] = [r'\usepackage{amsmath}']#,
+                                               #r'\mathchardef\mhyphen="2D']
+
+        labels = []
+        for name, coo in self.targetCoords.items():
+            if show_coords:
+                name = name.replace(' ', '\:')#.replace('-', r'\mbox{-}')  # math mode for boldness, thus need special space
+                name = '$\mathbf{%s}$' % name
+                cs = coo.to_string('hmsdms', precision=0, format='latex')
+                lbl = '\n'.join((name, cs.replace(' ', '; ')))
+            else:
+                lbl = name
+            labels.append(lbl)
+        return labels
+
+    def do_legend(self, show_coords=True):
+        # TODO: maybe use your DynamicLegend class ??
         """
         Create a legend with pickable elements to toggle visibility of tracks
         """
-        leg = self.ax.legend(self.plots.values(), self.plots.keys(),  # *reversed(zip(*self.plots.items()))
+        labels = self.get_legend_labels(show_coords)
+        leg = self.ax.legend(self.plots.values(), labels,
                              bbox_to_anchor=(1.05, 1), loc=2,
                              borderaxespad=0., frameon=True)
         leg.get_frame().set_edgecolor('k')
+
+        # if show_coords:
+        #     for txt in leg.texts:
+        #         txt.set_usetex(True)  # TODO: mpl feature request to usetex in legend
 
         self.legLineMap = {}
         for legline, origline in zip(leg.get_lines(), self.plots.values()):
@@ -851,11 +908,15 @@ class VisPlot():
 
         self.legLineMapInv = dict(zip(self.legLineMap.values(), self.legLineMap.keys()))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def fix_legend(self):
+        # re-space legend on next draw
+        # connect = self.figure.canvas.mpl_connect
+        # self._lfcid = connect('draw_event', self.fix_legend)
+
+
+    def fix_legend(self, event=None):
         # Shift axes position to fit the legend nicely (long names get clipped)
 
-        print('Fixing Legend')  # TODO: logging
+        logging.info('Fixing Legend')
 
         leg = self.ax.get_legend()
         bb = leg.get_window_extent(self.figure._cachedRenderer)
@@ -871,7 +932,8 @@ class VisPlot():
             fp.write(str((longest_name, right)))
             fp.write('\n')
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # self.figure.canvas.mpl_disconnect(self._lfcid)
+
     def _on_pick(self, event):
         # on the pick event, find the orig line corresponding to the
         # legend proxy line, and toggle the visibility
@@ -891,9 +953,11 @@ class VisPlot():
 
         self.figure.canvas.draw()  # TODO: blit
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def highlight(self, legLine, plotLine, factor=2):
         """ """
+        # FIXME: stays permenantly highlighted when clicking to remove
+
         legLine.set_lw(legLine.get_lw() * factor)  # thicken legend line
         plotLine.set_lw(plotLine.get_lw() * factor)  # thicken track line
         plotLine.set_zorder(plotLine.get_zorder() * factor)  # plot over everything else
@@ -904,7 +968,7 @@ class VisPlot():
         legLine.draw(renderer)
         self.figure.canvas.blit(self.figure.bbox)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def _on_motion(self, event):  # TODO: move this to the DynamicLegend class!!!!!!
 
         leg = self.ax.get_legend()
@@ -936,10 +1000,10 @@ class VisPlot():
             self.highlight(legLine, track, 0.5)  # restore
             self.highlighted = None
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def _on_first_draw(self, event):
         # HACK! this method creates the SAST labels upon the first call to draw
-        print('FIRST DRAW')
+        logging.debug('FIRST DRAW')
         fig = self.figure
         canvas = fig.canvas
 
@@ -957,20 +1021,20 @@ class VisPlot():
         self.cid = self.figure.canvas.mpl_connect('draw_event', self.save_background)
         # canvas.draw()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def save_background(self, event):
 
-        print('DRAW')
-        print(vars(event))
+        logging.debug('save_background')
+        # print(vars(event))
 
         # if self.use_blit:
         self.background = self.figure.canvas.copy_from_bbox(self.figure.bbox)  # save the background for blitting
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def closing(self, event):
         self.nowLineThreadAlive.set()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def connect(self):
         # Setup legend picking
         self.figure.canvas.mpl_connect('pick_event', self._on_pick)

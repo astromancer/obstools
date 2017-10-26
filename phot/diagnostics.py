@@ -11,7 +11,7 @@ from matplotlib.patches import Rectangle
 from grafico.ts import TSplotter
 # from obstools.psf.psf import GaussianPSF
 from obstools.psf.lm_compat import EllipticalGaussianPSF
-from decor.profile.timers import timer
+from decor.profiler.timers import timer
 from ansi.table import Table
 from recipes.misc import is_interactive
 
@@ -440,9 +440,8 @@ class FrameDisplay(FitsCubeDisplay):
         # self.foundCoords = found # TODO: let model carry centroid coords?
         FitsCubeDisplay.__init__(self, filename, *args, **kwargs)
 
-
-        # FIXME:  this is not always appropriate
-        self.ax.invert_xaxis() # so that it matches sky orientation
+        # FIXME:  this is not always appropriate NOTE: won't have to do this if you use wcs
+        # self.ax.invert_xaxis()    # so that it matches sky orientation
 
 
     def add_aperture_from_model(self, model, params, r_scale_sigma, rsky_sigma,  **kws):

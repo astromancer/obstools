@@ -24,6 +24,7 @@ from obstools.psf.psf import ConstantBG, CircularGaussianPSF, EllipticalGaussian
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def plist(params, pnames_ordered):
+    # FIXME: dont need pnames_ordered since lm.Parameters is OrderedDict
     """convert from lm.Parameters to ordered list of float values"""
     if isinstance(params, lm.Parameters):
         pv = params.valuesdict()
@@ -63,6 +64,7 @@ class lmMixin(LoggingMixin):
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
         # p0 = self.p0guess(data)
+
         self.logger.debug('Guessed: (%s)' % ', '.join(map(minfloatformat, p0)))
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
@@ -75,8 +77,11 @@ class lmMixin(LoggingMixin):
         # Fit PSF here
         # TODO: optimize: psf.wrs is probably expensive since it calls many python funcs
         # TODO: check if scipy.optimize.leastsq is faster with jacobian + col_deriv
-        result = lm.minimize(self.objective, params, 'leastsq', args=(data, grid, data_stddev),
-                             **kws)
+
+        # print('p0, data, grid, data_stddev\n', p0, data, grid, data_stddev)
+
+        result = lm.minimize(self.objective, params, 'leastsq',
+                             args=(data, grid, data_stddev), **kws)
         if result.success and self.validate(result.params):
             plsq = result.params
             p, punc = np.transpose([(plsq[pn].value, plsq[pn].stderr)

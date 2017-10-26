@@ -30,7 +30,7 @@ def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_so
         from photutils import deblend_sources
         segm = deblend_sources(data, segm, npixels)
 
-    found = np.array(CoM(data, segm.data, segm.labels))  # NOTE: ij coords
+    found = np.array(CoM(data, segm.data, segm.labels))  # NOTE: yx coords (row, column)
     try:
         flux_est = detected_flux(data, segm)
     except:
@@ -215,7 +215,7 @@ if __name__ == '__main__':
     from pathlib import Path
 
     from obstools.fastfits import FitsCube
-    from decor.profile.timers import timer
+    from decor.profiler.timers import timer
 
     path = Path('/media/Oceanus/UCT/Observing/SALT/2016-2-DDT-006/0209/')
     ff = FitsCube(path/'s.fits')

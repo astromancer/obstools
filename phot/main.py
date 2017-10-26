@@ -12,7 +12,7 @@
 # TODO: automatically figure out which is the target if name given and can be resolved to coordinates
 
 # profiling
-from decor.profile.timers import Chrono, timer, timer_extra
+from decor.profiler.timers import Chrono, timer, timer_extra
 
 chrono = Chrono()
 # NOTE do this first so we can profile import times
@@ -533,15 +533,7 @@ def coo_within_window(p):
 
 
 
-def check_aps_sky(i, rsky):
-    rskyin, rskyout = rsky
-    info = 'Frame {:d}, rin={:.1f}, rout={:.1f}'
-    if np.isnan(rsky).any():
-        logger.warning('Nans in sky apertures: ' + info.format(i, *rsky))
-    if rskyin > rskyout:
-        logger.warning('rskyin > rskyout: ' + info.format(i, *rsky))
-    if rskyin > window:
-        logger.warning('Large sky apertures: ' + info.format(i, *rsky))
+
 
 
 # TODO:
@@ -855,7 +847,7 @@ class FrameProcessor(FitsCube):
         # NOTE: You should check how efficient these memory structures are.
         # We might be spending a lot of our time synching access??
 
-        # Initialize shared memory with nans...
+        # HACK: Initialize shared memory with nans...
         SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
 
         apData = self.apData = AttrDict()
@@ -1338,7 +1330,7 @@ def MAIN():
 # ===============================================================================
 def run_profiled(n):  # SHOW Progress?
     # from line_profiler import HLineProfiler
-    from decor.profile import HLineProfiler
+    from decor.profiler import HLineProfiler
     profiler = HLineProfiler()
 
     # profiler.add_function(do_find)

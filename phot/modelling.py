@@ -1,15 +1,21 @@
-import itertools as itt
+
 import ctypes
+import itertools as itt
+from collections import defaultdict
 
 import numpy as np
+from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 
 from recipes.parallel.synched import SyncedArray
-from recipes.array import neighbours
+# from recipes.array import neighbours
 from recipes.logging import LoggingMixin
 from recipes.dict import AttrDict
 import obstools.psf.lm_compat as modlib
 
-from IPython import embed
+
+
+
+# from IPython import embed
 
 # TODO: class that fits all stars simultaneously with MCMC. compare for speed / accuracy etc...
 
@@ -109,148 +115,73 @@ def cdist_tri(coo):
     return sdist
 
 
+# from collections import namedtuple
 
 
+# ModelContainer = namedtuple('ModelContainer', ('psf', 'bg'))
+from .find.trackers import LabelLogicMixin
 
-
-# class StarTracker():
-
-
-
-    # def squares(cls):
-    # def rectanges(cls):
-    # def ellipses
-
-
-
-
-class ImageSegmenter():  #TODO: ImageSlicer?
+class ImageSegmentsModeller(LabelLogicMixin):
     """
-    Base class for modelling stars in sub-regions of the main frame.
-
-    This class implements a divide and conquer strategy for frequentist modeling
-    of the Point Source Function in a CCD frame.
+    Model fitting and comparison on segmented CCD frame
     """
-
-    # @classmethod
-    # def from_image(cls):
-    #     return cls
-                                                      # size,
-    def __init__(self, centres, window, ishape, use, handle_prox='mask'):
-
-        w = self.window = int(window)
-        x = self.centres = np.atleast_2d(centres)
-        # self.sdist = cdist_tri(self.centres)
-
-        llc, urc, seg = self.make_segments(x, w, ishape)
-        self.corners = namedtuple('Corners', 'llc urc')(llc=llc, urc=urc)
-        self.segments = seg
-        self._overlaps = self.where_overlap(x, w)
-
-        # for the overlapping segments: options here:
-        # 1) mask
-        # 2) fit simultaneously with coordinates fixed?
-
-        self.grid = ndgrid.from_shape(ishape)
-        self.subgrids = self.make_grids(self.segments)
-
-        #self.masker = MaskMachine(grid, self.centres)
-
-
-    @property
-    def nseg(self):
-        return len(self.centres)
-
-    # def get_corners(self, centres, window, ishape):
-
-    def make_segments(self, centres, window, ishape):
-        yx = np.round(centres)
-        w = window / 2
-        l, u = yx - w, yx + w
-        lyu, lxu = (u > ishape).T
-        l[l < 0] = 0
-        u[lyu, 0], u[lxu, 1] = ishape
-        z = np.dstack([l, u]).astype(int)
-        llc, urc = np.rollaxis(z, -1, 0) # corners
-        return llc, urc, [list(map(slice, *zz.T)) for zz in z]
-
-    def make_grids(self, segments):
-        subgrids = []
-        for sy, sx in segments:
-            grid = self.grid[:, sy, sx]
-            subgrids.append(grid)
-        return subgrids
-
-
-    def update(self, coords, window, ishape):
-        """recenter"""
-        # calculate shift from reference:
-        shift = np.median(self.centres - coords, 0)
-        ishift = np.round(shift)
-        if (ishift > 1).any():
-            self.segments = self.make_segments(coords, window, ishape)
-            self.subgrids = self.make_grids(self.segments)
-
-    def where_overlap(self, coords, window):
-        xyd = np.rollaxis(coords[..., None] - coords.T, 1, 0)
-        ir, ic = np.diag_indices_from((xyd[0]))
-        #ir, ic = np.tril_indices_from(xyd[0])
-        xyd[:, ir, ic] = np.inf
-        loverlap = np.all(np.abs(xyd) < window, 0)
-        ovr = np.array(np.where(loverlap)).T
-        return ovr
-
-    def get_masks(self, r):
-        """Mask 'other' stars in the window"""
-        ovr = self._overlaps
-        masks = defaultdict(bool)
-        for s, o in ovr:
-            sly, slx = self.segments[o]
-            grid = self.grid[:, sly, slx]
-            x = self.centres[s, None, None].T
-            d = np.sqrt(np.square(grid - x).sum(0))
-            masks[s] |= (d < r)
-        return masks
-
-    # def merge_overlapped(self):
-    # def remove_overlapped(self):
-    # def update_masks(self, ):
-
-
-    def iter_segments(self, data, std):
-        for sl, g in zip(self.segments, self.subgrids):
-            yield data[sl], std[sl], g
-
-
-
-# class ImageSegmenterArb(ImageSegmenter):
-#
-#     def __init__(self, centres, window, ishape):
-
-
-
-
-
-
-
-class ImageSegmentsModeller(ImageSegmenter):
 
     _metrics = ('aic', 'bic', 'redchi')
 
-    def __init__(self, centres, window, ishape, use, models, metrics=_metrics,
-                 handle_prox='mask'):
-        ImageSegmenter.__init__(self, centres, window, ishape, use, handle_prox)
+    # TODO: mask_policy.  filter / set error to inf
+    # TODO: incorporate background fit
+    # TODO: option to fit centres or use Centroids
 
-        # if not len(models):
-        self.models = list(models)
+    def __init__(self, segm, psf, bg=None, metrics=_metrics, use_labels=None,
+                 fit_positions=True, track_residuals=False):
+        """
+
+        Parameters
+        ----------
+        segm : SegmentationHelper instance
+        psf : list of psf models
+        bg : list of bg models
+        metrics : goodness of fit evaluation metrics
+        """
+
+        # ideas: detect stars that share windows and fit simultaneously
+
+        self.segm = segm
+        self.models = list(psf)
+        self.bg = bg
         self.metrics = list(metrics)
-        # TODO: assign metrics to model?
+        self.grid = np.indices(self.segm.shape)
+
+        if use_labels is None:
+           use_labels = self.segm.labels
+        self.use_labels = use_labels
+
 
     @property
     def nmodels(self):
         return len(self.models)
 
-    def fit(self, data, std=None, mask=None, models=None):
+
+    def iter_segments(self, data, std, labels=None):
+        """
+        Yields rectangular sub-regions of the image and stddev image.
+        Overlapping detections masked.
+
+        Parameters
+        ----------
+        data
+        std
+        labels
+
+        Returns
+        -------
+
+        """
+        for d, (sy, sx) in self.segm.iter_segments(data, labels, True, True):
+            yield d, std[sy, sx], self.grid[:, sy, sx]
+
+
+    def fit(self, data, std=None, mask=None, models=None, labels=None):
         """
         Fit frame data by looping over segments
 
@@ -260,7 +191,7 @@ class ImageSegmentsModeller(ImageSegmenter):
         std
         mask
         models
-        i
+        labels
 
         Returns
         -------
@@ -276,41 +207,48 @@ class ImageSegmentsModeller(ImageSegmenter):
         # use the init models if none explicitly provided
         models = models or self.models
 
+        # fit data for all labels if none specified
+        if labels is None:
+            labels = self.use_labels
+
+
         # loop over models and fit
-        gof = np.full((len(models), self.nseg, len(self.metrics)), np.nan)
+        gof = np.full((len(models), len(labels), len(self.metrics)), np.nan)
         pars, paru = [], []
         for m, model in enumerate(models):
-            p, pu, gof[m] = self._fit_model(model, data, std)
+            p, pu, gof[m] = self._fit_model(model, data, std, labels)
             pars.append(p)
             paru.append(pu)
 
         return pars, paru, gof
 
 
-    def _fit_model(self, model, data, std):
+    def _fit_model(self, model, data, std, labels):
         """
         Fit this model for all segments
         """
         # this method is for production
-        p, pu = np.full((2, self.nseg, model.npar), np.nan)
-        gof = np.full((self.nseg, len(self.metrics)), np.nan)
-        for j, (sub, sub_std, grid) in enumerate(self.iter_segments(data, std)):
-            p0 = model.p0guess(sub)
-            p[j], pu[j], gof[j] = model.fit(p0, sub, grid, sub_std)
+        p, pu = np.full((2, len(labels), model.npar), np.nan)
+        gof = np.full((len(labels), len(self.metrics)), np.nan)
+        for j, (sub, sub_std, grid) in enumerate(
+                self.iter_segments(data, std, labels=labels)):
+            p0 = model.p0guess(sub, grid)
+            r = model.fit(p0, sub, grid, sub_std)
+            if r is not None:
+                p[j], pu[j], gof[j] = r
 
         return p, pu, gof
 
 
-    def _fit_segment(self, sub, sub_std, grid, models=None, i=None):
+    def _fit_segment(self, sub, sub_std, grid, models=None):
         """
         Fit various models for single segment
         """
-        # this method is for cenvenience
+        # this method is for convenience
         models = models or self.models
         gof = np.full((len(models), len(self.metrics)), np.nan)
-        par, paru = [], []      # parameter values and uncertainty
-        for m, r in enumerate(
-                self._fit_models_gen(sub, sub_std, grid, models)):
+        par, paru = [], []      # parameter values and associated uncertainty
+        for m, r in enumerate(self._gen_fits(sub, sub_std, grid, models)):
             if r is None:
                 continue
 
@@ -337,55 +275,525 @@ class ImageSegmentsModeller(ImageSegmenter):
 
         return par, paru, gof
 
-    def _fit_models_gen(self,sub, sub_stddev, models=None):
+    def _gen_fits(self, sub, sub_stddev, grid, models=None):
         models = models or self.models
         for model in models:
-            p0 = model.p0guess(sub)
-            # p0[1::-1] = coo
-            yield model.fit(p0, sub, self.grid, sub_stddev)
+            # try:
+            p0 = model.p0guess(sub, grid, sub_stddev)
+            yield model.fit(p0, sub, grid, sub_stddev)
+            # except Exception as err:
+            #     from IPython import embed
+            #     embed()
+            #     raise SystemExit
 
-    def model_selection(self, pars, paru, gof):
+
+    def model_selection(self, gof):
         """
-        Do model selection based on goodness of fit metric(s)
+        Select best model based on goodness of fit metric(s)
         """
-        # loop over models for each segment
-        for p, u, g in zip(pars, paru, gof):
-            return
 
-
+        # only one model
+        if len(gof) == 1:
+            return 0, self.models[0], None
 
         if np.isnan(gof).all():
-            self.logger.warning(
-                'No model converged for Frame %i, Star %i', i, self.ix_fit[j])
-            return None, None
+            return None, None, 'No model converged.'
 
         # the model indices at the minimal gof metric value
-        best = np.nanargmin(gofs, 0)
+        best = np.nanargmin(gof, 0)
         ub, ib, cb = np.unique(best, return_index=True, return_counts=True)
         # check cross metric consistency
+        msg = ''
         if len(ub) > 1:
-            self.logger.warning(
-                'Model selection metrics do not agree. Frame %i, Star %i. '
-                'Selecting on AIC.',  i, self.ix_fit[j])
-            # NOTE: This probably means none of the models are an especially good fit
+            msg = 'GoF metrics inconsistent. Using %r.' % self.metrics[0]
+        # NOTE: This probably means none of the models are an especially good fit
 
         # choose model that most metrics agree is best
         ix_bf = ub[cb.argmax()]
-        best_model = models[ix_bf]
-        self.logger.info('Best model Frame %i, Star %i: %s' % (i, self.ix_fit[j], best_model))
-        # return index of best fitting model
-        if best_model is self.db.bg:
-            "logging.warning('Best model is BG')"
-            "flux is upper limit?"
+        best_model = self.models[ix_bf]
 
-        return ix_bf, best_model
+        return ix_bf, best_model, msg
 
 
-    def combine_results(self, fit_results):
-        return fit_results
+    def background_subtract(self, image, mask=None):
 
-    def get_apertures(self):
-        ''
+        # background subtraction
+        imbg = self.segm.background(image)
+
+        if mask is not None:
+            imbg.mask |= mask
+
+        #return imbg
+
+        # fit background
+        mdl = self.bg
+        if mdl:
+            try:
+                results = mdl.fit(imbg)
+                p = mdl.make_params_from_result(results) #HACK
+                image = mdl.residuals(p, image)
+            except Exception as err:
+                self.logger.exception('BG')
+        else:
+            raise NotImplementedError
+
+        return image, results
+
+
+class ApertureMaker(LoggingMixin):
+    'class that creates apertures based on modelling results'
+    def __init__(self, r, rsky):
+        self.r = np.asarray(r)
+        self.rsky = np.asarray(rsky)
+
+
+    def combine_results(self, models, p, cfunc=np.nanmedian, axis=(), ):
+        # nan_policy=None):
+        """
+        Get aperture parameters from best model for each star
+
+        Parameters
+        ----------
+        p
+        r_sigma
+        cfunc
+        axis
+
+        Returns
+        -------
+
+        """
+
+        coo = np.full((len(p), 2), np.nan)
+        sxy = np.full((len(p), 2), np.nan)
+        th = np.full((len(p), 1), np.nan)
+        for i, (mdl, q) in enumerate(zip(models, p)):
+            if mdl is not None:
+                coo[i] = q[1::-1]
+                sxy[i] = mdl.get_sigma_xy(q)
+                th[i] = mdl.get_theta(q)
+
+        r = cfunc(sxy, axis)
+        th = cfunc(th, axis)
+
+        return coo, r, th
+
+    # def forced_apertures(self, coo, r, th):
+
+
+
+    # def _fallback(self, a, fallback):
+    #     """
+    #     Used to substite aperture parameters for unconvergent models
+    #     (i.e force photometry)
+    #     """
+    #
+    #     nans = np.isnan(a).any(1)
+    #     if nans.any() and (fallback is not None):
+    #         sz = np.size(fallback)
+    #         if isinstance(fallback, Callable):
+    #             a[nans] = fallback(a)
+    #         elif sz == 1:  # a number
+    #             a[nans] = fallback
+    #         elif sz > 1:  # presumably an array
+    #             a[nans] = fallback[nans]
+                #
+                # for i, (a, f) in enumerate(zip(appars, fallbacks)):
+                #     nans = np.isnan(a).any(1)
+                #     a[nans] = f(a, nans)
+
+
+
+    def create_apertures(self, com, appars, sky=False, fallbacks=None):
+        """
+        Initialize apertures at com coordinates with radii determined from
+        model dispersion (standard deviation (sigma) or fwhm) and the scaling
+        attributes *r*, *rsky* (in units of sigma)
+
+        Note: even though photutils supports multiple positions for apertures
+        with the same radii, this is not preferred if we want to mask background
+        stars for each star aperture. So we return a list of apertures
+        """
+        coords, sigma_xy, theta = appars
+        rx, ry = sigma_xy * self.r
+
+        if sky:
+            sx, sy = sigma_xy
+            rxsky = sx * self.rsky
+            rysky = sy * self.rsky[1]
+            return [EllipticalAnnulus(coo, *rxsky, rysky, theta)
+                    for coo in com[:, 1::-1]]
+
+        else:
+            return [EllipticalAperture(coo, rx, ry, theta)
+                    for coo in com[:, 1::-1]]
+            # return
+
+        # TODO: use_fit_coords
+        # TODO: handle bright and faint seperately here
+        # ixm = mdlr.segm.indices(mdlr.ignore_labels) # TODO: don't recompute every time
+
+        #coo, r, th = appars
+
+        # coords = np.empty_like(com)
+        #rnew = np.ones_like(r)
+
+        #self.modeller.use_labels
+        #self.tracker.use_labels
+
+        #coo, r, th = (self._fallback(a, f) for a, f in zip(appars, fallbacks))
+
+    def check_aps_sky(self, i, rsky, rmax):
+        rskyin, rskyout = rsky
+        info = 'Frame {:d}, rin={:.1f}, rout={:.1f}'
+        if np.isnan(rsky).any():
+            self.logger.warning('Nans in sky apertures: ' + info, i, *rsky)
+        if rskyin > rskyout:
+            self.logger.warning('rskyin > rskyout: ' + info, i, *rsky)
+        if rskyin > rmax:
+            self.logger.warning('Large sky apertures: ' + info, i, *rsky)
+
+
+class ModellingResultsMixin():
+    def __init__(self, track_residuals=False):
+
+        # Data containers
+        self.coords = None    # reference star coordinates across frames
+        self.data = {}
+        self.metricData = AttrDict()
+        self.best = AttrDict()
+        self.resData = defaultdict(list)
+        self.trackRes = track_residuals
+
+
+    def init_mem(self, n):
+        # initialize syncronized data containers for parallel processing
+        nfit = len(self.use_labels)
+
+        for model in self.models:
+            self.data[model] = ModelData(model, n, nfit)
+            if self.trackRes:
+                sizes = self.segm.box_sizes(self.use_labels)
+                for j, (sy, sx) in enumerate(sizes.astype(int)):
+                    r = SyncedArray(shape=(sy, sx), fill_value=0)
+                    self.resData[model].append(r)
+
+        for metric in self.metrics:
+            self.metricData[metric] = SyncedArray(shape=(n, nfit, self.nmodels))
+
+        # syncronized Data containers for best fit flux
+        self.best.ix = SyncedArray(shape=(n, nfit), fill_value=-99, dtype=ctypes.c_int)
+
+        # syncronized Data containers for best fit flux
+        # TODO merge containers below?
+        self.best.flux = SyncedArray(shape=(n, nfit))
+        self.best.flux_std = SyncedArray(shape=(n, nfit))
+
+    def save_params(self, i, j, model, results, sub, grid):
+        """save fitted / derived paramers for this model"""
+        if i is None:
+            return
+
+        p, pu, gof = results
+
+        # Set shared memory
+        psfData = self.data[model]
+        psfData.params[i, j] = p
+        psfData.params_std[i, j] = pu
+
+        # Goodness of fit statistics
+        k = self.models.index(model)
+        for i, metric in enumerate(self.metrics):
+            self.metricData[metric][i, j, k] = gof[metric]
+
+        if self.trackRes:
+            # save total residual image
+            self.resData[model][j] += model.rs(p, sub, grid)
+
+
+
+class ImageModeller(ImageSegmentsModeller, ModellingResultsMixin):
+    def __init__(self, segm, psf, bg, metrics=None, use_labels=None,
+                 fit_positions=True, track_residuals=True):
+
+        ImageSegmentsModeller.__init__(self, segm, psf, bg, self._metrics, use_labels)
+        ModellingResultsMixin.__init__(self, track_residuals)
+
+
+
+
+# class StarTracker():
+
+
+
+    # def squares(cls):
+    # def rectanges(cls):
+    # def ellipses
+
+
+
+
+# class ImageSegmenter():  #TODO: ImageSlicer?
+#     """
+#     Base class for modelling stars in sub-regions of the main frame.
+#
+#     This class implements a divide and conquer strategy for frequentist modeling
+#     of the Point Source Function in a CCD frame.
+#     """
+#
+#     # @classmethod
+#     # def from_image(cls):
+#     #     return cls
+#                                                       # size,
+#     def __init__(self, centres, window, ishape, use, handle_prox='mask'):
+#
+#         w = self.window = int(window)
+#         x = self.centres = np.atleast_2d(centres)
+#         # self.sdist = cdist_tri(self.centres)
+#
+#         llc, urc, seg = self.make_segments(x, w, ishape)
+#         self.corners = namedtuple('Corners', 'llc urc')(llc=llc, urc=urc)
+#         self.segments = seg
+#         self._overlaps = self.where_overlap(x, w)
+#
+#         # for the overlapping segments: options here:
+#         # 1) mask
+#         # 2) fit simultaneously with coordinates fixed?
+#
+#         self.grid = ndgrid.from_shape(ishape)
+#         self.subgrids = self.make_grids(self.segments)
+#
+#         #self.masker = MaskMachine(grid, self.centres)
+#
+#
+#     @property
+#     def nseg(self):
+#         return len(self.centres)
+#
+#     # def get_corners(self, centres, window, ishape):
+#
+#     def make_segments(self, centres, window, ishape):
+#         yx = np.round(centres)
+#         w = window / 2
+#         l, u = yx - w, yx + w
+#         lyu, lxu = (u > ishape).T
+#         l[l < 0] = 0
+#         u[lyu, 0], u[lxu, 1] = ishape
+#         z = np.dstack([l, u]).astype(int)
+#         llc, urc = np.rollaxis(z, -1, 0) # corners
+#         return llc, urc, [list(map(slice, *zz.T)) for zz in z]
+#
+#     def make_grids(self, segments):
+#         subgrids = []
+#         for sy, sx in segments:
+#             grid = self.grid[:, sy, sx]
+#             subgrids.append(grid)
+#         return subgrids
+#
+#
+#     def update(self, coords, window, ishape):
+#         """recenter"""
+#         # calculate shift from reference:
+#         shift = np.median(self.centres - coords, 0)
+#         ishift = np.round(shift)
+#         if (ishift > 1).any():
+#             self.segments = self.make_segments(coords, window, ishape)
+#             self.subgrids = self.make_grids(self.segments)
+#
+#     def where_overlap(self, coords, window):
+#         xyd = np.rollaxis(coords[..., None] - coords.T, 1, 0)
+#         ir, ic = np.diag_indices_from((xyd[0]))
+#         #ir, ic = np.tril_indices_from(xyd[0])
+#         xyd[:, ir, ic] = np.inf
+#         loverlap = np.all(np.abs(xyd) < window, 0)
+#         ovr = np.array(np.where(loverlap)).T
+#         return ovr
+#
+#     def get_masks(self, r):
+#         """Mask 'other' stars in the window"""
+#         ovr = self._overlaps
+#         masks = defaultdict(bool)
+#         for s, o in ovr:
+#             sly, slx = self.segments[o]
+#             grid = self.grid[:, sly, slx]
+#             x = self.centres[s, None, None].T
+#             d = np.sqrt(np.square(grid - x).sum(0))
+#             masks[s] |= (d < r)
+#         return masks
+#
+#     # def merge_overlapped(self):
+#     # def remove_overlapped(self):
+#     # def update_masks(self, ):
+#
+#
+#     def iter_segments(self, data, std):
+#         for sl, g in zip(self.segments, self.subgrids):
+#             yield data[sl], std[sl], g
+#
+#
+#
+# # class ImageSegmenterArb(ImageSegmenter):
+# #
+# #     def __init__(self, centres, window, ishape):
+#
+#
+#
+#
+# class ImageSegmentsModeller(ImageSegmenter):
+#     """
+#     Model fitting and comparison on segmented CCD frame
+#     """
+#     _metrics = ('aic', 'bic', 'redchi')
+#
+#     def __init__(self, centres, window, ishape, use, models, metrics=_metrics,
+#                  handle_prox='mask'):
+#         ImageSegmenter.__init__(self, centres, window, ishape, use, handle_prox)
+#
+#         # if not len(models):
+#         self.models = list(models)
+#         self.metrics = list(metrics)
+#         # TODO: assign metrics to model?
+#
+#     @property
+#     def nmodels(self):
+#         return len(self.models)
+#
+#     def fit(self, data, std=None, mask=None, models=None):
+#         """
+#         Fit frame data by looping over segments
+#
+#         Parameters
+#         ----------
+#         data
+#         std
+#         mask
+#         models
+#         i
+#
+#         Returns
+#         -------
+#
+#         """
+#         if std is None:
+#             std = np.ones_like(data)
+#
+#         if mask is not None:
+#             std[mask] = np.inf  # FIXME: copy?
+#             # this effectively masks the data point for the fitting routine
+#
+#         # use the init models if none explicitly provided
+#         models = models or self.models
+#
+#         # loop over models and fit
+#         gof = np.full((len(models), self.nseg, len(self.metrics)), np.nan)
+#         pars, paru = [], []
+#         for m, model in enumerate(models):
+#             p, pu, gof[m] = self._fit_model(model, data, std)
+#             pars.append(p)
+#             paru.append(pu)
+#
+#         return pars, paru, gof
+#
+#
+#     def _fit_model(self, model, data, std):
+#         """
+#         Fit this model for all segments
+#         """
+#         # this method is for production
+#         p, pu = np.full((2, self.nseg, model.npar), np.nan)
+#         gof = np.full((self.nseg, len(self.metrics)), np.nan)
+#         for j, (sub, sub_std, grid) in enumerate(self.iter_segments(data, std)):
+#             p0 = model.p0guess(sub)
+#             p[j], pu[j], gof[j] = model.fit(p0, sub, grid, sub_std)
+#
+#         return p, pu, gof
+#
+#
+#     def _fit_segment(self, sub, sub_std, grid, models=None, i=None):
+#         """
+#         Fit various models for single segment
+#         """
+#         # this method is for cenvenience
+#         models = models or self.models
+#         gof = np.full((len(models), len(self.metrics)), np.nan)
+#         par, paru = [], []      # parameter values and uncertainty
+#         for m, r in enumerate(
+#                 self._fit_models_gen(sub, sub_std, grid, models)):
+#             if r is None:
+#                 continue
+#
+#             # aggregate results
+#             p, pu, gof[m] = r
+#             par.append(p)
+#             paru.append(pu)
+#
+#             # convert here??
+#             # if i:
+#             #     p, _, gof[m] = r
+#             #     model = models[m]
+#                 # self.save_params(i, j, model, r, sub)
+#
+#         # choose best fitting model and save those fluxes
+#         #ix_bm, best_model = self.model_selection(i, j, gof, models)
+#
+#
+#         # if i:
+#         #     # save best fit flux
+#         #     self.best.ix[i, j] = ix_bm
+#         #     self.best.flux[i, j] = self.data[best_model].flux[i, j]
+#         #     self.best.flux_std[i, j] = self.data[best_model].flux_std[i, j]
+#
+#         return par, paru, gof
+#
+#     def _fit_models_gen(self,sub, sub_stddev, models=None):
+#         models = models or self.models
+#         for model in models:
+#             p0 = model.p0guess(sub)
+#             # p0[1::-1] = coo
+#             yield model.fit(p0, sub, self.grid, sub_stddev)
+#
+#     def model_selection(self, pars, paru, gof):
+#         """
+#         Do model selection based on goodness of fit metric(s)
+#         """
+#         # loop over models for each segment
+#         for p, u, g in zip(pars, paru, gof):
+#             return
+#
+#
+#
+#         if np.isnan(gof).all():
+#             self.logger.warning(
+#                 'No model converged for Frame %i, Star %i', i, self.ix_fit[j])
+#             return None, None
+#
+#         # the model indices at the minimal gof metric value
+#         best = np.nanargmin(gofs, 0)
+#         ub, ib, cb = np.unique(best, return_index=True, return_counts=True)
+#         # check cross metric consistency
+#         if len(ub) > 1:
+#             self.logger.warning(
+#                 'Model selection metrics do not agree. Frame %i, Star %i. '
+#                 'Selecting on AIC.',  i, self.ix_fit[j])
+#             # NOTE: This probably means none of the models are an especially good fit
+#
+#         # choose model that most metrics agree is best
+#         ix_bf = ub[cb.argmax()]
+#         best_model = models[ix_bf]
+#         self.logger.info('Best model Frame %i, Star %i: %s' % (i, self.ix_fit[j], best_model))
+#         # return index of best fitting model
+#         if best_model is self.db.bg:
+#             "logging.warning('Best model is BG')"
+#             "flux is upper limit?"
+#
+#         return ix_bf, best_model
+#
+#
+#     def combine_results(self, fit_results):
+#         return fit_results
+#
+#     def get_apertures(self):
+#         ''
 
 
     # def get_segments(self, j, coo, data, std, mask):
@@ -430,34 +838,34 @@ class ImageSegmentsModeller(ImageSegmenter):
 #         #                         pad='constant', constant_values=np.inf)
 #         return sub, ixll #, self.regularization_hack(coo, sub_stddev)
 
-from scipy.ndimage import center_of_mass as CoM
+# from scipy.ndimage import center_of_mass as CoM
 
-class CentroidModel():
-    """
-    If we think of the centroid operation as a model, we can use the FrameModeller
-    machinery to compute and agregate
-    """
-
-    # Would be cool to have an interactive aperture / window that displays
-    # the centroid of the underlying data
-
-    npar = 2
-
-    def __init__(self, cfunc, bgfunc):
-        # funcs for main compute
-        self.cfunc = cfunc
-        self.bgfunc = bgfunc
-
-    def p0guess(self, *args):
-        return
-
-    # def __call__(self):
-
-    def fit(self, p0, data, grid, std):
-        coo = np.array(self.cfunc(data - self.bgfunc(data)))
-        if np.any((coo < 0) | (coo > data.shape)):
-            coo = None
-        return coo, None, None
+# class CentroidModel():
+#     """
+#     If we think of the centroid operation as a model, we can use the FrameModeller
+#     machinery to compute and agregate
+#     """
+#
+#     # Would be cool to have an interactive aperture / window that displays
+#     # the centroid of the underlying data
+#
+#     npar = 2
+#
+#     def __init__(self, cfunc, bgfunc):
+#         # funcs for main compute
+#         self.cfunc = cfunc
+#         self.bgfunc = bgfunc
+#
+#     def p0guess(self, *args):
+#         return
+#
+#     # def __call__(self):
+#
+#     def fit(self, p0, data, grid, std):
+#         coo = np.array(self.cfunc(data - self.bgfunc(data)))
+#         if np.any((coo < 0) | (coo > data.shape)):
+#             coo = None
+#         return coo, None, None
 
 
 
@@ -517,7 +925,7 @@ class CentroidModel():
 
 
 
-class FrameModeller(ImageSegmentsModeller, LoggingMixin):
+class _FrameModeller(ImageSegmentsModeller, LoggingMixin):
     """
     Fitting methods and containers for model data
     Interface between modelling and apertures

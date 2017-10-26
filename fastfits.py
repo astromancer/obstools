@@ -450,8 +450,10 @@ class SlotExtractor(object):  # TODO: find a new home for this class
         bitpix = header['bitpix']  # NOTE: might be some fuckup value like -64
         if bitpix == 16:
             self.dtype = '>i2'  # .format(bitpix//8)
-        if bitpix == 8:
-            self.dtype = '>f8'
+        elif bitpix == -32:
+            self.dtype = '>f4'
+        # elif bitpix == 8:
+        #     self.dtype = '>f8'
         else:
             self.dtype = '>f8'  # '>f4'  # data is big-endian??
 

@@ -21,7 +21,19 @@ def gen_widths(line):
         w = (e - s)
         yield w
 
-def build_pattern(line): #, unflagIx=None
+def build_pattern(line):
+    """
+    Build regex pattern from a line. This can then be to read the rest of the data
+
+    Parameters
+    ----------
+    line
+
+    Returns
+    -------
+
+    """
+    #, unflagIx=None
     # TODO: clean < >
     # if unflagIx is None:
 
@@ -29,12 +41,20 @@ def build_pattern(line): #, unflagIx=None
     column_pattern = r'([^\|]+)\|'
     p = ''
     maxwidth = 0
-
     for i, m in enumerate(re.finditer(column_pattern, line)):
         s, e = m.span()
         w = (e - s)
+
+        cpatr = r'''
+        \s*                             # match any leading whitespace
+        ([^%(flags)s|]{0,%(width)i})    # match anything that's not considered a flag up to column width
+        \s*                             # match any intervening whitespace
+        ([%(flags)s]?)                  # flags
+        \|?                             # column seperator (sometimes missing due to errors in db)
+        ''' % dict(width=w, flags=':?*<>')
+        p += cpatr #r'\s*([^:?*\|]{0,%i})\s*([:?*]?)\|?' % w
+
         # p += r'\s*([^\|]{0,%i})\s*\|?' % w
-        p += r'\s*([^:?*\|]{0,%i})\s*([:?*]?)\|?' % w
 
         # if unflagIx is None or i in unflagIx:
         #     print('strip', i)
@@ -49,7 +69,7 @@ def build_pattern(line): #, unflagIx=None
 
         maxwidth = max(maxwidth, w)
 
-    return re.compile(p), maxwidth
+    return re.compile(p, re.VERBOSE), maxwidth
 
 def split(matcher, line):
     dat, flg = zip(*grouper(matcher.match(line).groups(), 2))
@@ -127,10 +147,17 @@ def similar_str(fields, substr):
 
 def read_data(filename):
     """"""
-    fields = ['name', 'alias', 'flag1', 'flag2', 'ra', 'dec',
-              'type1', 'type2', 'type3', 'type4', 'mag1', 'mag2', 'mag3', 'mag4',
-              'T1', 'T2', 'P0', 'P2', 'P3', 'P4', 'EB', 'SB', 'spectr2', 'spectr1',
-              'q', 'q_E', 'Incl', 'Incl_E', 'M1', 'M1_E', 'M2', 'M2_E']
+    fields = ['name', 'alias',
+              'flag1', 'flag2',
+              'ra', 'dec',
+              'type1', 'type2', 'type3', 'type4',
+              'mag1', 'mag2', 'mag3', 'mag4',
+              'T1', 'T2',
+              'P0', 'P2', 'P3', 'P4',
+              'EB', 'SB',
+              'spectr2', 'spectr1',
+              'q', 'q_E', 'Incl', 'Incl_E',
+              'M1', 'M1_E', 'M2', 'M2_E']
     ncols = len(fields)
 
     lineGen = gen_datalines(filename)
@@ -244,7 +271,8 @@ class RKCat(object):
         # data, fields, header = read2(filename)
         # data = np.ma.array(data, mask=(data == ''), fill_value='0')
         data, flags, fields, header = read_data(filename)
-        tbl = self.tbl = Table(data, masked=True, names=fields, meta=dict(header=header))
+        tbl = self.tbl = Table(data, masked=True, names=fields,
+                               meta=dict(header=header))
         flg = self.flg = Table(flags, names=fields)
 
         # can't see wtf these actually mean
@@ -270,9 +298,10 @@ class RKCat(object):
 
 
     def restore_flags(self, cols):
+        """restore the stripped flags for the entire table"""
         # for i, col in enumerate(self.tbl[cols]):
         flagged = np.char.add(as2D(self.tbl, cols),
-                                     as2D(self.flg, cols))
+                              as2D(self.flg, cols))
         for i, col in enumerate(cols):
             self.tbl[col] = flagged[:, i]
 

@@ -39,7 +39,7 @@ class MyHTMLParser(HTMLParser):
         # if data not in ('\n',):
         self.data += data
 
-# from decor.profile import profiler
+# from decor.profiler import profiler
 #
 # @profiler.histogram
 def parse_master():

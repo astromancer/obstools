@@ -98,7 +98,6 @@ def no_nan(p):
 class PSF(object):
     """Class that implements the point source function."""
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, F, default_params, to_cache=None):
         """
         Initialize a PSF model function.
@@ -138,28 +137,23 @@ class PSF(object):
 
         self.validations = [no_nan]
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, p, grid):  # TODO: infer grid if not given??
         return self.F(p, grid)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __repr__(self):
         return self.F.__name__  # NOTE: This may be confusing, but it makes the logs more readible
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def fit(self, data, grid, data_stddev=None, **kws):
+    def fit(self, data, grid, std=None, **kws):
         """guess p0 and fit"""
         p0 = self.p0guess(data)
-        result = leastsq(self.objective, p0, args=(data, grid, data_stddev), **kws)
+        result = leastsq(self.objective, p0, args=(data, grid, std), **kws)
         return result
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def param_hint(self, data):
+    def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
         raise NotImplementedError('To be over-written by subclass')
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def p0guess(self, data, p0=None):
+    def p0guess(self, data, grid=None, std=None, p0=None):
         """
         Return best guess paramaters based on param_hint
         if p0 is not given, the default parameters will be used as starting point
@@ -167,10 +161,9 @@ class PSF(object):
         """
         if p0 is None:
             p0 = self.default_params
-        p0[self.to_guess] = self.param_hint(data)
+        p0[self.to_guess] = self.param_hint(data, grid, std)
         return p0
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # @cache_last_return
     def background_estimate(self, data, edgefraction=0.15):
         """background estimate using window edge pixels"""
@@ -183,65 +176,59 @@ class PSF(object):
         #subset = subset[~np.isnan(subset)]
         return np.ma.median(subset), np.ma.std(subset)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def residuals(self, p, data, grid):
         """Difference between data and model"""
         return data - self(p, grid)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def rs(self, p, data, grid):
         """squared residuals"""
         return np.square(self.residuals(p, data, grid))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def frs(self, p, data, grid):
         """squared residuals flattened"""
         return self.rs(p, data, grid).flatten()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def rss(self, p, data, grid):
         """residual sum of squares"""
         return self.rs(p, data, grid).sum()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def wrs(self, p, data, grid, data_stddev=None):
+    def wrs(self, p, data, grid, std=None):
         """weighted squared residuals"""
-        if data_stddev is None:
+        if std is None:
             return self.rs(p, data, grid)
-        return self.rs(p, data, grid) / data_stddev
+        w = self.rs(p, data, grid) / std
+        if np.isnan(w).any():
+            from IPython import embed
+            embed()
+            raise SystemExit
+        return w
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def fwrs(self, p, data, grid, data_stddev=None):
+    def fwrs(self, p, data, grid, std=None):
         """weighted squared residuals flattened"""
-        return self.wrs(p, data, grid, data_stddev).flatten()
+        return self.wrs(p, data, grid, std).flatten()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def wrss(self, p, data, grid, data_stddev=None):
+    def wrss(self, p, data, grid, std=None):
         """weighted residual sum of squars"""
-        return self.wrs(p, data, grid, data_stddev).sum()
+        return self.wrs(p, data, grid, std).sum()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def validate(self, p, *args):
         """validate parameter values.  To be overwritten by sub-class"""
         return all([vf(p) for vf in self.validations])
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def add_validation(self, func):
         if not isinstance(func, Callable):
             raise TypeError
         else:
             self.validations.append(func)
 
-            # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-            # def set_bounds(self):
+                    # def set_bounds(self):
 
 
 # ****************************************************************************************************
 class ConstantBG(PSF):
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     name = 'bg'
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
     def __init__(self):
         default_params = (0,)
         to_cache = []
@@ -249,8 +236,7 @@ class ConstantBG(PSF):
 
         self.add_validation(lambda p: p[0] > 0)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def param_hint(self, data):
+    def param_hint(self, data, std=None):
         return data.mean()
 
     # def get_aperture_params
@@ -258,10 +244,8 @@ class ConstantBG(PSF):
 # TODO: class Gaussian parent class
 # ****************************************************************************************************
 class CircularGaussianPSF(PSF):
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     name = 'circular'
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self):
         default_params = (0, 0, 1, 1, 0)
         to_cache = []
@@ -269,15 +253,18 @@ class CircularGaussianPSF(PSF):
 
         self.add_validation(lambda p: np.greater(p, 0).all())
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def param_hint(self, data):
+    def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
         # peak
         bg, bgsig = self.background_estimate(data)
         z0 = data.max() - bg
 
         # location
-        y0, x0 = np.divide(data.shape, 2)  # assumes the peak is roughly in the center of the data array
+        if grid is None:
+            y0, x0 = np.divide(data.shape, 2)  # assumes the peak is roughly in the center of the data array
+        else:
+            y0, x0 = grid[0, :, 0].mean(), grid[1, 0, :].mean()
+
         # y0, x0 = np.c_[np.where(data==data.max())][0]   #NOTE: in case of multiple maxima it only returns the first
         # y0, x0 = CoM(data - np.median(data))
 
@@ -290,12 +277,10 @@ class CircularGaussianPSF(PSF):
 
         return x0, y0, z0, a, bg  # cached parameters will be set elsewhere
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integrate(self, p):
         _, _, z0, a, d = p
         return z0 * np.pi / a
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integration_uncertainty(self, p, punc):
         """linearized propagation of uncertainty"""
         # NOTE:  Error estimates for non-linear functions are biased on account of using a truncated series expansion.
@@ -305,7 +290,6 @@ class CircularGaussianPSF(PSF):
 
     int_err = integration_uncertainty
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_fwhm(self, p):
         a = p[-2]
         return 2 * np.sqrt(np.log(2) / a)
@@ -328,8 +312,7 @@ class CircularGaussianPSF(PSF):
         fwhm = self.get_fwhm(p)
         return np.r_[self.get_coo(p), fwhm, fwhm, 0]
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def validate(self, p, window):
+            # def validate(self, p, window):
         #     p = np.asarray(p)
         #     w2 = np.divide(window, 2)
         #     nans = np.isnan(p).any()                    # nans are bad
@@ -337,8 +320,7 @@ class CircularGaussianPSF(PSF):
         #     badcoo = np.any(np.abs(p[:2] - w2) >= w2)   # center coordinates outside of grid - unphysical
         #     return ~(badcoo | negpars | nans)
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def reparameterize(self, p):
+            # def reparameterize(self, p):
         #     #reparameterize to more physically meaningful quantities
         #     _, _, z0, a, _ = p
         #     sigma               = np.sqrt(2*a)
@@ -370,14 +352,12 @@ class GaussianPSF(CircularGaussianPSF):
     # TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
     """ 7 param 2D Elliptical Gaussian (+constant)"""
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # used for validation
     _ix_not_neg = list(range(7))  # _GaussianPSF.npar
     _ix_not_neg.pop(4)  # parameter b is allowed to be negative
 
     name = 'elliptical'
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self):
         default_params = (0, 0, 1, .2, 0, .2, 0)
         to_cache = [4]  # atm we're not guessing b from data
@@ -385,14 +365,11 @@ class GaussianPSF(CircularGaussianPSF):
 
         self.add_validation(lambda p: ~np.any(np.array(p)[self._ix_not_neg] < 0))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    def param_hint(self, data):
+    def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
-        x0, y0, z0, a, bg = super(GaussianPSF, self).param_hint(data)
-
+        x0, y0, z0, a, bg = super(GaussianPSF, self).param_hint(data, grid, std)
         return x0, y0, z0, a, a, bg
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def reparameterize(self, p):
         # reparameterize to more physically meaningful quantities
         covm = self.covariance_matrix(p)
@@ -405,7 +382,6 @@ class GaussianPSF(CircularGaussianPSF):
         par_alt = sigx, sigy, cov, theta, ellipticity, fwhm
         return par_alt
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integrate(self, p):
         """
         Analytical solution to the integral over R2,
@@ -418,7 +394,6 @@ class GaussianPSF(CircularGaussianPSF):
         # detA = np.linalg.det(A)
         # return 2*z0*np.pi / np.sqrt(detA)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def integration_uncertainty(self, p, punc):
         """Uncertainty associated with integrated flux via linearlized propagation of uncertainty"""
         # NOTE: Error estimates for non-linear functions are biased on account of using a truncated series expansion.
@@ -430,7 +405,6 @@ class GaussianPSF(CircularGaussianPSF):
 
     int_err = integration_uncertainty
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_fwhma(self, p):
         """calculate fwhm from semi-major and semi-minor axes."""
         # NOTE: fwhm ~ 2.355 sigma
@@ -446,7 +420,6 @@ class GaussianPSF(CircularGaussianPSF):
         fwhm_a, fwhm_c = self.get_fwhma(p)
         return np.sqrt(fwhm_a * fwhm_c)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_description(self, p, offset=(0, 0)):
         """
         Get a description of the fit based on the parameters.
@@ -473,7 +446,6 @@ class GaussianPSF(CircularGaussianPSF):
                  'ellipticity': ellipticity}
         return pdict
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def coeff(self, covariance_matrix):
         """
         Return a, b, c coefficents for the form:
@@ -490,14 +462,12 @@ class GaussianPSF(CircularGaussianPSF):
 
         return a, b, c
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def correlation(self, p):
         """Pearsons correlation coefficient """
         # covm = self.covariance_matrix(p)
         (sigx2, covar), (_, sigy2) = self.covariance_matrix(p)
         return covar / np.sqrt(sigx2 * sigy2)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def covariance_matrix(self, p):
         _, _, _, a, b, c, _ = p
         # rho = self.correlation(p)
@@ -509,29 +479,24 @@ class GaussianPSF(CircularGaussianPSF):
                                       [b, a]]) * 2
         # return np.linalg.inv(P)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def precision_matrix(self, p):
         _, _, _, a, b, c, _ = p
         P = np.array([[a, -b],
                       [-b, c]]) * 2
         return P
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_sigma_xy(self, p):
         covm = self.covariance_matrix(p)
         return np.sqrt(np.diagonal(covm))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_theta(self, p):
         _, _, _, a, b, c, _ = p
         return -0.5 * np.arctan2(-2 * b, a - c)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_aperture_params(self, p):
         return np.r_[self.get_coo(p), self.get_sigma_xy(p), self.get_theta(p)]
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def validate(self, p, window):
+            # def validate(self, p, window):
         #     p = np.asarray(p)
         #     w2 = np.divide(window, 2)
         #     nans = np.isnan(p).any()                    # nans are bad
@@ -539,8 +504,7 @@ class GaussianPSF(CircularGaussianPSF):
         #     badcoo = np.any(np.abs(p[:2] - w2) >= w2)      # center coordinates outside of grid - unphysical
         #     return ~(badcoo | negpars | nans)
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def jacobian(self, p, X, Y):
+            # def jacobian(self, p, X, Y):
         # """ """
         # x0, y0, z0, a, b, c, d = p
         # Xm = X-x0
@@ -550,8 +514,7 @@ class GaussianPSF(CircularGaussianPSF):
         # -(X-x0)**2 * self(p, X, Y),
         # -2*(X-x0)*(Y-y0)
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # @staticmethod
+            # @staticmethod
         # def radial(p, r):
         #     #WARNING: does this make sense????
         #     """
@@ -640,7 +603,6 @@ def discretizedGaussian(amp, mu, cov, grid):
 class DiscretizedGaussian():  # GaussianPSF??
     """Gaussian Point Response Function """
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __call__(self, p, grid):
         """ """
         # unpack parameters
@@ -663,20 +625,16 @@ class DiscretizedGaussian():  # GaussianPSF??
         w = pf * (erf(f * td0) - erf(f * td1))
         return amp * np.prod(w, axis=0)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def _eig2cov(w0, w1, theta):
         M = _rot_mat(float(theta))
         w0 * M[:, 0] + w1 * M[:, 1]
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def residuals(self, p, data, grid):
         return np.square(data - self(p, grid))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def rss2(self, p, data, grid):
         return self.residuals(p, data, grid).sum()
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # TODO: major merger below!
     def eigenvals(self, var, cov):
         """eigenvalues of precision matrix from variance-covariance"""
@@ -689,7 +647,6 @@ class DiscretizedGaussian():  # GaussianPSF??
 
         return 1. / (2 * detSig) * (np.sum(var) + sq * np.array([1, -1]))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def eigenvals2(self, var, cor):
         """eigenvalues of precision matrix from variance & correlation"""
         varx, vary = var
@@ -700,7 +657,6 @@ class DiscretizedGaussian():  # GaussianPSF??
         # print('sq', sq)
         return 1. / (2 * t) * (hvars + sq * np.array([1, -1]))
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def eigenvecs(self, var, cov, eigvals):
         """eigenvectorss of precision matrix from variance, covariance, eigenvalues"""
         # cor = cov / np.prod(var)
@@ -712,7 +668,6 @@ class DiscretizedGaussian():  # GaussianPSF??
         return m0
         m1 = np.sqrt(1 - m0 * m0)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def eigenvecs2(self, var, cor, eigvals):
         """eigenvectorss of precision matrix from variance, correlation, eigenvalues"""
         cov = cor * np.prod(var)
@@ -724,12 +679,10 @@ class DiscretizedGaussian():  # GaussianPSF??
         return m0
         m1 = np.sqrt(1 - m0 * m0)
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def rss(self, p, data, grid):
         return np.square(self(p, grid) - data)
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def Gaussian(p, x):
+            # def Gaussian(p, x):
         # """Gaussian function for fitting radial star profiles"""
         # A, b, mx = p
         # return A*np.exp(-b*(x-mx)**2 )
@@ -744,7 +697,6 @@ def Moffat(p, x, y):
 # ****************************************************************************************************
 class StarFit(object):
     # TODO: Kernel Density Estimation... or is this too slow??
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def __init__(self, psf=None, algorithm=None, caching=True, hints=True,
                  _print=False, **kw):
         """
@@ -784,7 +736,6 @@ class StarFit(object):
         self.call_count = 0  # keeps track of how many times the class has been called
         self._print = _print
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # @profile()
     def __call__(self, grid, data):  # TODO: make grid optional...
         """Fits the PSF model to the data on the grid given the input coordinates xy0"""
@@ -828,7 +779,6 @@ class StarFit(object):
         self.call_count += 1  # NOTE: This could be a simple decorator??
         return plsq
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     def get_params_from_cache(self):
         """return the mean value of the cached parameters.  Useful as initial guess."""
         if self.caching and self.call_count:
