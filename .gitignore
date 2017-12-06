@@ -42,11 +42,12 @@ plan/viztest.py
 plan/plan.py
 
 transients/gaia/alerts.csv
+spectra
 
 phot/find.test.py
 phot/phot.scaled*.py
 phot/phot.MWE.test.py
 phot/phot.leak.py
-
-
-spectra
+phot/proc2.py
+phot/main.dev.py
+phot/slotmain.py

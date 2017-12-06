@@ -38,19 +38,20 @@ def circularGaussian(p, grid):
 
 # ****************************************************************************************************
 # def gaussian2D(p, grid):
-# """Elliptical Gaussian function for fitting star profiles."""
-# x0, y0, z0, a, b, c, d = p
-# y, x = grid
-# xm, ym = x-x0, y-y0
-# return z0 * np.exp(-(a*xm**2 - 2*b*xm*ym + c*ym**2)) + d
+#   """Elliptical Gaussian function for fitting star profiles."""
+#   x0, y0, z0, a, b, c, d = p
+#   y, x = grid
+#   xm, ym = x-x0, y-y0
+#   return z0 * np.exp(-(a*xm**2 - 2*b*xm*ym + c*ym**2)) + d
 
 def gaussian2D(p, grid):
     """Elliptical Gaussian function for fitting star profiles."""
+
     # recasting in terms of (a, b, c) parameters (instead of sigma)
     # yields faster computation times and better convergence results
     # at lower signal to noise ratios.
     _, _, z0, a, b, c, d = p
-    yxm = grid - p[1::-1, np.newaxis, np.newaxis]
+    yxm = grid - p[1::-1, np.newaxis, np.newaxis] # yx order
     yxm2 = yxm * yxm
     return z0 * np.exp(-(a * yxm2[1] - 2 * b * yxm[0] * yxm[1] + c * yxm2[0])) + d
 
@@ -126,8 +127,10 @@ class PSF(object):
         self.default_params = defpar = np.asarray(default_params, float)
         if to_cache is None:
             ix = np.arange(len(defpar))  # cache all by default
+
         elif isinstance(to_cache, slice):
-            ix = np.arange(*to_cache.indices(npar))  # convert to array of int
+            # convert to array of int
+            ix = np.arange(*to_cache.indices(npar))
         else:
             ix = np.asarray(to_cache).astype(int)
 
@@ -227,14 +230,17 @@ class PSF(object):
 # ****************************************************************************************************
 class ConstantBG(PSF):
     name = 'bg'
-
+    _ix_not_neg = [0]
 
     def __init__(self):
         default_params = (0,)
         to_cache = []
         PSF.__init__(self, constant, default_params, to_cache)
 
-        self.add_validation(lambda p: p[0] > 0)
+        self.add_validation(self._check_param_not_neg)
+
+    def _check_param_not_neg(self, p):
+        return ~np.any(np.array(p)[self._ix_not_neg] < 0)
 
     def param_hint(self, data, std=None):
         return data.mean()
@@ -244,14 +250,19 @@ class ConstantBG(PSF):
 # TODO: class Gaussian parent class
 # ****************************************************************************************************
 class CircularGaussianPSF(PSF):
-    name = 'circular'
+    name = 'gauss5'
+
+    _ix_not_neg = list(range(5))
 
     def __init__(self):
         default_params = (0, 0, 1, 1, 0)
         to_cache = []
         PSF.__init__(self, circularGaussian, default_params, to_cache)
 
-        self.add_validation(lambda p: np.greater(p, 0).all())
+        self.add_validation(self._check_param_not_neg)
+
+    def _check_param_not_neg(self, p):
+        return ~np.any(np.array(p)[self._ix_not_neg] < 0)
 
     def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
@@ -350,20 +361,23 @@ class CircularGaussianPSF(PSF):
 # ****************************************************************************************************
 class GaussianPSF(CircularGaussianPSF):
     # TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
-    """ 7 param 2D Elliptical Gaussian (+constant)"""
+    """ 7 param 2D Elliptical Gaussian over constant background"""
 
     # used for validation
     _ix_not_neg = list(range(7))  # _GaussianPSF.npar
-    _ix_not_neg.pop(4)  # parameter b is allowed to be negative
+    _ix_not_neg.pop(4)  # parameter b is only one allowed to be negative
 
-    name = 'elliptical'
+    name = 'gauss7'
 
     def __init__(self):
         default_params = (0, 0, 1, .2, 0, .2, 0)
         to_cache = [4]  # atm we're not guessing b from data
         PSF.__init__(self, gaussian2D, default_params, to_cache)
 
-        self.add_validation(lambda p: ~np.any(np.array(p)[self._ix_not_neg] < 0))
+        self.add_validation(self._check_param_not_neg)
+
+    # def _check_param_not_neg(self, p):
+    #     return ~np.any(np.array(p)[self._ix_not_neg] < 0)
 
     def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
@@ -490,7 +504,22 @@ class GaussianPSF(CircularGaussianPSF):
         return np.sqrt(np.diagonal(covm))
 
     def get_theta(self, p):
+        """
+        Get the rotation angle *theta* in radians
+
+        Parameters
+        ----------
+        p: array-like
+            The 7 parameters of the gaussian2D function
+
+        Returns
+        -------
+        theta: float
+            angle in radians between semi-major axis and Cartesian x-axis
+        """
         _, _, _, a, b, c, _ = p
+        # note: reversal of parameters
+        # return -0.5 * np.arctan2(a - c, -2 * b)
         return -0.5 * np.arctan2(-2 * b, a - c)
 
     def get_aperture_params(self, p):

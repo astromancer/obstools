@@ -6,11 +6,14 @@ from collections import defaultdict
 import numpy as np
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 
-from recipes.parallel.synched import SyncedArray
+from recipes.parallel.synced import SyncedArray
 # from recipes.array import neighbours
 from recipes.logging import LoggingMixin
 from recipes.dict import AttrDict
-import obstools.psf.lm_compat as modlib
+
+from ..phot.trackers import LabelUse
+# import obstools.modelling.psf.lm_compat as modlib
+
 
 
 
@@ -19,71 +22,71 @@ import obstools.psf.lm_compat as modlib
 
 # TODO: class that fits all stars simultaneously with MCMC. compare for speed / accuracy etc...
 
-class ModelDb(LoggingMixin):
-    """container for model data"""
-
-    @property
-    def gaussians(self):
-        return [mod for mod in self.models if 'gauss' in str(mod).lower()]
-
-    def __init__(self, model_names):
-
-        self.model_names = model_names
-        self.nmodels = len(model_names)
-        self.build_models(model_names)
-        self._indexer = {}
-
-    def build_models(self, model_names):
-        counter = itt.count()
-        self.db = AttrDict()
-
-        for name in model_names:
-            cls = getattr(modlib, name)
-            model = cls()  # initialize
-            model.basename = self.basename  # logging!!
-            self.db[model.name] = model
-            self._indexer[model] = next(counter)
-
-        self.models = list(self._indexer)
-
-    def __getstate__(self):
-        # FIXME: make your models picklable to avoid all this crap
-        # capture what is normally pickled
-        state = self.__dict__.copy()
-        # since the models from lm_compat are not picklable, we replace their instances with
-        # their class names in the following data containers
-
-        for attr in ('_indexer', 'data', 'resData'):
-            dic = state.get(attr)
-            if dic:
-                state[attr] = type(dic)((mod.__class__.__bases__[-1].__name__, val)
-                                        for mod, val in dic.items())
-
-        state.pop('db')
-        state.pop('models')
-
-        # what we return here will be stored in the pickle
-        return state
-
-    def __setstate__(self, state):
-        # re-instate our __dict__ state from the pickled state
-        self.__dict__.update(state)
-        # rebuild the models
-        # self.build_models(self.model_names)
-
-        # from IPython import embed
-        # print('\n' * 10, 'BARF!!', )
-        # embed()
-
-        # try:
-        # for attr in ('data', 'resData'):
-        #     dic = state.get(attr)
-        #     for model in self.models:
-        #         name = model.__class__.__bases__[-1].__name__
-        #         dic[model] = dic.pop(name)
-        #         # except Exception as err:
-        #         #     print('\n' * 10, 'BARF!!', )
-        #         #     embed()
+# class ModelDb(LoggingMixin):
+#     """container for model data"""
+#
+#     @property
+#     def gaussians(self):
+#         return [mod for mod in self.models if 'gauss' in str(mod).lower()]
+#
+#     def __init__(self, model_names):
+#
+#         self.model_names = model_names
+#         self.nmodels = len(model_names)
+#         self.build_models(model_names)
+#         self._indexer = {}
+#
+#     def build_models(self, model_names):
+#         counter = itt.count()
+#         self.db = AttrDict()
+#
+#         for name in model_names:
+#             cls = getattr(modlib, name)
+#             model = cls()  # initialize
+#             model.basename = self.basename  # logging!!
+#             self.db[model.name] = model
+#             self._indexer[model] = next(counter)
+#
+#         self.models = list(self._indexer)
+#
+#     def __getstate__(self):
+#
+#         # capture what is normally pickled
+#         state = self.__dict__.copy()
+#         # since the models from lm_compat are not picklable, we replace their instances with
+#         # their class names in the following data containers
+#
+#         for attr in ('_indexer', 'data', 'resData'):
+#             dic = state.get(attr)
+#             if dic:
+#                 state[attr] = type(dic)((mod.__class__.__bases__[-1].__name__, val)
+#                                         for mod, val in dic.items())
+#
+#         state.pop('db')
+#         state.pop('models')
+#
+#         # what we return here will be stored in the pickle
+#         return state
+#
+#     def __setstate__(self, state):
+#         # re-instate our __dict__ state from the pickled state
+#         self.__dict__.update(state)
+#         # rebuild the models
+#         # self.build_models(self.model_names)
+#
+#         # from IPython import embed
+#         # print('\n' * 10, 'BARF!!', )
+#         # embed()
+#
+#         # try:
+#         # for attr in ('data', 'resData'):
+#         #     dic = state.get(attr)
+#         #     for model in self.models:
+#         #         name = model.__class__.__bases__[-1].__name__
+#         #         dic[model] = dic.pop(name)
+#         #         # except Exception as err:
+#         #         #     print('\n' * 10, 'BARF!!', )
+#         #         #     embed()
 
 
 class ModelData():
@@ -119,9 +122,9 @@ def cdist_tri(coo):
 
 
 # ModelContainer = namedtuple('ModelContainer', ('psf', 'bg'))
-from .find.trackers import LabelLogicMixin
 
-class ImageSegmentsModeller(LabelLogicMixin):
+
+class ImageSegmentsModeller(LabelUse):
     """
     Model fitting and comparison on segmented CCD frame
     """
@@ -148,7 +151,7 @@ class ImageSegmentsModeller(LabelLogicMixin):
 
         self.segm = segm
         self.models = list(psf)
-        self.bg = bg
+        self.bg = bg # TODO: many models - combinations of psf + bg models
         self.metrics = list(metrics)
         self.grid = np.indices(self.segm.shape)
 
@@ -211,7 +214,6 @@ class ImageSegmentsModeller(LabelLogicMixin):
         if labels is None:
             labels = self.use_labels
 
-
         # loop over models and fit
         gof = np.full((len(models), len(labels), len(self.metrics)), np.nan)
         pars, paru = [], []
@@ -233,7 +235,7 @@ class ImageSegmentsModeller(LabelLogicMixin):
         for j, (sub, sub_std, grid) in enumerate(
                 self.iter_segments(data, std, labels=labels)):
             p0 = model.p0guess(sub, grid)
-            r = model.fit(p0, sub, grid, sub_std)
+            r = model.fit(p0, sub, grid, sub_std, nan_policy='omit')
             if r is not None:
                 p[j], pu[j], gof[j] = r
 
@@ -330,14 +332,17 @@ class ImageSegmentsModeller(LabelLogicMixin):
         if mdl:
             try:
                 results = mdl.fit(imbg)
-                p = mdl.make_params_from_result(results) #HACK
+                p = mdl.make_params_from_result(results) # HACK
                 image = mdl.residuals(p, image)
             except Exception as err:
                 self.logger.exception('BG')
+
+            return image, p
+
         else:
             raise NotImplementedError
 
-        return image, results
+
 
 
 class ApertureMaker(LoggingMixin):
@@ -478,6 +483,9 @@ class ModellingResultsMixin():
                     r = SyncedArray(shape=(sy, sx), fill_value=0)
                     self.resData[model].append(r)
 
+        # global bg model
+        self.data[self.bg] = ModelData(self.bg, n, 1)
+
         for metric in self.metrics:
             self.metricData[metric] = SyncedArray(shape=(n, nfit, self.nmodels))
 
@@ -489,7 +497,7 @@ class ModellingResultsMixin():
         self.best.flux = SyncedArray(shape=(n, nfit))
         self.best.flux_std = SyncedArray(shape=(n, nfit))
 
-    def save_params(self, i, j, model, results, sub, grid):
+    def _save_params(self, i, j, k, model, results): #  sub=None, grid=None
         """save fitted / derived paramers for this model"""
         if i is None:
             return
@@ -501,14 +509,25 @@ class ModellingResultsMixin():
         psfData.params[i, j] = p
         psfData.params_std[i, j] = pu
 
-        # Goodness of fit statistics
-        k = self.models.index(model)
-        for i, metric in enumerate(self.metrics):
-            self.metricData[metric][i, j, k] = gof[metric]
+        # print('saved', psfData.params)
 
-        if self.trackRes:
-            # save total residual image
-            self.resData[model][j] += model.rs(p, sub, grid)
+        # Goodness of fit statistics
+        # k = self.models.index(model)
+        for m, metric in enumerate(self.metrics):
+            self.metricData[metric][i, j, k] = gof[m]
+
+        # if self.trackRes:
+        #     # save total residual image
+        #     self.resData[model][j] += model.rs(p, sub, grid)
+
+    def save_params(self, i, results):
+
+        # loop over models
+        for k, m in enumerate(self.models):
+            p, pu, gof = results
+            for j, r in enumerate(zip(p[k], pu[k], gof[k])): # loop over stars
+                self._save_params(i, j, k, m, r)
+
 
 
 

@@ -1,12 +1,18 @@
 import ctypes
-# from collections import Callable
+import logging
+
 
 import numpy as np
 import astropy.units as u
 
-from recipes.parallel.synched import SyncedArray
+from recipes.parallel.synced import SyncedArray
 from recipes.dict import AttrDict
 from recipes.logging import LoggingMixin
+# from recipes.list import flatten
+
+
+def lm_extract_values_stderr(pars):
+    return np.transpose([(p.value, p.stderr) for p in pars.values()])
 
 
 class FrameProcessor(LoggingMixin):
@@ -35,7 +41,16 @@ class FrameProcessor(LoggingMixin):
         imbg = track.background(data)
 
         # fit and subtract background
-        residu, results = mdlr.background_subtract(data, imbg.mask)
+        residu, p_bg = mdlr.background_subtract(data, imbg.mask)
+        dat = mdlr.data[mdlr.bg]
+        p, pstd = lm_extract_values_stderr(p_bg)
+        # try:
+        dat.params[i] = p
+        dat.params_std[i] = pstd
+        # except Exception as err:
+        #     print(p, pstd)
+        #     print(dat.params[i]._shared)
+        #     print(dat.params_std[i]._shared)
 
         # track stars
         com = track(residu)
@@ -46,9 +61,11 @@ class FrameProcessor(LoggingMixin):
         # Calculate the standard deviation of the data distribution of each pixel
         data_std = np.ones_like(data)  # FIXME:
         # fit models
-        p, pu, gof = mdlr.fit(residu, data_std, self.bad_pixel_mask, )
-        # labels=track.bright)
-        best_models, params, pstd = self.model_selection(i, p, pu, gof)
+        results = mdlr.fit(residu, data_std, self.bad_pixel_mask, )
+        # save params
+        mdlr.save_params(i, results)
+        # model selection for each star
+        best_models, params, pstd = self.model_selection(i, results)
 
         # PSF-guided aperture photometry
         # create scaled apertures from models
@@ -79,7 +96,7 @@ class FrameProcessor(LoggingMixin):
         -------
 
         """
-        # global modlr, apData
+        # global apData
 
         n = n or len(self.data)
         nstars = len(self.tracker.use_labels)
@@ -106,12 +123,14 @@ class FrameProcessor(LoggingMixin):
 
         self.modeller.init_mem(n)
 
-    def model_selection(self, i, pars, paru, gof):
+    def model_selection(self, i, results):
         """
         Do model selection (per star) based on goodness of fit metric(s)
         """
-        # loop over stars
+
+        pars, paru, gof = results
         best_models, params, pstd = [], [], []
+        # loop over stars
         for j, g in enumerate(gof.swapaxes(0, 1)):  # zip(pars, paru, gof)
             ix, mdl, msg = self.modeller.model_selection(g)
             if msg:
@@ -194,139 +213,3 @@ class FrameProcessor(LoggingMixin):
         # TODO: check for cosmic rays inside sky apertures!
 
         return mxshift, maxImage, segImage
-
-
-from grafico.imagine import FitsCubeDisplay
-from matplotlib.widgets import CheckButtons
-
-from .find.trackers import StarTracker
-
-
-class GraphicalFrameProcessor(FitsCubeDisplay, LoggingMixin):
-    # TODO: Inherit from mpl Animation??
-
-    trackerClass = StarTracker
-    marker_properties = dict(c='r', marker='x', alpha=1, ls='none', ms=5)
-
-    def __init__(self, filename, **kws):
-        FitsCubeDisplay.__init__(self, filename, ap_prop_dict={}, ap_updater=None, **kws)
-
-        self.outlines = None
-
-        # toDO
-        # self.playing = False
-
-        # bbox = self.ax.get_position()
-        # rect = bbox.x0, bbox.y1, 0.2, 0.2
-        rect = 0.05, 0.825, 0.2, 0.2
-        axb = self.figure.add_axes(rect, xticks=[], yticks=[])
-        self.image_buttons = CheckButtons(axb, ('Tracking Regions', 'Data'), (False, True))
-        self.image_buttons.on_clicked(self.image_button_action)
-
-        # window slices
-        # rect = 0.25, 0.825, 0.2, 0.2
-        # axb = self.figure.add_axes(rect, xticks=[], yticks=[])
-        # self.window_buttons = CheckButtons(axb, ('Windows', ), (False, ))
-        # self.window_buttons.on_clicked(self.toggle_windows)
-
-        self.tracker = None
-        self._xmarks = None
-        # self._windows = None
-
-    # def toggle_windows(self, label):
-
-
-    def image_button_action(self, label):
-        image = self.get_image_data(self.frame)
-        self.imagePlot.set_data(image)
-        self.figure.canvas.draw()
-
-    def init_tracker(self, first, **findkws):
-        if isinstance(first, int):
-            first = slice(first)
-        img = np.median(self.data[first], 0)
-        self.tracker = self.trackerClass.from_image(img, **findkws)
-
-        return self.tracker, img
-
-    @property
-    def xmarks(self):
-        # dynamically create track marks when first getting this property
-        if self._xmarks is None:
-            self._xmarks, = self.ax.plot(*self.tracker.rcoo[:, ::-1].T,
-                                         **self.marker_properties)
-        return self._xmarks
-
-    def get_image_data(self, i):
-        tr, d = self.image_buttons.get_status()
-        image = self.data[i]
-        trk = self.tracker
-        if (tr and d):
-            mask = trk.segm.to_mask(trk.use_labels)
-            data = np.ma.masked_array(image, mask=mask)
-            return data
-        elif tr:  # and not d
-            return trk.segm.data
-        else:
-            return image
-
-    def set_frame(self, i, draw=True):
-        self.logger.debug('set_frame: %s', i)
-
-        i = FitsCubeDisplay.set_frame(self, i, False)
-        # needs_drawing = self._needs_drawing()
-
-        # data = self.get_image_data(i)
-
-
-        centroids = self.tracker(self.data[i])  # unmask and track
-        self.xmarks.set_data(centroids[:, ::-1].T)
-
-        if self.outlines is not None:
-            segments = []
-            off = self.tracker.offset[::-1]
-            for seg in self.outlineData:
-                segments.append(seg + off)
-            self.outlines.set_segments(segments)
-
-            # if self.use_blit:
-            #     self.draw_blit(needs_drawing)
-
-    def show_outlines(self, **kws):
-        from matplotlib.collections import LineCollection
-        from matplotlib._contour import QuadContourGenerator
-
-        segm = self.tracker.segm
-        data = segm.data
-        outlines = []
-        for s in segm.slices:
-            sy, sx = s
-            e = np.array([[sx.start - 1, sx.stop + 1],
-                          [sy.start - 1, sy.stop + 1]])
-            im = data[e[1, 0]:e[1, 1], e[0, 0]:e[0, 1]]
-            f = lambda x, y: im[int(y), int(x)]
-            g = np.vectorize(f)
-
-            yd, xd = im.shape
-            x = np.linspace(0, xd, xd * 25)
-            y = np.linspace(0, yd, yd * 25)
-            X, Y = np.meshgrid(x[:-1], y[:-1])
-            Z = g(X[:-1], Y[:-1])
-
-            gen = QuadContourGenerator(X[:-1], Y[:-1], Z, None, False, 0)
-            c, = gen.create_contour(0)
-            outlines.append(c + e[:, 0] - 0.5)
-
-        col = LineCollection(outlines, **kws)
-        self.ax.add_collection(col)
-
-        self.outlineData = outlines
-        self.outlines = col
-        return col
-
-    def play(self):
-        if self.playing:
-            return
-
-    def pause(self):
-        'todo'

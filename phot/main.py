@@ -81,9 +81,9 @@ from recipes.parallel.pool import ConservativePool
 is_interactive = is_interactive()
 
 from obstools.fastfits import FitsCube
-from obstools.phot.trackers import *
-from obstools.phot.masker import MaskMachine
-from obstools.phot.modelling import ModelDb, FrameModellerBase, FrameModeller
+from obstools.phot.find.trackers import StarTracker
+
+# from obstools.modelling import ModelDb, ImageModeller
 from obstools.phot.diagnostics import FrameDisplay
 from obstools.phot.utils import progressFactory, table_coords, table_cdist
 
@@ -116,7 +116,7 @@ else:
     from atexit import register as exit_register
     from recipes.io.tracewarn import warning_traceback_on
 
-    # check_mem = True            #prevent excecution if not enough memory available
+    # check_mem = True            # prevent excecution if not enough memory available
     monitor_mem = False#True
     monitor_cpu = False#True  # True
     # monitor_qs = True  # False#
@@ -274,240 +274,102 @@ chrono.mark('Setup')
 
 
 def trackerFactory(how='centroid 5 brightest'):
-    # if not track and how == 'fit':
-    #     # NOTE: this is SHIT, because the convergence with least squares depends most sensitively
-    #     # on positional params. should only be a problem if we expect large shifts
-    #     track = True
 
-    # TODO: 'centroid 5 brightest stars in fixed 25 pix window over median bg'
-    # TODO: 'centroid 5 best stars in 25 pix window over median bg'
-    # TODO: 'daofind'
-    # TODO: 'marginal fit'
-    # TODO: 'ofilter'
-    # etc:
-    # if 'best' replace bad stars
-    # if 'brightest', remove and warn
+    return StarTracker
 
-    tracking = True
-    descript = set(how.lower().split())
-
-    # resolve nrs
-    nrs = list(filter(str.isdigit, descript))
-    descript -= set(nrs)
-    if len(nrs) == 1:
-        nrs = list(range(int(nrs[0])))  # n brightest stars
-    elif 'all' in descript:
-        nrs = list(range(Nstars))
-        descript -= set(('all'))
-
-    descript -= set(['brightest', 'stars'])  # this is actually redundant, as brightest are default
-    # 'centroid 5' understood as 'centroid 5 brightest stars'
-
-    # embed()
-
-    # resolve how to track
-    clsDict = {'detect': SourceFinder,
-               'fit': StarTrackerFit, }
-
-    for kind in clsDict.keys():
-        if kind in descript:
-            descript -= {kind}
-            cls = clsDict[kind]
-            break
-    else:
-        # say 'using default' else for-else pretentious
-        cls = (StarTrackerFixedWindow, StarTracker)[tracking]
-
-        # resolve the position locator function
-        fDict = {'centroid': CoM,
-                 'com': CoM}  # TODO: add other trackers
-
-        # resolve the tracking function.
-        for name in fDict.keys():
-            if name in descript:
-                descript -= {name}
-                cfunc = fDict[name]
-                break
-        else:
-            # say 'using default' else for-else pretentious
-            cfunc = CoM  # Default is track by centroid
-    bgfunc = np.median
-
-    if len(descript):
-        raise ValueError('Finder: %s not understood' % str(tuple(descript)))
-
-    return cls, nrs, cfunc, bgfunc
-
-    # if how == 'detect':
-    #     return SourceFinder, None
-
-    # if how in [None, 'fit']:  # + modelDb.gaussians:
-    #     return StarTrackerFit
-
-    # if how.startswith('cent'):
-    #     how = 'med'  # centroid with median bg subtraction
+    # # if not track and how == 'fit':
+    # #     # NOTE: this is SHIT, because the convergence with least squares depends most sensitively
+    # #     # on positional params. should only be a problem if we expect large shifts
+    # #     track = True
     #
-    # if how.startswith('med'):
-    #     bgfunc = np.median
+    # # TODO: 'centroid 5 brightest stars in fixed 25 pix window over median bg'
+    # # TODO: 'centroid 5 best stars in 25 pix window over median bg'
+    # # TODO: 'daofind'
+    # # TODO: 'marginal fit'
+    # # TODO: 'ofilter'
+    # # etc:
+    # # if 'best' replace bad stars
+    # # if 'brightest', remove and warn
     #
-    # elif how.startswith('mode'):  # return partial(fixed_window_finder, mode)
-    #     from scipy import stats
+    # tracking = True
+    # descript = set(how.lower().split())
     #
-    #     def mode(data):
-    #         return stats.mode(data, axis=None).mode
+    # # resolve nrs
+    # nrs = list(filter(str.isdigit, descript))
+    # descript -= set(nrs)
+    # if len(nrs) == 1:
+    #     nrs = list(range(int(nrs[0])))  # n brightest stars
+    # elif 'all' in descript:
+    #     nrs = list(range(Nstars))
+    #     descript -= set(('all'))
     #
-    #     bgfunc = mode
+    # descript -= set(['brightest', 'stars'])  # this is actually redundant, as brightest are default
+    # # 'centroid 5' understood as 'centroid 5 brightest stars'
+    #
+    # # embed()
+    #
+    # # resolve how to track
+    # clsDict = {'detect': SourceFinder,
+    #            'fit': StarTrackerFit, }
+    #
+    # for kind in clsDict.keys():
+    #     if kind in descript:
+    #         descript -= {kind}
+    #         cls = clsDict[kind]
+    #         break
     # else:
-    #     raise ValueError('Unknown finder option %r' % how)
-
-    # cls = (StarTrackerFixedWindow, StarTrackerMovingWindow)[track]
-    # #cls.bgfunc = bgfunc
-    # return cls, bgfunc
-
-
-#     #
-
-
-# ===============================================================================
-
-
-    #def loop(self):
-
-
-# def save_params(i, j, model, results):
-#     """save fitted paramers for this model"""
-#     p, punc, gof = results
-#
-#     # Set shared memory
-#     psfData = modelDb.data[model]
-#     psfData.params[i, j] = p
-#     psfData.params_stddev[i, j] = punc
-#
-#     # calculate psf flux
-#     if hasattr(model, 'integrate'):
-#         # FIXME: you can avoid this by having two classes - BGModel, PSFModel...
-#         psfData.flux[i, j] = model.integrate(p)
-#         psfData.flux_stddev[i, j] = model.int_err(p, punc)
-#
-#     # Re-parameterize to more physically meaningful quantities
-#     if hasattr(model, 'reparameterize'):  # model in gaussianModels: #
-#         # FIXME: just work with converted parameters already !!!!!!!!!!!!!!!!!!!!!!!
-#         psfData.alt[i, j] = model.reparameterize(p)
-#         # FUCK!!
-#
-#     # Goodness of fit statistics
-#     for metric in modelDb.metrics:
-#         modelDb.metricData[metric][i, j, modelDb._ix[model]] = gof[metric]
-
-
-
-# ===============================================================================
-# TODO: classes for different phot routines
-# @memprof
-def do_bg_phot(data, mask, cxx, rsky):
-    # NOTE: now only working for uniform aperture sizes for all stars
-
-    #TODO: clip outliers in bg  - this is more general than masking
-
-    method = 'center'
-    xypos = cxx[:, ::-1]
-    rskyin, rskyout = rsky
-
-    # nmasked = 0
-    # if np.size(mask):
-    #     nmasked = len(mask[0])  #WARNING: only for shrunken masks
-
-    mask = apscaler.expand_mask(mask, data.shape)    #FIXME: inefficient?
-    # NOTE:  do_photometry below will automatically exclude masked data from calculation
-
-    ann = CircularAnnulus(xypos, r_in=rskyin, r_out=rskyout)
-    flxBG, flxBGu = ann.do_photometry(data,
-                                # error,
-                                mask=mask,
-                                # effective_gain,#  must have same shape as data
-                                # TODO: ERROR ESTIMATE
-                                method=method)      # method='subpixel', subpixel=5)
-
-    # TODO: photutils - better support for masked data!!
-    # BUG: tuple masks are converted to arrays which broadcast differently. this effectively leads to the mask being completely ignored silently
-
-    # calculate total area of aperture, excluding masked pixels (else underestimate the flux)
-    # area = np.subtract(ann.mask_area(method), nmasked)
-    # area = (m.data * m.cutout(~mask)).sum
-    try:
-        area = [(m.data * m.cutout(~mask)).sum() for m in ann.to_mask(method)]
-    except:
-        print('Oh fuck ' * 100)
-        embed()
-        raise
-    # TODO: warn if area is below some threshold ?
-    fluxBGpp = flxBG / area  # Background Flux per pixel
-    flxBGppu = flxBGu / area
-
-    return fluxBGpp, flxBGppu
-
-    # WARNING:
-    # With elliptical star profiles:  scaling aperture radii with fwhm as geometric mean
-    # might be un-ideal if images tend to distrort in a particular direction preferentially
-    # during a run (as is often the case)...
+    #     # say 'using default' else for-else pretentious
+    #     cls = (StarTrackerFixedWindow, StarTracker)[tracking]
+    #
+    #     # resolve the position locator function
+    #     fDict = {'centroid': CoM,
+    #              'com': CoM}  # TODO: add other trackers
+    #
+    #     # resolve the tracking function.
+    #     for name in fDict.keys():
+    #         if name in descript:
+    #             descript -= {name}
+    #             cfunc = fDict[name]
+    #             break
+    #     else:
+    #         # say 'using default' else for-else pretentious
+    #         cfunc = CoM  # Default is track by centroid
+    # bgfunc = np.median
+    #
+    # if len(descript):
+    #     raise ValueError('Finder: %s not understood' % str(tuple(descript)))
+    #
+    # return cls, nrs, cfunc, bgfunc
+    #
+    # # if how == 'detect':
+    # #     return SourceFinder, None
+    #
+    # # if how in [None, 'fit']:  # + modelDb.gaussians:
+    # #     return StarTrackerFit
+    #
+    # # if how.startswith('cent'):
+    # #     how = 'med'  # centroid with median bg subtraction
+    # #
+    # # if how.startswith('med'):
+    # #     bgfunc = np.median
+    # #
+    # # elif how.startswith('mode'):  # return partial(fixed_window_finder, mode)
+    # #     from scipy import stats
+    # #
+    # #     def mode(data):
+    # #         return stats.mode(data, axis=None).mode
+    # #
+    # #     bgfunc = mode
+    # # else:
+    # #     raise ValueError('Unknown finder option %r' % how)
+    #
+    # # cls = (StarTrackerFixedWindow, StarTrackerMovingWindow)[track]
+    # # #cls.bgfunc = bgfunc
+    # # return cls, bgfunc
 
 
-# ===============================================================================
-# @memprof
-def do_phot(data, masks, cxx, rxy, theta, flux_bg_pp):
-    # THIS ONE WILL BE SLOWER I SUSPECT...
-    method = 'exact'
-    xypos = cxx[:Nstars, ::-1]
-
-    mshape = data.shape + (Nstars,)
-    masks = apscaler.expand_mask(masks, mshape)     #TODO: efficiency?
-
-    Flux = np.empty((Nstars, Naps))
-    for j in range(Nstars):
-        mask = masks[..., j]
-        for k in range(Naps):
-            rx, ry = rxy[k]
-            # get aperture class
-            ap = EllipticalAperture(xypos[j], rx, ry, theta)
-            flux, flux_err = ap.do_photometry(data,
-                                              mask=mask,
-                                     # error, #TODO: ERROR ESTIMATE
-                                     # effective_gain,#  must have same shape as data
-                                     method=method)
-            # get the area of the aperture excluding masked pixels
-            m = ap.to_mask(method)[0]
-            area = (m.data * m.cutout(~mask)).sum()
-
-            flux_res = flux - (flux_bg_pp[j] * area)
-
-            Flux[j, k] = flux_res
-
-    return Flux
 
 
-def do_multi_phot(data, masks, cxx, rxy, theta, flux_bg_pp):
-    # TODO: just loop ovr do_phot abve
-    # NOTE: for now just ignoring the photmasks untill we can find a better way of dealing
-    # TODO neighbourhood fill to preserve noise structure ?
-    method = 'exact'
-    xypos = cxx[:, ::-1]
-
-    Flux = []
-    for k in range(Naps):
-        rx, ry = rxy[k]
-        aps = EllipticalAperture(xypos, rx, ry, theta)
-        flux, flux_err = aps.do_photometry(data,
-                                 # error, #TODO: ERROR ESTIMATE
-                                 # mask = masks[]
-                                 # effective_gain,#  must have same shape as data
-                                method=method)
-        # TODO: take account of masked area
-        aps.mask_area(method)
-        flux_res = flux - (flux_bg_pp * aps.area())
-        Flux.append(flux_res)
-    return np.transpose(Flux)
-
-# ===============================================================================
 
 
 
@@ -533,285 +395,6 @@ def coo_within_window(p):
 
 
 
-
-
-
-# TODO:
-def scalerFactory(how='circular nanmedian 3 sigma'):
-    """*how* can be:
-        eg: circular nanmean / elliptical nanmedian / circular fixed 2"
-    """
-    #TODO: circular nanmean 0.5:5:0.5 sigma
-
-    clsDict = {'circular': ScalerCircular,
-               'elliptical': ScalerElliptical,}
-               # 'fixed': ScalerFixed, }
-    # TODO: this as a classmethod
-    # TODO: ScalableAperture / FixedAperture ??
-    mxnDict = {'sigma': (),
-               '"': (ScaleFixed,),
-               'pix': (ScaleFixed,)}
-    # mxnDict = {'scaled': (),
-    #             'fixed': ScaleFixed}
-    descript = set(how.lower().split())
-    # get the str for the kind of aperture requested
-    for kind in clsDict.keys():
-        if kind in descript:
-            descript -= {kind}
-            break
-    else:
-        # say 'using default' else for-else pretentious
-        kind = 'circular'
-
-    cls = clsDict[kind]
-
-    # resolve size(s)
-    has_size = False
-    for s in descript:
-        if s[0].isdigit():
-            descript -= {s}
-            has_size = True
-            break
-    else:
-        logger.warning('Using 5 sigma aperture size')
-        # raise ValueError('Need size')
-        s = '5'
-
-    nrs = tuple(map(float, s.split(':')))
-    if len(nrs) == 1:
-        sizes = np.array(nrs)
-    elif len(nrs) == 3:
-        start, stop, step = nrs
-        stop += step        #make the range top-inclusive (intuitive interpretation)
-        sizes = np.mgrid[slice(start, stop, step)]
-    else:
-        raise ValueError('size %s not understood' %s)
-
-    #embed()
-
-    # resolve unit
-    known_units = ('sigma', '"', 'pix')
-    for unit in known_units: # arcsec
-        if unit in descript:
-            descript -= {unit}
-            break
-    else:
-        unit = 'sigma'  # NOTE: put the default last in the loop to elliminate this code line
-        if has_size:
-            print('size without unit ' * 10)
-            embed()
-            raise ValueError('size without unit')
-
-    s = {'sigma': 'scaled',
-         '"': 'fixed',
-         'pix': 'fixed'}[unit]
-    descript -= {'fixed'}   # if both fixed and unit that implies fixed are given
-
-    # resolve the combine function.
-    # if aperture sizes fixed (i.e unit is '"' or  'pix'), cfunc will be used upon init only
-    for name in descript:
-        f = getattr(np, name, None)
-        if f:
-            descript -= {name}
-            break
-    else:
-        f = np.nanmean  # Default is to scale by mean sigma / theta
-
-    if len(descript):
-        raise ValueError('%s not understood' %str(tuple(descript)))
-    # Construct the class
-
-    bases = mxnDict[unit] + (cls,)
-    name = kind.title() + s.title() + 'Aperture'
-    cls = type(name, bases, {'cfunc': staticmethod(f)})
-
-    return cls, sizes, unit
-
-
-
-# TODO: can use detect_sources + binary dilation to make the source mask
-# TODO: checkout photutils.segmentation.detect.make_source_mask
-
-class MaskHelper(MaskMachine):
-    """
-    Mixin class for helping produce masks for photometry / fitting from input radii in units of sigma
-    """
-    # def __init__(self, grid, coords=None, r_sigma=5.0, rsky_sigma=(4.5, 8.5)):
-        # MaskMachine.__init__(self, grid, coords)
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    @staticmethod
-    def shrink(mask):
-        # since we expect the masks to be sparse, pass down the indices to save RAM
-        return np.where(mask)
-
-    @staticmethod
-    def expand_mask(mask, shape):
-        # expand mask indices to boolean array of given shape
-        z = np.zeros(shape, dtype=bool)
-        z[mask] = True
-        return z
-
-    def skymask(self, rstar, rsky):
-        """Mask all other stars within the sky annulus of frame star"""
-        _, allmasked, _ = self.mask_all_others(rstar)
-
-        skyannuli = self.mask_annuli(rsky)
-        skymask = allmasked & skyannuli.any(-1)  #[..., None]
-        # all stars inside all sky annuli masked in single frame
-        return self.shrink(skymask)
-
-    def get_masks(self, cxx, sigma, with_sky=False):
-        """sigma shape: (), (1,) (N, 2) """
-        # mask all pixels for fitting
-        # cxx = coo + self.Rvec
-        self.update(cxx)
-
-        # sigma = np.zeros(len(self.Rcoo)) * sigma
-        # sigma[:Nstars] = sigma0
-        # sigma[Nstars:] = sigma0  # [ir]
-
-        r_sigma = self.r * sigma
-        rsky_sigma = self.rsky * np.atleast_2d(sigma) #
-        # rsky_out = rsky_sigma[:, 1]
-
-        # TODO: mask SATURATED pixels ??
-        # NOTE: r_sigma may be array in case of multiaperture.  In this case mask will take largest radius
-
-        # masking the other stars requires photometry on individual
-        # apertures instead of groups of them with the same size. Is this slower?
-        # Better to weight pixels?
-        photmasks = self.mask_close_others(np.max(r_sigma), rsky_sigma[:, 1])
-        if with_sky:
-            # This would otherwise just be a waste of time since we don't need the skymasks for
-            # fitting, only for photometry
-            # NOTE: if r_sigma > rsky_sigma[0] there will be a ring of masked pixels in the sky mask
-            skymasks = self.skymask(np.max(r_sigma), rsky_sigma.T)
-            # if max(map(len, photmasks)) > 0:
-            #     # logger.info('INTERFERANCE: frame {}'.format(i))
-            return photmasks, skymasks
-        return photmasks
-
-
-# TODO:
-# class SlotmodeMasks(MaskHelper):
-#         #Edge mask
-#         edgemask = np.ones(ff.ishape, bool)       #FIXME: NameError: name 'ff' is not defined
-#         edgemask[6:-8,
-#                  0:-15] = False
-#
-#         def skymask(self, rstar, rsky):
-#             """Mask all other stars within the sky annulus of frame star"""
-#             _, allstars, _ = self.mask_all_others(rstar)
-#
-#             skyannuli = self.mask_annuli(rsky)
-#             skymask = self.edgemask & allstars & skyannuli.any(-1)
-#             return self.shrink(skymask)
-#
-#         def get_masks(self, cxx, sigma, with_sky=False):
-#             """sigma shape: (), (1,) (N, 2) """
-#             # mask all pixels for fitting
-#             # cxx = coo + self.Rvec
-#             self.update(cxx)
-#
-#             r_sigma = self.r * sigma
-#             rsky_sigma = self.rsky * np.atleast_2d(sigma) #
-#             # rsky_out = rsky_sigma[:, 1]
-#
-#             photmasks = self.mask_close_others(r_sigma, rsky_sigma[:, 1])
-#
-#
-#             if with_sky:
-#                 # This would otherwise just be a waste of time since we don't need the skymasks for
-#                 # fitting, only for photometry
-#                 # NOTE: if r_sigma > rsky_sigma[0] there will be a ring of masked pixels in the sky mask
-#                 skymasks = self.skymask(r_sigma, rsky_sigma.T)
-#                 # if max(map(len, photmasks)) > 0:
-#                 #     # logger.info('INTERFERANCE: frame {}'.format(i))
-#                 return photmasks, skymasks
-#             return photmasks
-
-
-# TODO: inherit from photutils.aperture!?!
-class SigmaScalerBase(MaskHelper):
-
-    # axis along which to apply combine function
-    axis = ()     # will return original array and therefore scale star apertures individually by default
-    #NOTE this is ~4x slower than using a lambda to accomplish the same
-    # cfunc = staticmethod(np.nanmedian)    # default combiner
-
-    def __init__(self, grid, coords=None, r_sigma=5.0, rsky_sigma=(5.0, 8.5)):
-        # print('init', 'SigmaScalerBase')
-        self.r = np.atleast_1d(r_sigma)
-        self.rsky = np.asarray(rsky_sigma)
-
-        # Attach mask methods
-        MaskHelper.__init__(self, grid, coords)
-
-    def scale(self, sigma_xy, theta):
-        return (self.cfunc(sigma_xy, axis=self.axis),
-                self.cfunc(theta, axis=self.axis))
-
-    def get_radii(self, sigma_xy, theta):
-
-        sigma_xy, theta = self.scale(sigma_xy, theta)
-
-        rxy = (self.r * np.array([sigma_xy]).T).T           # aperture radii xy
-        rsky = np.multiply(self.rsky, sigma_xy)             # sky radii (circular)
-        return rxy, rsky, sigma_xy, theta
-
-    def prepare_phot(self, cxx, sigma_xy, theta):
-        """
-        Scale aperture radii, and sky annulus for frame i by the mean / median sigma (std_dev)
-        of the fit params in ix_scale.
-        """
-        # cxx = coo + tracker.Rvec
-        rxy, rsky, sigma_xy, theta = self.get_radii(sigma_xy, theta)
-
-        # update (recalculate) the star/bg masks based on coo and sigma_xy from fits
-        # TODO: use photutils aperture methods to deal with masks?
-        photmasks, skymasks = self.get_masks(cxx, np.mean(sigma_xy), with_sky=True)
-
-        return photmasks, skymasks, cxx, rxy, rsky, theta
-
-
-class ScalerCircular(SigmaScalerBase):
-    # will combine across stars and (sigma_x and sigma_y) of all stars to scale
-    axis = None
-
-    def scale(self, sigma_xy, theta=None):
-        sxy = self.cfunc(sigma_xy)
-        return np.array([sxy, sxy]), 0
-
-
-class ScalerElliptical(SigmaScalerBase):
-    # combine across all modelled stars to scale
-    axis = 0
-
-
-class ScaleFixed():
-    """Mixin class that returns fixed aperture radii"""
-    # axis = None     # only used on init
-
-    def __init__(self, grid, coords=None, r_sigma=5.0, rsky_sigma=(5.0, 8.5)):
-        # print('init', 'ScaleFixed')
-        super().__init__(grid, coords, r_sigma, rsky_sigma)
-
-        # embed()
-        sigma_xy, theta = super().scale(sigma_xy0, theta0)
-        rxy = (self.r * np.array([sigma_xy]).T).T           # aperture radii xy
-        rsky = np.multiply(self.rsky, sigma_xy)             # sky radii (circular)
-
-        self._fixed_results = rxy, rsky, sigma_xy, theta #= super().get_radii(sigma_xy0, theta0)
-        self._sigma_xy_fixed = sigma_xy
-        self._theta_fixed = theta
-
-    def scale(self, sigma_xy, theta=None):
-        return self._sigma_xy_fixed, self._theta_fixed
-
-    def get_radii(self, sigma_xy, theta):
-        return self._fixed_results
-
-
 def catch_and_log(func):
     """Decorator that catches and logs errors instead of raising"""
 
@@ -827,144 +410,7 @@ def catch_and_log(func):
 
 
 
-class FrameProcessor(FitsCube):
 
-    def __init__(self, tracker=None, masker=None, scaler=None, modeller=None):
-
-        self.tracker = tracker
-        self.masker = masker
-        self.scaler = scaler
-        self.modeller = modeller
-
-
-    def init_mem(self, n):
-        # reference star coordinates
-
-        #global modlr, apData
-
-        self.coords = SyncedArray(shape=(n, 2))
-
-        # NOTE: You should check how efficient these memory structures are.
-        # We might be spending a lot of our time synching access??
-
-        # HACK: Initialize shared memory with nans...
-        SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
-
-        apData = self.apData = AttrDict()
-        apData.bg = SyncedArray(shape=(N, Nstars))
-        apData.flux = SyncedArray(shape=(N, Nstars, Naps))
-
-        apData.sigma_xy = SyncedArray(shape=(N, 2))  # TODO: for Nstars (optionally) ???
-        apData.rsky = SyncedArray(shape=(N, 2))
-        apData.theta = SyncedArray(shape=(N,))
-        # cog_data = np.empty((N, Nstars, 2, window*window))
-
-        self.modeller.init_mem(N, Nfit)
-
-
-    def __call__(self, i):
-
-        data = self[i]
-        mdlr = self.modeller
-        trk = self.tracker
-        sclr = self.scaler
-        apD = self.apData
-
-        # track stars
-        coo = trk(data, i)
-        cxx = coo + trk.Rvec  # now relative to frame
-        # save coordinates in shared data array.
-        self.coords[i] = coo
-
-        # First guess params from previous frames if available
-        _, sigma_xy0, theta0 = mdlr.guess_params(i)
-
-        # mask
-        fitmasks = self.masker.get_masks(cxx, sigma_xy0.mean())
-
-        # PSF photometry
-        # Calculate the standard deviation of the data distribution of each pixel
-        data_std = np.ones_like(data)        # FIXME:
-        coo_fit, sigma_xy, theta = mdlr.fit(cxx, data, data_std, fitmasks, i=i)
-
-        # save coordinates in shared data array.
-        # if
-        # self.coords[i] = coo_fit
-        # only overwrites coordinates if mdlr.tracker is None
-
-        self.create_apertures(coo_fit, sigma_xy, theta)
-
-        # Aperture photometry
-        cxx = self.coords[i] + trk.Rvec  # coordinates via requested method
-        photmasks, skymask, cxx, rxy, rsky, theta = sclr.prepare_phot(cxx, sigma_xy, theta)
-        check_aps_sky(i, rsky)
-
-        # a quantity is needed for photutils
-        udata = u.Quantity(data, copy=False)
-
-        # BG phot
-        flux_bg_pp = do_bg_phot(udata, skymask, cxx[:Nstars], rsky)  # for Nstars
-        apD.bg[i] = flux_bg_pp
-
-        # Do aperture photometry
-        if np.size(photmasks):
-            # same stars are close together
-            apD.flux[i] = do_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
-        else:
-            apD.flux[i] = do_multi_phot(data, photmasks, cxx, rxy, theta, flux_bg_pp)
-
-    # def scale_model_results
-
-    # def prepare_phot(self, cxx, sigma_xy, theta):
-    #     """
-    #     Scale aperture radii, and sky annulus for frame i by the mean / median sigma (std_dev)
-    #     of the fit params in ix_scale.
-    #     """
-    #     # cxx = coo + tracker.Rvec
-    #     rxy, rsky, sigma_xy, theta = self.scaler.get_radii(sigma_xy, theta)
-    #
-    #     # update (recalculate) the star/bg masks based on coo and sigma_xy from fits
-    #     # TODO: use photutils aperture methods to deal with masks?
-    #     photmasks, skymasks = self.masker.get_masks(cxx, np.mean(sigma_xy), with_sky=True)
-    #
-    #     return photmasks, skymasks, cxx, rxy, rsky, theta
-
-
-    def save_params(self, i, coo):
-        if self.tracker is not None:
-            self.coords[i] = coo
-            self.sigma[i] =
-
-
-        # Re-parameterize to more physically meaningful quantities
-        # psfData.sigma
-
-        # if hasattr(model, 'reparameterize'):
-            # FIXME: just work with converted parameters already !!!!!!!!!!!!!!!!!!!!!!!
-            #FIXME: move inside
-            # psfData.alt[i, j] = model.reparameterize(p)
-            # FUCK!!
-
-        # calculate psf flux
-        # if hasattr(model, 'integrate'):
-        #     # FIXME: you can avoid this by having two classes - BGModel, PSFModel...
-        #     psfData.flux[i, j] = model.integrate(p)
-        #     psfData.flux_std[i, j] = model.int_err(p, pu)
-
-
-    def estimate_max_shift(self, nframes, snr=5, npixels=7):
-        """Estimate the maximal positional shift for stars"""
-        step = len(self) // nframes  # take `nframes` frames evenly spaced across data set
-        maxImage = self[::step].max(0)  #
-
-        threshold = detect_threshold(maxImage, snr)  # detection at snr of 5
-        segImage = detect_sources(maxImage, threshold, npixels)
-        mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
-                          for (xs, ys) in segImage.slices], 0)
-
-        # TODO: check for cosmic rays inside sky apertures!
-
-        return mxshift, maxImage, segImage
 
 # @catch_and_log
 def frame_proc(incoming):
@@ -1033,8 +479,8 @@ parser.add_argument('--no-plots', dest='plot', action='store_false',
                     help="Don't do plots")
 parser.add_argument('--track', default='centroid', type=str,
                     help='How to track stars')
-parser.add_argument('--window', default=20, type=int,
-                    help='Tracking window size')
+# parser.add_argument('--window', default=20, type=int,
+#                     help='Tracking window size')
 parser.add_argument('--ap', nargs='*', default=['circular fixed 0.5:10:0.5 pix'],
                     type=str, help='Aperture description')
 
@@ -1051,9 +497,9 @@ N = min((args.subset or len(ff)), len(ff)) 	#min(20000, len(ff))
 N_max_stars = 20     # Only the `N_max_stars` brightest stars will be processed
 
 # sub-framing params
-window = args.window
+# window = args.window
 # create xy grid
-Grid = ndgrid.like(ff[0])  # grid for full frame
+Grid = np.indices(ff.ishape)  # grid for full frame
 
 
 
@@ -1074,24 +520,33 @@ Grid = ndgrid.like(ff[0])  # grid for full frame
 # TODO: One might be able to tell which option will be the preferred one
 # by looking at the maximum frame-to-frame across the CCD array.
 
-
-Nmean = 3
+# select Nmean frames randomly from first 100
+Nmean = 10
+ix = np.random.randint(0, 100, Nmean)
 preImage = np.median(ff[:Nmean], 0)
-preFind = SourceFinder(preImage, snr=3, npixels=7, deblend=True)
-
-
-#TODO: Gui here. add stars? resize apertures / sky / window interactively
-# print('ADD COO ' * 100)
-# embed()
-# HACK
-Rcoo = np.vstack([preFind.found, (19.5, 90.5)])# HACK
-# HACK
-
-Nstars = min(len(Rcoo), N_max_stars)
 
 # Get tracker
 TrackerClass, ix_loc_rqst, centreFunc, bgFunc = trackerFactory(args.track)
-tracking = TrackerClass is not StarTrackerFixedWindow
+
+# init the tracker
+tracker = TrackerClass.from_image(preImage, dilate=3, snr=3, npixels=7,
+                                  deblend=True)
+                                 # bad_pixel_mask=bad_pixel_mask)
+
+# check which stars are good for centroid tracking
+satlvl = get_saturation(ff.header)
+ix_loc = preFind.best_for_tracking(window, saturation=satlvl)
+tracker = TrackerClass(Rcoo, window, ix_loc, max_stars=N_max_stars,
+                      cfunc=centreFunc, bgfunc=bgFunc)
+ix_loc = tracker.ix_loc
+
+
+Nstars = min(len(tracker.rcoo), N_max_stars)
+
+
+
+
+
 
 # ix_scale = list(range(Nscale))  # brightest stars (since they are sorted)
 
@@ -1101,18 +556,8 @@ mxshift, max_image, seg_image_max = estimate_max_shift(ff, 100)
 large_shifts = np.any(mxshift > window)
 #TODO: cosmic ray flagging in the envelope??
 
-
-# def setup():
-# initialize tracker class
 # =================================================================================================
-# check which stars are good for centroid tracking
-satlvl = get_saturation(ff.header)
-# window_scale = 12.5
-# window = int(np.ceil(sigma0 * window_scale))
-ix_loc = preFind.best_for_tracking(window, saturation=satlvl)
-tracker = TrackerClass(Rcoo, window, ix_loc, max_stars=N_max_stars,
-                      cfunc=centreFunc, bgfunc=bgFunc)
-ix_loc = tracker.ix_loc
+
 
 # Phot Setup
 # =================================================================================================
@@ -1468,7 +913,7 @@ def show_progress():
 # Main work here
 try:
     # MAIN()
-    init_shared_memory(N, Nstars, Naps, Nfit)
+    # init_shared_memory(N, Nstars, Naps, Nfit)
     a = run_sequential_test(N)
 
 except Exception as err:

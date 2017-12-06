@@ -1,18 +1,21 @@
 import logging
+import functools
 import itertools as itt
 
 import numpy as np
 from scipy import ndimage
+from scipy.spatial.distance import cdist
 # from astropy.utils import lazyproperty
-from photutils.detection import detect_threshold
+from photutils.detection.core import detect_threshold # slow import!!
 from photutils.segmentation import detect_sources, SegmentationImage
 
 from obstools.phot.utils import mad
+from recipes.logging import LoggingMixin
+
+# from IPython import embed
 
 
-from IPython import embed
-
-class SegmentationHelper(SegmentationImage):
+class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
     Additions to the SegmentationImage class.
 
@@ -104,13 +107,58 @@ class SegmentationHelper(SegmentationImage):
         return np.ma.masked_where(self.data == 0, image)
 
     # --------------------------------------------------------------------------------------
-    def iter_segments(self, data, labels=None, mask_overlapping=False, with_slices=False):
+    def check_labels(self, labels):
+
+        labels = np.asarray(labels)
+        invalid = np.setdiff1d(labels, self.labels)
+        if len(invalid):
+            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
+
+    def indices(self, labels):
+        # FIXME: you can eliminate this method by handling the indices like labels as
+        #  lazyproperty
+        self.check_labels(labels)
+
+        indices = np.digitize(labels, self.labels) - 1
+        return indices
+
+    def llc(self, labels=None):
+        """lower left corners of segment slices"""
+        ix = self.indices(labels)
+        slices = np.take(self.slices, ix, 0)
+        return [(y.start, x.start) for (y, x) in slices]
+
+    def urc(self, labels=None):
+        """upper right corners of segment slices"""
+        ix = self.indices(labels)
+        slices = np.take(self.slices, ix, 0)
+        return [(y.stop, x.stop) for (y, x) in slices]
+
+    # TODO: ulc, lrc
+
+    def box_sizes(self, labels=None):
+        if labels is None:
+            labels = self.labels
+        ix = self.indices(labels)
+        slices = np.take(self.slices, ix, 0)
+        sizes = np.zeros((len(ix), 2))
+
+        for i, sl in enumerate(slices):
+            if sl is not None:
+                sizes[i] = [np.subtract(*s.indices(sh)[1::-1])
+                             for s, sh in zip(sl, self.shape)]
+        return sizes
+
+    # Image methods
+    # --------------------------------------------------------------------------------------
+    def iter_segments(self, image, labels=None, with_slices=False,
+                      mask_overlapping=False):
         """
         Yields rectangular sub-regions of the image
 
         Parameters
         ----------
-        data
+        image
         labels
         mask_overlapping
         with_slices
@@ -130,10 +178,10 @@ class SegmentationHelper(SegmentationImage):
         for i, lbl in zip(indices, labels):
             sl = slices[i]
             if sl is not None:              # NOTE filter None slices
-                d = data[sl]
-                q = self.data[sl]
+                d = image[sl]
                 if mask_overlapping:
                     # mask other segments that overlap this slice
+                    q = self.data[sl]
                     m = (q != lbl) & (q != 0)
                     d = np.ma.array(d, mask=m)
                 if with_slices:
@@ -141,22 +189,7 @@ class SegmentationHelper(SegmentationImage):
                 else:
                     yield d
 
-    def check_labels(self, labels):
-
-        labels = np.asarray(labels)
-        invalid = np.setdiff1d(labels, self.labels)
-        if len(invalid):
-            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
-
-    def indices(self, labels):
-        # FIXME: you can eliminate this method by handeling the indices like labels as
-        #  lazyproperty
-        self.check_labels(labels)
-
-        indices = np.digitize(labels, self.labels) - 1
-        return indices
-
-    def thumbnails(self, image=None, labels=None):
+    def thumbnails(self, image=None, labels=None, mask=None):
         """
         Thumbnail cutout images based on segmentation
 
@@ -169,35 +202,23 @@ class SegmentationHelper(SegmentationImage):
         list of arrays
         """
         data = self.data if image is None else image
-        # TODO: masked
+        if mask is not None:
+            data = np.ma.array(data, mask=mask)
         return list(self.iter_segments(data, labels))
 
+    def imax(self, image, labels=None, mask=None):
+        """Indices of maxima in each segment"""
 
-    @property #lazyproperty
-    def llc(self):
-        """lower left corners of segment slices"""
-        return [(y.start, x.start) for (y, x) in self.slices]
+        if mask is not None:
+            image = np.ma.array(image, mask=mask)
 
-    @property #lazyproperty
-    def urc(self):
-        """upper right corners of segment slices"""
-        return [(y.stop, x.stop) for (y, x) in self.slices]
-
-    # TODO: ulc, lrc
-
-    def box_sizes(self, labels=None):
-        if labels is None:
-            labels = self.labels
-        ix = self.indices(labels)
-        slices = np.take(self.slices, ix, 0)
-        sizes = np.zeros((len(ix), 2))
-
-        for i, sl in enumerate(slices):
-            if sl is not None:
-                sizes[i] = [np.subtract(*s.indices(sh)[1::-1])
-                             for s, sh in zip(sl, self.shape)]
-        return sizes
-
+        n = len(self.labels) if labels is None else len(labels)
+        ix = np.empty((n, 2), int)
+        for i, (iseg, (sy, sx)) in enumerate(
+                self.iter_segments(image, labels, with_slices=True)):
+            llc = sy.start, sx.start
+            ix[i] = np.add(llc,  np.divmod(np.argmax(iseg), iseg.shape[1]))
+        return ix
 
     def counts(self, image, labels=None):
         if labels is None:
@@ -367,7 +388,7 @@ class SegmentationHelper(SegmentationImage):
 
             if not keep[i]:
                 count += 1
-                logging.debug('Discarding %i of %i at coords (%3.1f, %3.1f)',
+                self.logger.debug('Discarding %i of %i at coords (%3.1f, %3.1f)',
                               count, len(coords), *coords[i])
 
         return keep
@@ -390,7 +411,7 @@ def inside_detection_region(coords, sub, grid):
     return inside
 
 
-class LabelLogicMixin():
+class LabelUse():
 
     @property
     def ignore_labels(self): # ignore_labels / use_labels
@@ -411,25 +432,27 @@ class LabelLogicMixin():
         self._ignore_labels = np.setdiff1d(self.segm.labels, labels)
 
 
-class StarTracker(LabelLogicMixin):
+class StarTracker(LabelUse):
     """
     A class to track stars in a CCD image frame to aid in doing time series photometry.
 
     Stellar positions in each new frame are calculated as the background subtracted centroids
     of the chosen image segments. Centroid positions of chosen stars are filtered for bad
     values (or outliers) and then combined by a weighted average. The weights are taken
-    as the SNR of the star brightness.
-
-    Handles bad pixels masks.
+    as the SNR of the star brightness. Also handles arbitrary pixel masks.
 
     Constellation of stars in image assumed unchanging. The coordinate positions of the stars
     with respect to the brightest star are updated upon each iteration.
 
 
     """
+    # TODO: make bayesian
+
     segmClass = SegmentationHelper
     snr_weighting = True # TODO: manage as properties ?
     snr_cut = 3
+    _distance_cut = 10
+    _saturation_cut = 95 #%
     # this allows tracking stars with low snr, but not computing their
     # centroids which will have larger scatter
 
@@ -443,6 +466,8 @@ class StarTracker(LabelLogicMixin):
 
         # Center of mass
         found = sh.com_bg(image, None, bad_pixel_mask)
+
+        # cls.best_for_tracking(image)
 
         return cls(found, sh, None, bad_pixel_mask)
 
@@ -510,14 +535,14 @@ class StarTracker(LabelLogicMixin):
 
         # flag outliers
         bad = self.is_bad(com)
-        logging.debug('bad: %s', bad)
+        self.logger.debug('bad: %s', bad)
 
         # snr weighting scheme (robustness)
         if self.snr_weighting or self.snr_cut:
             snr = self.segm.snr(image, self.use_labels)
-            logging.debug('snr: %s', snr)
+            self.logger.debug('snr: %s', snr)
             weights = snr * ~bad
-            logging.debug('weights: %s', weights)
+            self.logger.debug('weights: %s', weights)
         else:
             weights = np.ones(self.segm.nlabels)
 
@@ -526,12 +551,12 @@ class StarTracker(LabelLogicMixin):
             # but not used to compute new positions)
             low_snr = snr < self.snr_cut
             if low_snr.sum() == len(self.use_labels):
-                logging.warning('SNR for all stars below cut: %s < %.1f', snr, self.snr_cut)
+                self.logger.warning('SNR for all stars below cut: %s < %.1f', snr, self.snr_cut)
                 low_snr = snr < snr.max() # else we end up with nans
 
             weights[low_snr] = 0
 
-        logging.debug('weights: %s', weights)
+        self.logger.debug('weights: %s', weights)
 
         if np.all(weights == 0):
             # from IPython import embed
@@ -555,6 +580,10 @@ class StarTracker(LabelLogicMixin):
 
         """
         return self.yx0 + self.rvec
+
+    def sdist(self):
+        coo = self.rcoo
+        return cdist(coo, coo)
 
 
     def background(self, image, mask=None):
@@ -610,9 +639,21 @@ class StarTracker(LabelLogicMixin):
 
 
     def update_offset(self, coo, weights):
-        # shift calculated as snr weighted mean of individual com shifts
+        """
+        Calculate the offset from the previous frame
+
+        Parameters
+        ----------
+        coo
+        weights
+
+        Returns
+        -------
+
+        """
+        # shift calculated as snr weighted mean of individual CoM shifts
         offset = np.ma.average(coo - self.rcoo, 0, weights)
-        logging.debug('offset: (%.2f, %.2f)', *offset)
+        self.logger.debug('offset: (%.2f, %.2f)', *offset)
 
         # shift from previous frame
         shift = offset - self.offset
@@ -622,7 +663,7 @@ class StarTracker(LabelLogicMixin):
         if np.abs(ishift).sum():  # any shift greater or equal one pixel
             # shift the segmentation data
             ioff = np.round(offset).astype(int).data
-            logging.debug('shifting to offset: (%i, %i)', *ioff)
+            self.logger.debug('shifting to offset: (%i, %i)', *ioff)
             self.segm.data = ndimage.shift(self._original_data, ioff)
 
             # update pixel offset from original
@@ -641,7 +682,7 @@ class StarTracker(LabelLogicMixin):
         n = next(self.counter)
         weights = (weights / weights.max() / n)[:, None]
         inc = (vec - self.rvec) * weights
-        logging.debug('inc: %s', str(inc))
+        self.logger.debug('inc: %s', str(inc))
         self.rvec += inc
 
     # def get_shift(self, image):
@@ -651,59 +692,53 @@ class StarTracker(LabelLogicMixin):
     #     return shift
 
 
-    # def mask_outliers(self):
+    def best_for_tracking(self, image, close_cut=None, snr_cut=snr_cut, saturation=None):
+        """
+        Find stars that are best suited for centroid tracking based on the
+        following criteria:
+        """
+        too_bright, too_close, too_faint = [], [], []
+        msg = 'Stars: %s too %s for tracking'
+        if saturation:
+            too_bright = self.too_bright(image, saturation)
+            if len(too_bright):
+                self.logger.debug(msg, str(too_bright), 'bright')
+        if close_cut:
+            too_close = self.too_close(close_cut)
+            if len(too_close):
+                self.logger.debug(msg, str(too_close), 'close')
+        if snr_cut:
+            too_faint = self.too_faint(snr_cut)
+            if len(too_faint):
+                self.logger.debug(msg, str(too_faint), 'faint')
 
+        ignore = functools.reduce(np.union1d, (too_bright, too_close, too_faint))
+        ix = np.setdiff1d(np.arange(len(self.coords)), ignore)
+        if len(ix) == 0:
+            self.logger.warning('No suitable stars found for tracking!')
+        return ix
 
+    # def auto_window(self):
+    #     sdist_b = self.sdist[snr > self._snr_thresh]
 
+    def too_faint(self, image, threshold=snr_cut):
+        crude_snr = self.segm.snr(image)
+        return np.where(crude_snr < threshold)[0]
 
-        # def best_for_tracking(self, close_cut=None, snr_cut=_snr_cut, saturation=None):
-        #     """
-        #     Find stars that are best suited for centroid tracking based on the
-        #     following criteria:
-        #     """
-        #     too_bright, too_close, too_faint = [], [], []
-        #     msg = 'Stars: %s too %s for tracking'
-        #     if saturation:
-        #         too_bright = self.too_bright(self.image, saturation)
-        #         if len(too_bright):
-        #             logging.debug(msg, str(too_bright), 'bright')
-        #     if close_cut:
-        #         too_close = self.too_close(close_cut)
-        #         if len(too_close):
-        #             logging.debug(msg, str(too_close), 'close')
-        #     if snr_cut:
-        #         too_faint = self.too_faint(snr_cut)
-        #         if len(too_faint):
-        #             logging.debug(msg, str(too_faint), 'faint')
-        #
-        #     ignore = functools.reduce(np.union1d, (too_bright, too_close, too_faint))
-        #     ix = np.setdiff1d(np.arange(len(self.found)), ignore)
-        #     if len(ix) == 0:
-        #         logging.warning('No suitable stars found for tracking!')
-        #     return ix
-        #
-        # # def auto_window(self):
-        # #     sdist_b = self.sdist[snr > self._snr_thresh]
-        #
-        # def too_faint(self, threshold=_snr_cut):
-        #     crude_snr = self.flux / self.image[self.segm.data_masked.mask].std()
-        #     return np.where(crude_snr < threshold)[0]
-        #
-        # def too_close(self, threshold=_distance_cut):
-        #     # Check for potential interference problems from stars that are close together
-        #     # threshold = threshold or self.window
-        #     return np.unique(np.ma.where(self.sdist < threshold))
-        #     # return np.intersect1d(self.ix_loc, too_close)
-        #
-        # def too_bright(self, data, saturation, threshold=_saturation_cut):
-        #     # Check for saturated stars by flagging pixels withing 1% of saturation level
-        #     # TODO: make exact
-        #     lower, upper = saturation * (threshold + np.array([-1, 1]) / 100)
-        #     # TODO check if you can improve speed here - dont have to check entire array?
-        #     satpix = np.where((lower < data) & (data < upper))
-        #     b = np.any(np.abs(np.array(satpix)[:, None].T - self.found) < 3, 0)
-        #     w, = np.where(np.all(b, 1))
-        #     return w
+    def too_close(self, threshold=_distance_cut):
+        # Check for potential interference problems from stars that are close together
+        return np.unique(np.ma.where(self.sdist < threshold))
+
+    def too_bright(self, data, saturation, threshold=_saturation_cut):
+        # Check for saturated stars by flagging pixels withing 1% of saturation level
+        # TODO: make exact
+        lower, upper = saturation * (threshold + np.array([-1, 1]) / 100)
+        # TODO check if you can improve speed here - dont have to check entire array?
+
+        satpix = np.where((lower < data) & (data < upper))
+        b = np.any(np.abs(np.array(satpix)[:, None].T - self.coords) < 3, 0)
+        w, = np.where(np.all(b, 1))
+        return w
 
 
 
@@ -771,10 +806,17 @@ class SlotModeTracker(StarTracker):
     def from_image(cls, image, snr=3., npixels=7, edge_cutoff=3, deblend=False,
                    flux_sort=True, dilate=True, bad_pixel_mask=None):
 
-        #
+        # get the bad pixel mask
+        if bad_pixel_mask is None:
+            import slotmode
+            binning = np.divide(slotmode.slotDim, image.shape).round().astype(int)
+            bad_pixel_mask = slotmode.get_bad_pixel_mask(binning)
+
+        # init parent class
         tracker = super(SlotModeTracker, cls).from_image(
             image, snr, npixels, edge_cutoff, deblend, flux_sort, dilate, bad_pixel_mask)
 
+        # mask streaks
         tracker.bright = tracker.bright_star_labels(image)
         tracker.streaks = tracker.get_streakmasks(tracker.rcoo[tracker.bright - 1])
         return tracker
@@ -936,7 +978,7 @@ class GraphicalStarTracker(FitsCubeDisplay):  # TODO: Inherit from mpl Animation
             return image
 
     def set_frame(self, i, draw=True):
-        logging.debug('set_frame: %s', i)
+        self.logger.debug('set_frame: %s', i)
 
         i = FitsCubeDisplay.set_frame(self, i, False)
         # needs_drawing = self._needs_drawing()
