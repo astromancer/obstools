@@ -1,13 +1,12 @@
+
 from warnings import warn
 from collections import Callable
 
 import numpy as np
 from scipy.optimize import leastsq
-from scipy.ndimage.measurements import center_of_mass as CoM
-
-# from lmfit import minimize
 
 from recipes.list import find_missing_numbers
+from recipes.logging import LoggingMixin
 
 
 # from magic.string import banner
@@ -30,6 +29,7 @@ def constant(p, grid):
 # ****************************************************************************************************
 def circularGaussian(p, grid):
     """Circular Gaussian function for fitting star profiles."""
+    # relatively optimized for speed
     _, _, z0, a, d = p
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]
     r = (yxm * yxm).sum(0)  # squared radial distance from centre
@@ -51,7 +51,7 @@ def gaussian2D(p, grid):
     # yields faster computation times and better convergence results
     # at lower signal to noise ratios.
     _, _, z0, a, b, c, d = p
-    yxm = grid - p[1::-1, np.newaxis, np.newaxis] # yx order
+    yxm = grid - p[1::-1, np.newaxis, np.newaxis]  # yx order
     yxm2 = yxm * yxm
     return z0 * np.exp(-(a * yxm2[1] - 2 * b * yxm[0] * yxm[1] + c * yxm2[0])) + d
 
@@ -96,7 +96,7 @@ def no_nan(p):
 
 
 # ****************************************************************************************************
-class PSF(object):
+class PSF(LoggingMixin):
     """Class that implements the point source function."""
 
     def __init__(self, F, default_params, to_cache=None):
@@ -294,12 +294,15 @@ class CircularGaussianPSF(PSF):
 
     def integration_uncertainty(self, p, punc):
         """linearized propagation of uncertainty"""
-        # NOTE:  Error estimates for non-linear functions are biased on account of using a truncated series expansion.
+        # NOTE:  Error estimates for non-linear functions are biased on account
+        #  of using a truncated series expansion.
         _, _, z0, a, d = p
         _, _, z0v, av, dv = np.square(punc)
         return (np.pi / av) * np.sqrt((z0 / a) ** 2 * z0v + av)
 
-    int_err = integration_uncertainty
+    flux = integrate
+    fluxStd = integration_uncertainty
+    # int_err = integration_uncertainty
 
     def get_fwhm(self, p):
         a = p[-2]
@@ -417,7 +420,8 @@ class GaussianPSF(CircularGaussianPSF):
         detr = a * c - b * b
         return np.pi * np.sqrt(z0 * z0 / detr ** 3 * (0.25 * (c * c * av + a * a * cv) + b * b * bv) + z0v / detr)
 
-    int_err = integration_uncertainty
+    flux = integrate
+    fluxStd = integration_uncertainty
 
     def get_fwhma(self, p):
         """calculate fwhm from semi-major and semi-minor axes."""

@@ -5,14 +5,15 @@ multiprocessing
 """
 
 import inspect
+import logging
 import functools
 import itertools as itt
 
 import numpy as np
 import lmfit as lm  # TODO: is this slow??
 
-from recipes.string import minfloatformat
-from recipes.logging import LoggingMixin
+from recipes.pprint import minimalNumericFormat
+# from recipes.logging import LoggingMixin
 
 
 def plist(params):  # can import from lm_compat
@@ -41,7 +42,7 @@ def make_params(pnames, values=()):
     return params
 
 
-class lmMixin(LoggingMixin):
+class lmMixin():
     """
     Mixin class that implements the fit method for use by lmfit.
     """
@@ -50,30 +51,18 @@ class lmMixin(LoggingMixin):
 
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
-        # p0 = self.p0guess(data)
-
-        self.logger.debug('Guessed: (%s)' % ', '.join(map(minfloatformat, p0)))
+        self.logger.debug('Guessed: (%s)' % ', '.join(map(minimalNumericFormat, p0)))
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
 
         kws.setdefault('maxfev', 2000)
 
-        # from IPython import embed
-        # embed()
-
         # Fit PSF here
         # TODO: optimize: psf.wrs is probably expensive since it calls many python funcs
         # TODO: check if scipy.optimize.leastsq is faster with jacobian + col_deriv
 
-        # print('p0, data, grid, data_stddev\n', p0, data, grid, data_stddev)
-
-        try:
-            result = lm.minimize(self.objective, params, 'leastsq',
-                                 args=(data, grid, data_stddev), **kws)
-        except Exception as err:
-            from IPython import embed
-            embed()
-            raise err
+        result = lm.minimize(self.objective, params, 'leastsq',
+                             args=(data, grid, data_stddev), **kws)
 
         if result.success and self.validate(result.params):
             plsq = result.params
@@ -81,11 +70,11 @@ class lmMixin(LoggingMixin):
                                     for p in plsq.values()])
             fuckedup = np.allclose(p, p0)
             if fuckedup:  # model "converged" to the initial values
-                self.logger.warning('Fit did not converge!')
+                self.logger.warning('%s fit did not converge!', self)
                 self.logger.debug('input parameters identical to output')
 
-            self.logger.debug('Successfully fit %s function to stellar profile.',
-                              self)
+            self.logger.debug(
+                'Successfully fit %s function to stellar profile.', self)
             # gof = {m: getattr(result, m) for m in self.metrics}
             gof = [getattr(result, m) for m in self.metrics]
             return p, punc, gof
@@ -164,7 +153,7 @@ def lmModelFactory(base_, method_names, param_names):
                         namespace[mn] = convert_params(method)
             return type.__new__(meta, name, bases, namespace)
 
-    class lmCompatModel(base_, lmMixin, metaclass=lmConvertMeta):
+    class lmCompatModel(lmMixin, base_, metaclass=lmConvertMeta):
         params = make_params(param_names)
 
         def __reduce__(self):

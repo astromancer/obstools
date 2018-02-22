@@ -1,7 +1,7 @@
 import numpy as np
-from numpy.polynomial.polynomial import polyval2d
 
-class Model():
+
+class Model(object):
     """Mixin class for models"""
     def __call__(self, p, grid):
         raise NotImplementedError
@@ -41,11 +41,22 @@ class Model():
         return all([vf(p) for vf in self.validations])
 
 
-class PolyBG(Model):
-    def __call__(self, p, grid):
-        shape = int(np.size(p) // 2), -1
-        p = np.reshape(p, shape)
-        return polyval2d(*grid, p)
 
+class StaticGridMixin():
+    """
+    static grid mixin classfor performance gain when fitting the same model
+    repeatedly on the same grid for different data.
+    """
+    grid = None
 
+    def set_grid(self, data):
+        raise NotImplementedError('Derived class should implement this method.')
 
+    def residuals(self, p, data, grid=None):
+        # grid argument ignored
+        if grid is None:
+            if self.grid is None:
+                self.set_grid(data)
+            grid = self.grid
+
+        return super().residuals(p, data, grid)

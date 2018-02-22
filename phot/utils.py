@@ -1,6 +1,6 @@
-import ansi
-from ansi.progress import ProgressBar
-from ansi.table import Table
+import motley
+from motley.progress import ProgressBar
+from motley.table import Table
 from recipes.logging import LoggingMixin
 
 import numpy as np
@@ -80,7 +80,7 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
     # tags[:] = 'x' * ms
 
 
-    col_headers = ansi.rainbow(labels, bg=cols)
+    col_headers = motley.rainbow(labels, bg=cols)
     tt = Table(tags,  title='\n',  #title,   # title_props=None,
                col_headers=col_headers,
                frame=False, align='^',
@@ -116,14 +116,14 @@ def table_cdist(sdist, window, _print=False):
     if sdist.size > 1:
 
         # FIXME: MaskError: Cannot convert masked element to a Python int.
-        #/home/hannes/work/ansi/table.py in colourise(self, states, *colours, **kws)
+        #/home/hannes/work/motley/table.py in colourise(self, states, *colours, **kws)
         #     651         #
         #     652
-        # --> 653         propList = ansi.get_state_dicts(states, *colours, **kws)
+        # --> 653         propList = motley.get_state_dicts(states, *colours, **kws)
         #     654
-        #     655         # propIter = ansi._prop_dict_gen(*colours, **kws)
+        #     655         # propIter = motley._prop_dict_gen(*colours, **kws)
         #
-        # /home/hannes/work/ansi/core.py in get_state_dicts(states, *effects, **kws)
+        # /home/hannes/work/motley/ansi.py in get_state_dicts(states, *effects, **kws)
         #     132     nprops = len(propList)
         #     133     nstates = states.max() #ptp??
         # --> 134     istart = int(nstates - nprops + 1)

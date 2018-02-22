@@ -18,8 +18,8 @@ class Ephemeris():
         return self.t0 + E * self.P
 
     def phase(self, t):
-        phase = np.atleast_1d(t) / self.P
-        return phase - np.floor(phase[0])
+        phase = np.atleast_1d(t - self.t0) / self.P
+        return phase
 
     def phaseModulo1(self, t):
         return self.phase(t) % 1

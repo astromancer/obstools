@@ -1,12 +1,16 @@
+import io
 import os
 import urllib.request
 from datetime import datetime, timedelta
-import io
+from pathlib import Path
+
 from PIL import Image
 
 
 def get_suth_weather_png(path):
-    """Retrieve and save png image of Sutherland environmental monitoring page"""
+    """
+    Retrieve and save png image of Sutherland environmental monitoring page
+    """
     addy = 'http://suthweather.saao.ac.za/image.png'
     response = urllib.request.urlopen(addy)
     data = response.read()
@@ -18,6 +22,9 @@ def get_suth_weather_png(path):
         t -= timedelta(1)
 
     datestr = str(t.date()).replace('-', '')
-    filename = os.path.join(path, 'env' + datestr + '.png')
+    path = Path(path)
+    if not path.exists():
+        path.mkdir(parents=True)
+    filename = path / str('env%s.png' % datestr)
     print(filename)
     img.save(filename)

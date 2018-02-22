@@ -16,7 +16,7 @@ from recipes.iter import as_sequence, cycleN
 from recipes.io import warn as Warn
 from recipes.dict import TransDict, SmartDict
 from recipes.meta import altflaggerFactory
-from ansi import banner
+from motley import banner
 
 # from decor import expose, profile
 # from decor.misc import unhookPyQt
@@ -48,6 +48,10 @@ def pick_handler(artist, event):
     if not len(artist):
         return False, {}
 
+    print('pick_handler', event.button)
+
+    # if event.button != 0
+
     mouse_position = (event.xdata, event.ydata)
     if None in mouse_position:
         return False, {}
@@ -55,12 +59,12 @@ def pick_handler(artist, event):
     pr = artist.get_pickradius()
     # NOTE: Can control individual pickability by making pickradius a sequence
     ep = artist.edge_proximity(mouse_position)
-    print(ep)
+    # print(ep)
     hit = ep < pr
     anyhit = np.any(hit)
 
     props = {'index': np.where(hit)} if anyhit else {}
-    print(props)
+    # print(props)
     return anyhit, props
 
 
@@ -155,8 +159,9 @@ class PropertyManager(dict):
     translator.add_vocab(dict(coords='offsets',
                               ls='linestyle',
                               lw='linewidth',
-                              w='width',
-                              h='height'))
+                              w='width',        # TODO: a, b, theta, θ
+                              h='height',
+                              r='radii'))
     # many to one mappings
     translator.many2one({('ec', 'color', 'colour', 'colours'):
                              'edgecolor',
@@ -304,8 +309,8 @@ class ApertureCollection(EllipseCollection):
         #  (self.coords.size // 2), their values will be cycled.
 
         # allow width / height to be set by radii keyword
-        if 'radii' in kws:
-            r = kws.pop('radii')
+        r = kws.pop('radii', kws.pop('r', None))
+        if r is not None:
             r = np.asarray(r)
             widths = 2 * r
             heights = 2 * r
@@ -345,6 +350,7 @@ class ApertureCollection(EllipseCollection):
         self._axes = None
 
     def __str__(self):
+        # FIXME: better repr with widths, heights, angles
         return '%s of shape %s' % (self.__class__.__name__, self.shape)
 
     # def __repr__(self):

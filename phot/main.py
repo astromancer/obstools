@@ -1,965 +1,534 @@
-# coding: utf-8
-#
-
-# TODO:
-# BAYESIAN !!
-# GUI - interactively show masks when hovering over stars.
-#     - sliders for r_sigma_star, r_sigma_sky
-#     - PSFFitInspector class that plots stellar profiles from posterior
-# TODO: for release
-# optional context manager with coloured progress bar
-
-# TODO: automatically figure out which is the target if name given and can be resolved to coordinates
-
-# profiling
-from decor.profiler.timers import Chrono, timer, timer_extra
-
-chrono = Chrono()
-# NOTE do this first so we can profile import times
-
-
-# import matplotlib as mpl
-# mpl.use('Agg')
-
-# standard library imports
-# import os
+# standard library
 import sys
+import os
+import time
 import ctypes
-# import inspect
+import shutil
 import socket
-# import pickle
+import inspect
 import logging
-import traceback
-import functools
-# import itertools as itt
-# from collections import OrderedDict
-# import threading
-import multiprocessing as mp
+import logging.config
+import logging.handlers
+import tempfile
+import itertools as itt
 from pathlib import Path
-# from functools import partial
-# from queue import Empty
-chrono.mark('Imports: std lib')
+from collections import defaultdict
+import multiprocessing as mp
+from multiprocessing.managers import SyncManager  # , NamespaceProxy
 
 # ===============================================================================
-# Check input file
+# Check input file | doing this before all the slow imports
 fitsfile = sys.argv[1]
 fitspath = Path(fitsfile)
 path = fitspath.parent
-if not fitspath.exists:
+if not fitspath.exists():
     raise IOError('File does not exist: %s' % fitsfile)
 
+# execution time stamps
+from motley.profiler.timers import Chrono, timer_extra
 
-# related third party imports
-# numeric tools
+chrono = Chrono()
+chrono.mark('start')
+
+# ===============================================================================
+# related third party libs
 import numpy as np
-from scipy.spatial.distance import cdist
-# astronomy / photometry libs
 import astropy.units as u
-from photutils.detection import detect_threshold
-from photutils.segmentation import detect_sources
-from photutils import EllipticalAperture, CircularAnnulus
-# monitoring libs
-# import psutil
-# ploting
-# import matplotlib.pyplot as plt
-
-import matplotlib.pyplot as plt
-# plt.ion()
+# from joblib import Parallel, delayed
+from joblib.pool import MemmappingPool
+import more_itertools as mit
 
 chrono.mark('Imports: 3rd party')
 
-# ===============================================================================
 # local application libs
-import ansi
-from recipes.misc import is_interactive
-from recipes.array import ndgrid
-# from recipes.iter import chunker
-from recipes.dict import AttrDict
-from recipes.parallel.synched import SyncedCounter, SyncedArray
-from recipes.parallel.pool import ConservativePool
-# from recipes.logging import catch_and_log       #, LoggingMixin
-is_interactive = is_interactive()
+from recipes.interactive import is_interactive
+from recipes.parallel.synced import SyncedCounter
+from recipes.logging import ProgressLogger
 
+import slotmode
+from slotmode.vignette import Vignette2DCross
+# from slotmode import get_bad_pixel_mask
+# * #StarTracker, SegmentationHelper, GraphicalStarTracker
+#
 from obstools.fastfits import FitsCube
-from obstools.phot.find.trackers import StarTracker
+from obstools.phot.trackers import SlotModeTracker, estimate_max_shift
+from obstools.modelling import ImageModeller, AperturesFromModel, make_shared_mem
+from obstools.modelling.bg import Poly2D
+from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
+from obstools.phot import log  # listener_process, worker_init, logging_config
+from obstools.phot.proc import FrameProcessor, TaskExecutor
 
-# from obstools.modelling import ModelDb, ImageModeller
-from obstools.phot.diagnostics import FrameDisplay
-from obstools.phot.utils import progressFactory, table_coords, table_cdist
+# from motley.printers import func2str
 
-# profiler = profile()
 from IPython import embed
+
 chrono.mark('Import: local libs')
-
-
-# Logging setup
-# TODO: move to module __init__.py
-# ===============================================================================
-# Decide how to log based on where we're running
-if socket.gethostname().startswith('mensa'):
-    plot_diagnostics = False
-    print_progress = False
-    log_progress = True
-else:
-    plot_diagnostics = True  # True
-    print_progress = True
-    log_progress = False
-
-if is_interactive:  # turn off logging when running interactively (debug)
-    from recipes.interactive import exit_register
-
-    log_progress = print_progress = False
-    monitor_mem = False
-    monitor_cpu = False
-    # monitor_qs = False
-else:
-    from atexit import register as exit_register
-    from recipes.io.tracewarn import warning_traceback_on
-
-    # check_mem = True            # prevent excecution if not enough memory available
-    monitor_mem = False#True
-    monitor_cpu = False#True  # True
-    # monitor_qs = True  # False#
-
-    # setup warnings to print full traceback
-    warning_traceback_on()
-    logging.captureWarnings(True)
-
-# print section timing report at the end
-exit_register(chrono.report)
-
-# ===============================================================================
-# create directory for logging / monitoring data to be saved
-logpath = fitspath.with_suffix('.log')
-if not logpath.exists():
-    logpath.mkdir()
-
-# create directory for figures
-if plot_diagnostics:
-    figpath = fitspath.with_suffix('.figs')
-    if not figpath.exists():
-        figpath.mkdir()
-
-# create logger with name 'phot'
-logbase = 'phot'
-lvl = logging.DEBUG
-logger = logging.getLogger(logbase)
-logger.setLevel(lvl)                    # set root logger's level
-logger.propagate = False
-
-
-# create file handler which logs event debug messages
-logfile = str(logpath / 'phot.log')
-fh = logging.FileHandler(logfile, mode='w')
-fh.setLevel(lvl)
-
-# create console handler with a higher log level
-# NOTE: this will log to both file and console
-logerr = str(logpath / 'phot.log.err')
-# ch = logging.FileHandler(logerr, mode='w')
-ch = logging.StreamHandler()
-ch.setLevel(logging.ERROR)
-
-# ch
-
-# class MyFilter(object):
-#     def __init__(self, level):
-#         self.__level = level
-#
-#     def filter(self, logRecord):
-#         return logRecord.levelno <= self.__level
-
-
-# def fuckyou(logRecord):
-#     return logRecord.levelno <= logging.ERROR
-# ch.addFilter(MyFilter(logging.ERROR))
-
-
-
-# create formatter and add it to the handlers
-fmt = '{asctime:<23} - {name:<32} - {process:5d}|{processName:<17} - {levelname:<10} - {message}'
-# space = (23, 32, 5, 17, 10)
-# indent = sum(space) * ' '
-formatter = logging.Formatter(fmt, style='{')
-fh.setFormatter(formatter)
-ch.setFormatter(formatter)
-
-# add the handlers to the logger
-logger.addHandler(fh)
-logger.addHandler(ch)
-
-#
-ModelDb.basename = logbase
-
-# ===============================================================================
-if monitor_mem or monitor_cpu:
-    mon_mem_file = logpath / 'phot.mem.dat'
-    mon_cpu_file = logpath / 'phot.cpu.dat'
-    mon_q_file = logpath / 'phot.q.dat'
-
-# Start process monitors if needed
-if monitor_cpu:  # TODO: monitor load???
-    from recipes.parallel.utils import monCPU
-
-    # start cpu performance monitor
-    mon_cpu_alive = mp.Event()
-    mon_cpu_alive.set()  # it's alive!!!!
-    monproc_cpu = mp.Process(name='cpu monitor',
-                             target=monCPU,
-                             args=(mon_cpu_file, 0.1, mon_cpu_alive),
-                             daemon=True  # will not block main from exiting
-                             )
-    monproc_cpu.start()
-
-    @exit_register
-    def stop_cpu_monitor():
-        # stop cpu performance monitor
-        mon_cpu_alive.clear()
-        # monproc_cpu.join()
-        # del monproc_cpu
-
-        # atexit.register(stop_cpu_monitor)
-
-if monitor_mem:
-    from recipes.parallel.utils import monMEM
-
-    # start memory monitor
-    mon_mem_alive = mp.Event()
-    mon_mem_alive.set()  # it's alive!!!!
-    monproc_mem = mp.Process(name='memory monitor',
-                             target=monMEM,
-                             args=(mon_mem_file, 0.5, mon_mem_alive),
-                             daemon=True  # will not block main from exiting
-                             )
-    monproc_mem.start()
-
-    @exit_register
-    def stop_mem_monitor():
-        # stop memory monitor
-        mon_mem_alive.clear()
-        # monproc_mem.join()
-        # del monproc_mem
-
-
-        # atexit.register(stop_mem_monitor)
-chrono.mark('Setup')
-
-# ===============================================================================
-# @chrono.timer
-# def init_shared_memory(N, Nstars, Naps, Nfit):
-#     global modlr, apData
-#
-#     # NOTE: You should check how efficient these memory structures are.
-#     # We might be spending a lot of our time synching access??
-#
-#     # Initialize shared memory with nans...
-#     SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
-#
-#     apData = AttrDict()
-#     apData.bg = SyncedArray(shape=(N, Nstars))
-#     apData.flux = SyncedArray(shape=(N, Nstars, Naps))
-#     # FIXME: efficiency - don't need all the modeldb stuff if you are saving these here
-#     apData.sigma_xy = SyncedArray(shape=(N, 2))      #TODO: for Nstars (optionally) ???
-#     # apData.rsky = SyncedArray(shape=(N, 2))
-#     # apData.theta = SyncedArray(shape=(N,))
-#
-#     # cog_data = np.empty((N, Nstars, 2, window*window))
-#
-#     mdlr.init_mem(N, Nfit)
-
 # ===============================================================================
 
-# TODO: move to separate module
-# TODO: make picklable
+# class SyncedProgressLogger(ProgressLogger):
+#     def __init__(self, precision=2, width=None, symbol='=', align='^', sides='|',
+#                  logname='progress'):
+#         ProgressLogger.__init__(self, precision, width, symbol, align, sides, logname)
+#         self.counter = SyncedCounter()
 
 
-def trackerFactory(how='centroid 5 brightest'):
+# TODO: colourful logs - like daquiry / technicolor
+# TODO: python style syntax highlighting for exceptions in logs ??
 
-    return StarTracker
+__version__ = 3.14519
 
-    # # if not track and how == 'fit':
-    # #     # NOTE: this is SHIT, because the convergence with least squares depends most sensitively
-    # #     # on positional params. should only be a problem if we expect large shifts
-    # #     track = True
-    #
-    # # TODO: 'centroid 5 brightest stars in fixed 25 pix window over median bg'
-    # # TODO: 'centroid 5 best stars in 25 pix window over median bg'
-    # # TODO: 'daofind'
-    # # TODO: 'marginal fit'
-    # # TODO: 'ofilter'
-    # # etc:
-    # # if 'best' replace bad stars
-    # # if 'brightest', remove and warn
-    #
-    # tracking = True
-    # descript = set(how.lower().split())
-    #
-    # # resolve nrs
-    # nrs = list(filter(str.isdigit, descript))
-    # descript -= set(nrs)
-    # if len(nrs) == 1:
-    #     nrs = list(range(int(nrs[0])))  # n brightest stars
-    # elif 'all' in descript:
-    #     nrs = list(range(Nstars))
-    #     descript -= set(('all'))
-    #
-    # descript -= set(['brightest', 'stars'])  # this is actually redundant, as brightest are default
-    # # 'centroid 5' understood as 'centroid 5 brightest stars'
-    #
-    # # embed()
-    #
-    # # resolve how to track
-    # clsDict = {'detect': SourceFinder,
-    #            'fit': StarTrackerFit, }
-    #
-    # for kind in clsDict.keys():
-    #     if kind in descript:
-    #         descript -= {kind}
-    #         cls = clsDict[kind]
-    #         break
-    # else:
-    #     # say 'using default' else for-else pretentious
-    #     cls = (StarTrackerFixedWindow, StarTracker)[tracking]
-    #
-    #     # resolve the position locator function
-    #     fDict = {'centroid': CoM,
-    #              'com': CoM}  # TODO: add other trackers
-    #
-    #     # resolve the tracking function.
-    #     for name in fDict.keys():
-    #         if name in descript:
-    #             descript -= {name}
-    #             cfunc = fDict[name]
-    #             break
-    #     else:
-    #         # say 'using default' else for-else pretentious
-    #         cfunc = CoM  # Default is track by centroid
-    # bgfunc = np.median
-    #
-    # if len(descript):
-    #     raise ValueError('Finder: %s not understood' % str(tuple(descript)))
-    #
-    # return cls, nrs, cfunc, bgfunc
-    #
-    # # if how == 'detect':
-    # #     return SourceFinder, None
-    #
-    # # if how in [None, 'fit']:  # + modelDb.gaussians:
-    # #     return StarTrackerFit
-    #
-    # # if how.startswith('cent'):
-    # #     how = 'med'  # centroid with median bg subtraction
-    # #
-    # # if how.startswith('med'):
-    # #     bgfunc = np.median
-    # #
-    # # elif how.startswith('mode'):  # return partial(fixed_window_finder, mode)
-    # #     from scipy import stats
-    # #
-    # #     def mode(data):
-    # #         return stats.mode(data, axis=None).mode
-    # #
-    # #     bgfunc = mode
-    # # else:
-    # #     raise ValueError('Unknown finder option %r' % how)
-    #
-    # # cls = (StarTrackerFixedWindow, StarTrackerMovingWindow)[track]
-    # # #cls.bgfunc = bgfunc
-    # # return cls, bgfunc
-
-
-
-
-
-
-
-def plot_max_shift(image_max, seg_image, filename=None):
-    outlines = seg_image.outline_segments(True)
-    shiftplot = FrameDisplay(image_max, Rcoo)
-    shiftplot.mark_found('rx')
-    shiftplot.add_windows(tracker.window, preFind.sdist)
-    shiftplot.add_detection_outlines(outlines)
-    shiftplot.figure.canvas.set_window_title('Envelope')
-    # shiftplot.ax.set_title()
-    if filename:
-        shiftplot.ax.figure.savefig(filename)
-
-
-
-# ===============================================================================
-
-
-def coo_within_window(p):
-    w2 = np.divide(window, 2)
-    return np.all(np.abs(p[:2] - w2) < w2)      # center coordinates outside of grid
-
-
-
-def catch_and_log(func):
-    """Decorator that catches and logs errors instead of raising"""
-
-    @functools.wraps(func)
-    def wrapper(*args, **kws):
-        try:
-            answer = func(*args, **kws)
-            return answer
-        except Exception as err:
-            logger.exception('\n')  # logs full trace by default
-
-    return wrapper
-
-
-
-
-
-# @catch_and_log
-def frame_proc(incoming):
-    """Process frame i"""
-    i, data = incoming
-    data_std = np.ones_like(data)        # FIXME:
-
-
-
-    # for k in range(Naps):
-
-        # apData.bg[i, j] = flux_bg_pp
-
-        #
-        # for k in range(Naps):
-        #     apData.flux[i, j, k] = do_phot(udata, photmasks[j], cxx[j], rxy[k], theta, flux_bg_pp)
-    #
-    show_progress()
-
-
-
-
-
-def per_frame(t, N, Nstars, Naps):
-    t0 = t / N
-    t1 = t0 / Nstars
-    t2 = t1 / Naps
-    print('\t\t%2.4f sec per frame\n'
-          '\t\t%2.4f sec per star\n'
-          '\t\t%2.4f sec per aperture\n' % (t0, t1, t2))
-
-
-
-def get_saturation(h):
-    try:
-        import pySHOC.readnoise as shocRNT
-        return shocRNT.get_saturation(h)
-    except ValueError as err:
-        logging.info('NOT SHOC DATA')
-        logging.debug(str(err))
-
-def update_aps(aps, i):
-    aps.coords = coords[i]
-
-
-
-# ===============================================================================
-chrono.mark('Class/func defs')
-
-
-
-# ===============================================================================
-# MAIN SETUP
-# ===============================================================================
-# TODO: functions / classes here...
-
-
-import argparse
-parser = argparse.ArgumentParser(description='Generic photometry routines')
-parser.add_argument('fitsfile', nargs=1, type=str, help='filename')
-parser.add_argument('-n', '--subset', type=int,
-                    help='Data subset to load.  Useful for testing/debugging.')
-parser.add_argument('--plot', action='store_true', default=True,
-                    help='Do plots')
-parser.add_argument('--no-plots', dest='plot', action='store_false',
-                    help="Don't do plots")
-parser.add_argument('--track', default='centroid', type=str,
-                    help='How to track stars')
-# parser.add_argument('--window', default=20, type=int,
-#                     help='Tracking window size')
-parser.add_argument('--ap', nargs='*', default=['circular fixed 0.5:10:0.5 pix'],
-                    type=str, help='Aperture description')
-
-args = parser.parse_args(sys.argv[1:])
-
-
-if not args.plot:
-    plot_diagnostics = False
-
-# read data directly from disc using memory map
-ff = FitsCube(fitsfile)
-
-N = min((args.subset or len(ff)), len(ff)) 	#min(20000, len(ff))
-N_max_stars = 20     # Only the `N_max_stars` brightest stars will be processed
-
-# sub-framing params
-# window = args.window
-# create xy grid
-Grid = np.indices(ff.ishape)  # grid for full frame
-
-
-
-# Star Finding Setup
-# =================================================================================================
-# NOTE: trackhow can be one of ('median', 'mode', 'centroid', 'fit'), or one of the psf models
-# eg. CircularGaussianPSF.  If 'fit', the best fitting model's coordinates will be used (as
-# judged by ---- goodness-of-fit)
-# TODO: check out photutils finders - marginal distribution fitting. 'ofilter'
-# TODO: daofind??
-
-
-# use location of reference star (first k frames mean) as starting point for search
-# NOTE: using coordinates of the previous (i-1) frames as a starting point might be a better
-# choice, especially if the stars move from one frame to the next.  This
-# however will require *sequential* iteration over the frames which will
-# require some magic to multiprocess # TODO
-# TODO: One might be able to tell which option will be the preferred one
-# by looking at the maximum frame-to-frame across the CCD array.
-
-# select Nmean frames randomly from first 100
-Nmean = 10
-ix = np.random.randint(0, 100, Nmean)
-preImage = np.median(ff[:Nmean], 0)
-
-# Get tracker
-TrackerClass, ix_loc_rqst, centreFunc, bgFunc = trackerFactory(args.track)
-
-# init the tracker
-tracker = TrackerClass.from_image(preImage, dilate=3, snr=3, npixels=7,
-                                  deblend=True)
-                                 # bad_pixel_mask=bad_pixel_mask)
-
-# check which stars are good for centroid tracking
-satlvl = get_saturation(ff.header)
-ix_loc = preFind.best_for_tracking(window, saturation=satlvl)
-tracker = TrackerClass(Rcoo, window, ix_loc, max_stars=N_max_stars,
-                      cfunc=centreFunc, bgfunc=bgFunc)
-ix_loc = tracker.ix_loc
-
-
-Nstars = min(len(tracker.rcoo), N_max_stars)
-
-
-
-
-
-
-# ix_scale = list(range(Nscale))  # brightest stars (since they are sorted)
-
-# Pre-diagnostics to help choose algorithmic parameters
-# Estimate max shift in pixels throughout run
-mxshift, max_image, seg_image_max = estimate_max_shift(ff, 100)
-large_shifts = np.any(mxshift > window)
-#TODO: cosmic ray flagging in the envelope??
-
-# =================================================================================================
-
-
-# Phot Setup
-# =================================================================================================
-# NOTE: ix_fit: Indices of stars to fit model psf to for psf photometry
-# NOTE: ix_scale: Indices of stars used to scale (stretch) the apertures for psf-guided aperture
-#       photometry.
-# NOTE: ix_loc: Indices of stars used to pinpoint the centre point of the apertures. All apertures
-#       will be located based on their relative position to these stars
-
-phot_opt = ['psf', 'aperture', 'core', 'cog', 'opt'] # TODO: Bayesian
-phothow = ['aperture']  #['psf']
-assert all(map(phot_opt.__contains__, phothow))
-aphow = ' '.join(args.ap)
-if 'psf' in phothow:
-    ix_fit = list(range(Nstars))  # TODO: GUI optionally on indexed stars only
-    # ix_loc = ix_scale = [ir]
-
-if 'aperture' in phothow:
-    # ix_fit = ix_loc[:1]     # TODO: GUI optionally on indexed stars only
-    ix_scale = ix_fit = ix_loc
-
-# build scaler
-ApScalerCls, sizes, unit = scalerFactory(aphow)
-Naps = len(sizes)
-if unit in ('"', 'pix'):
-    ix_fit, ix_scale = [], [] # HACK  ==> no fitting
-    # TODO: convert units
-
-# make sure we are fitting for the stars we are using for the scaling
-assert all(map(ix_fit.__contains__, ix_scale))
-
-Nfit = len(ix_fit)
-if not Nfit:
-    mdlrCls = FrameModellerBase
-else:
-    mdlrCls = FrameModeller
-
-# aperture params
-# =================================================================================================
-apscaler = ApScalerCls(Grid,  # Rcoo,
-                       r_sigma=sizes,
-                       rsky_sigma=(7.5, 15.))
-# Naps = 8
-# aps_scale_min, aps_scale_max = 1, 6     # scaling radii for apertures in units of sigma
-# aps_scale = np.linspace(aps_scale_min, aps_scale_max, Naps)
-# aps_scale = np.arange(1, Naps+1) * .5     #in units of sigma
-# Naps = len(aps_scale)
-
-# skyin, skyout = 4.5, 8.5  # in units of sigma
-# mask_within_sigma = 5.0  # mask other stars within this radius (in units of sigma) when doing photometry / fitting
-# rsky0 = np.multiply((skyin, skyout), sigma0)
-
-
-# Model Setup
-#  =================================================================================================
-modWindow = 20
-track_residuals = True
-metrics = ('aic', 'bic', 'redchi')
-modnames = ('CircularGaussianPSF', 'EllipticalGaussianPSF', 'ConstantBG')
-# TODO: models.psf.elliptical.gauss, models.psf.circular.gauss, models.bg.median
-
-modelDb = ModelDb(modnames)
-for model in modelDb.gaussians:
-     model.add_validation(coo_within_window) # FIXME: maybe better to check post facto
-
-# Pre fit to set default params # NOTE: pre-fitting even when psf phot not being done
-ansi.banner('Running Pre-fit')
-preModel = modelDb.db.EllipticalGaussianPSF()
-
-mdlr = FrameModeller(modelDb.models, modWindow, ix_fit, tracker, metrics=metrics)
-preParams = mdlr(preFind.found, window, preFind.image)
-mdlr.fallback = preParams
-#sigma_xy0, theta0 = apscaler.scale(*preParams[1:])
-
-# Init apertures
-# =================================================================================================
-# NOTE: when fixed apertures, currently have to init this class after pre_fit
-
-
-
-
-# print setup info
-# =================================================================================================
-# Print pre-calc information here
-print('\nFile: %s' % str(fitsfile))
-print('%i frames\nProcessing %s' % (len(ff), 'interactively' if is_interactive else N))
-
-# =================================================================================================
-# table: coordinates
-cxtbl = table_coords(Rcoo, ix_fit, ix_scale, tracker.ix_loc)
-# table: coordinate distances
-cdtbl = table_cdist(preFind.sdist, window)  # TODO: remove ansi when logging to file
-print('\n\nThe following stars have been found:')
-print(cxtbl)
-print(cdtbl)
-
-
-
-# info: maximal shift
-print('\nEstimated maximal shift = {}'
-      '\n                 window = {}\n'.format(mxshift, window))
-if large_shifts:
-    # TODO: enabled in green / only log if green
-    logger.warning('Estimated positional shift throughout run is %s > window %d. Tracking %sabled'
-                    %(mxshift, window, ('dis', 'en')[tracking]))
-
-
-
-#
-# def plot_frame(fmean, found, sdist, outfile=None):
-#     preplot = FrameDisplay(fmean, found)
-#     preplot.mark_found('rx')
-#     preplot.add_windows(window, sdist)
-#     preplot.figure.canvas.set_window_title('PrePlot')
-#     # preplot.ax.set_title()
-#     if outfile:
-#         preplot.ax.figure.savefig(outfile)
-#     return preplot
-
-def init_plot(filename, preFind, preModel, preParams, apscaler, outfile=None):
-    prePlotPath = figpath / 'found.png'
-
-    # p = mp.Process(target=plot_max_shift, args=(max_image, seg_image_max))
-    # p.start()
-    # if large_shifts:
-    plot_max_shift(max_image, seg_image_max)
-
-    xy = preFind.found[:, ::-1]
-
-    preplot = FrameDisplay(filename)
-    preplot.figure.canvas.set_window_title('PrePlot')
-    preplot.mark_found(xy.T, 'rx')
-    preplot.add_windows(xy, window, preFind.sdist)
-
-
-
-    # preplot = plot_frame(preFind.data, Rcoo, preFind.sdist)
-    preplot.ax.set_autoscale_on(False)
-    xyfound = preFind.found
-    preplot.add_aperture_from_model(preModel, preParams,
-                                    apscaler.r[-1], apscaler.rsky)
-    preplot.add_legend()
-
-    # child process will block here
-    plt.show()
-
-    # save figure
-    fig = preplot.ax.figure
-    fig.savefig(str(prePlotPath))
-    return fig
-
-
-# plot prefit diagnostics
-if plot_diagnostics:
-
-    # TODO legend!!!!!!
-    # TODO: gui features + display:
-    #     : draggable apertures + annotated ito sigma / pixels
-    #     : display params for current fits / multiple stars switcher
-    #     : mask display
-    #
-    #
-    job = mp.Process(target=do_preplot,
-                     args=(preFind, preModel, preParams, apscaler))
-    job.start()
-
-    # do_preplot(preFind, preModel, preParams, apscaler)
-
-
-
-print(Rcoo)
-# raise SystemExit
-
-# ===============================================================================
-chrono.mark('Pre-calc')
-
-
-# TODO: print info on cube
-# TODO: Error estimation
-# TODO: CoG!!!!
-
-# TODO: how costly is pickling
-# TODO: local variable lookups are much faster than global or built-in variable lookups:
-# the Python "compiler" optimizes most function bodies so that for local variables,
-# no dictionary lookup is necessary, but a simple array indexing operation is sufficient.
-# TODO: profile this shit!
-
-# ===============================================================================
-def loadframe(i):
-    # get i'th frame
-    return i, ff[i]
-
-
-# ===============================================================================
-@timer_extra(per_frame, N, Nstars, Naps)
-def MAIN():
-
-    # Initialize shared memory
-    init_shared_memory(N, Nstars, Naps, Nfit)
-
-    if print_progress:
-        bar.create(N)
-
-    # for chunk in chunker(range(N), 5000):
-    pool = ConservativePool(maxtasksperchild=100)  # maxtasksperchild=mxtpc
-    res = pool.map(frame_proc,
-                   map(loadframe, range(N)),
-                   chunksize=1)
-    pool.close()  # NOTE: this stops the worker handler!!
-    pool.join()
-
-    return res
-
-
-# ===============================================================================
-def run_profiled(n):  # SHOW Progress?
-    # from line_profiler import HLineProfiler
-    from decor.profiler import HLineProfiler
-    profiler = HLineProfiler()
-
-    # profiler.add_function(do_find)
-    # profiler.add_function(do_fit)
-    # profiler.add_function(do_bg_phot)
-    profiler.enable_by_count()
-
-    run_sequential_test(n)
-
-    profiler.print_stats()
-
-
-# ===============================================================================
-def run_memory_profiled(n):  # SHOW Progress?
-
-    from memory_profiler import show_results, LineProfiler as MLineProfiler
-    profiler = MLineProfiler()
-
-    # profiler.add_function(do_find)
-    # profiler.add_function(do_fit)
-    profiler.add_function(do_bg_phot)
-    profiler.add_function(do_phot)
-    profiler.enable_by_count()
-
-    run_sequential_test(n)
-
-    show_results(profiler)
-
-
-# ===============================================================================
-@timer_extra(per_frame, N, Nstars, Naps)
-def run_sequential_test(n):
-    if print_progress:
-        bar.create(n * Nstars * Naps)
-
-    res = []
-    for i in range(n):
-        res.append(frame_proc((i, ff[i])))
-
-    return res
-
-
-@timer_extra(per_frame, N, Nstars, Naps)
-def run_pool_test(n):
-    if print_progress:
-        bar.create(n * Nstars * Naps)
-
-    pool = mp.Pool()  # maxtasksperchild=mxtpc
-    pool.map(frame_proc, map(loadframe, range(N)), chunksize=1)
-    pool.close()
-    pool.join()
-
-
-# def null_func(*args):chrono
+# class MyManager(Manager):
 #     pass
 
+SyncManager.register('Counter', SyncedCounter)
 
 
-def finalise():
-    locData = AttrDict(
-        # tracker=tracker,
-                       window=tracker.window,
-                       ir=tracker.ir,
-                       rcoo=tracker.Rcoo,
-                       rvec=tracker.Rvec,
-                       coords=coords,      # FIXME: just let this live inside the tracker class instead
-                       find_with_fit=isinstance(tracker, StarTrackerFit)
-                       )
+# MyManager.register('ProgressBar', SyncedProgressLogger)
+
+def Manager():
+    m = SyncManager()
+    m.start()
+    return m
 
 
-    # Normalise residual sum data
-    for model in modelDb.models:
-        modelDb.resData[model] /= N
+def task(size, maxfail=None):
+    # a little task factory
+    counter = manager.Counter()
+    fail_counter = manager.Counter()
+    return TaskExecutor(size, counter, fail_counter, maxfail)
 
-    apData.scale = apscaler.r
 
-    chrono.mark()
+# def lm_extract_values_stderr(pars):
+#     return np.transpose([(p.value, p.stderr) for p in pars.values()])
+
+
+if __name__ == '__main__':
+    # def main():
+    chrono.mark('Main start')
+
+    import argparse
+
+    ncpus = os.cpu_count()
+
+    # parse command line args
+    parser = argparse.ArgumentParser('phot',  # fromfile_prefix_chars='@',
+                                     description='Parallelized generic time-series photometry routines')
+    parser.add_argument('fitsfile', type=FitsCube,
+                        help='filename of fits data cube to process.')
+    # TODO: process many files at once
+    parser.add_argument(
+            '-n', '--subset', nargs='*', type=int,
+            help='Data subset to load. Useful for testing/debugging. If not given, '
+                 'entire cube will be processed. If a single integer, first `n` '
+                 'frames will be processed. If 2 integers `n`, `m`, all frames '
+                 'starting at `n` and ending at `m-1` will be processed.')
+    parser.add_argument(
+            '-j', '--nprocesses', type=int, default=ncpus,
+            help='Number of worker processes running concurrently in the pool.'
+                 'Default is the value returned by `os.cpu_count()`: %i.'
+                 % ncpus)
+    parser.add_argument(
+            '-k', '--clobber', action='store_true',
+            help='Whether to resume computation, or start afresh. Note that the '
+                 'frames specified by the `-n` argument will be recomputed if '
+                 'overlapping with previous computation irrespective of the '
+                 'value of `--clobber`.')
+
+    parser.add_argument(
+            '-a', '--apertures', default='circular',
+            choices=['c', 'cir', 'circle', 'circular',
+                     'e', 'ell', 'ellipse', 'elliptical'],
+            help='Aperture specification')
+    # TODO: option for opt
+
+
+    # plotting
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--plot', action='store_true', default=True,
+                        help='Do plots')
+    group.add_argument('--no-plots', dest='plot', action='store_false',
+                        help="Don't do plots")
+
+    parser.add_argument('--verbose', '-v', action='count')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s %s')
+    args = parser.parse_args(sys.argv[1:])
+
+
+    # data
+    cube = args.fitsfile
+
+    # check / resolve options
+    clobber = args.clobber
+    # subset of frames for compute
+    if args.subset is None:
+        subset = (0, len(cube))
+    elif len(args.subset) == 1:
+        subset = (0, min(args.subset[0], len(cube)))
+    elif len(args.subset) == 2:
+        subset = args.subset
+    else:
+        raise ValueError('Invalid subset: %s' % args.subset)
+    # number of frames to process
+    subsize = np.ptp(subset)
+
+    # ===============================================================================
+    # Decide how to log based on where we're running
+
+    if socket.gethostname().startswith('mensa'):
+        plot_lightcurves = plot_diagnostics = False
+        print_progress = False
+        log_progress = True
+    else:
+        plot_lightcurves = plot_diagnostics = args.plot
+        print_progress = True
+        log_progress = False
+
+    if is_interactive:  # turn off logging when running interactively (debug)
+        from recipes.interactive import exit_register
+
+        log_progress = print_progress = False
+        monitor_mem = False
+        monitor_cpu = False
+        # monitor_qs = False
+    else:
+        from atexit import register as exit_register
+        from recipes.io.utils import WarningTraceback
+
+        # check_mem = True            # prevent execution if not enough memory available
+        monitor_mem = False  # True
+        monitor_cpu = False  # True  # True
+        # monitor_qs = True  # False#
+
+        # setup warnings to print full traceback
+        wtb = WarningTraceback()
+
+    logging.captureWarnings(True)
+
+    # print section timing report at the end
+    exit_register(chrono.report)
+
+    # ===============================================================================
+    # create folder output data to be saved
+    resultsPath = fitspath.with_suffix('.phot')
+    # create logging directory
+    logPath = resultsPath / 'logs'
+    if not logPath.exists():
+        logPath.mkdir(parents=True)
+
+    # create directory for plots
     if plot_diagnostics:
-        try:
-            from matplotlib import pyplot as plt
-            from obstools.phot.diagnostics import diagnostic_figures
+        figPath = resultsPath / 'plots'
+        if not figPath.exists():
+            figPath.mkdir()
 
-            diagnostic_figures(locData, apData, modelDb, fitspath)
-            chrono.mark('Diagnostics')
+    # setup logging processes
+    logQ = mp.Queue()  # The logging queue for workers
+    # TODO: open logs in append mode if resume
+    config_main, config_listener, config_worker = log.config(logPath, logQ)
+    logging.config.dictConfig(config_main)
+    # create log listner process
+    logger = logging.getLogger('setup')
+    logger.info('Creating log listener')
+    stop_logging_event = mp.Event()
+    logListner = mp.Process(target=log.listener_process, name='logListener',
+                            args=(logQ, stop_logging_event, config_listener))
+    logListner.start()
+    logger.info('Log listener active')
+    #
+    chrono.mark('Logging setup')
 
-            # NOTE: display with
-            # allcoords = coords[None,:] + Rvec[:,None]
-            # fig, ax = plt.subplots()
-            # FitsCubeDisplay(ax, fitsfile, allcoords[...,::-1])
+    # ===============================================================================
+    # Image Processing setup
 
-        except Exception as err:
-            # exc_info = sys.exc_info()
-            traceback.print_exc()
+    # FIXME: any Exception that happens below will stall the log listner indefinitely
 
-    # llcs = np.round(loc - window/2).astype(int)[:,None,:] + Rvecw
-    # fitcoo = psf_par[..., 1::-1]
-    # llcs + fitcoo      #fit coordinates for all stars
+    n = len(cube)
+    frame0 = cube[0]
 
-    # TODO: integrate with time data
-    # t0 = time.time()
-    from recipes.io import save_pickle
+    # create flat field from sky data
+    # flat = slotmode.make_flat(cube[2136:])
+    # image /= flat
+    # TODO: save this somewhere so it's quicker to resume
+    # TODO: same for all classes here
 
-    savepath = fitspath.with_suffix('.phot')
-    timer(save_pickle)(savepath, AttrDict(filename=fitsfile,
-                                          locData=locData,
-                                          apData=apData,
-                                          modelDb=modelDb))
+    # create the global background model
+    # mdlBG = Poly2D(1, 1)
+    # p0bg = np.ones(mdlBG.npar)  # [np.ones(m.nfree) for m in mdlBG.models]
+    # edge_cutoffs = slotmode.get_edge_cutoffs(image)
+    # border = make_border_mask(image, edge_cutoffs)
+    # mdlBG.set_mask(border)
 
-    # with savepath.open('wb') as sv:
-    #     pickle.dump(,
-    #                 sv)
-    # took('Saving data', time.time() - t0)
+    # for SLOTMODE: fit median cross sections with piecewise polynomial
+    # orders_x, orders_y = (1, 5), (4, 1, 5)
+    # bpx = np.multiply((0, 0.94, 1), image.shape[1])
+    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
+    # #orders_y, bpy = (3, 1, 5), (0, 3.5, 17, image.shape[0]) # 0.15, 0.7
+    # mdlBG = Vignette2DCross(orders_x, bpx, orders_y, bpy)
 
+    # TODO: try fit for the breakpoints ??
+    orders_x, orders_y = (5, 1), (4, 1, 5)
+    # bpx = np.multiply((0, 0.94, 1), image.shape[1])
+    sy, sx = cube.ishape
+    bpx = (0, 10, sx)
+    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
+    bpy = (0, 10, 37.5, sy)
+    mdlBG = Vignette2DCross(orders_x, bpx, orders_y, bpy)
+    mdlBG.set_grid((sy, sx))
 
+    # bad pixels
+    bad_cols = [59, 295]
+    bad_pix = [(22, 262), (0, 96), (1, 96), (2, 96), (3, 96)]
+    #  Some SLOTMODE cubes have all 0s in first column for some obscure reason
+    if np.median(frame0[:, 0]) / np.median(cube[0]) < 0.2:
+        bad_cols.append(0)
+    #
+    bad_pixel_mask = slotmode.make_bad_pixel_mask(frame0, bad_pix, bad_cols)
 
-ProgressPrinter, ProgressLogger = progressFactory(log_progress, print_progress)
+    # init the tracker
+    # TODO: SlotModeTracker.from_cube(cube, ncomb, *args)
+    tracker, image, p0bg = SlotModeTracker.from_cube_segment(cube, 25, 100,
+                                                             mask=bad_pixel_mask,
+                                                             bgmodel=mdlBG,
+                                                             snr=(10, 3),
+                                                             dilate=(3,))
 
-progress = SyncedCounter(0)
-bar = ProgressPrinter(symbol='=', properties={'bg': 'c', 'txt': 'r'})
-barlog = ProgressLogger(symbol='=', width=50, sigfig=0, align=('<', '<'))
-barlog.create(N)
+    # estimate maximal positional shift of stars by running detection loop on
+    # maximal image of 1000 frames evenly distributed across the cube
+    mxshift, maxImage, segImx = estimate_max_shift(cube, 1000, bad_pixel_mask,
+                                                   snr=3)
 
-def show_progress():
-    progress.inc()
-    state = progress.value()
-    bar.progress(state)
-    barlog.progress(state)
-
-# stop here if in ipython
-# if is_interactive:
-    # init_shared_memory(N, Nstars, Naps, Nfit)
-    #raise SystemExit
-
-#TODO: estimate total excecution time
-# Main work here
-try:
-    # MAIN()
-    # init_shared_memory(N, Nstars, Naps, Nfit)
-    a = run_sequential_test(N)
-
-except Exception as err:
-    print('Oh SHIT! Something went wrong...')
-    traceback.print_exc()
-
-    embed()
-    raise
-
-if is_interactive:
-    logging.info('Interactive mode: SystemExit')
-    raise SystemExit
-
-finalise()
-
-#
-
-
-# run_pool_test(N)
-
-# from IPython import embed
-# embed()
-# raise SystemExit
-
-# try:
-# run_sequential_test(10)
-# run_profiled()
-#run_memory_profiled()
-#
-#profiler.print_stats()
-#raise SystemExit
-# except Exception as err:
-# traceback.print_exc()
+    # TODO: plot some initial diagnostics
+    # image, detections, rcoo, bad_pixels
 
 
+    # TODO: for slotmode: if stars on other amplifiers, can use these to get sky
+    # variability and decorellate TS
 
-# embed()
+    # TODO: set p0ap from image
+    sky_width, sky_buf = 5, 0.5
+    if args.apertures.startswith('c'):
+        p0ap = (3,)
+    else:
+        p0ap = (3, 3, 0)
 
-# if monitor_qs:
-# try:
-# from obstools.phot.diagnostics import plot_q_mon
-# plot_q_mon(mon_q_file, save=False)
-# except Exception as err:
-# traceback.print_exc()
 
-# if monitor_cpu and monitor_mem:
-# from obstools.phot.diagnostics import plot_monitor_data
-# plot_monitor_data(mon_cpu_file, mon_mem_file)
-#
+    # create psf models
+    # models = EllipticalGaussianPSF(),
+    models = ()
+    # create image modeller
+    mdlr = ImageModeller(tracker.segm, models, mdlBG,
+                         use_labels=tracker.use_labels)
+
+    # create object that generates the apertures from modelling results
+    cmb = AperturesFromModel(3, (8, 12))
+
+    chrono.mark('Pre-compute')
+
+    # ===============================================================================
+    # create shared memory
+    # aperture positions / radii / angles
+    nstars = tracker.nsegs
+    ngroups = tracker.ngroups
+    naps = 1  # number of apertures per star
+
+    # create frame processor
+    proc = FrameProcessor()
+    # TODO: folder structure for multiple aperture types circular / elliptical
+    proc.init_mem(n, nstars, ngroups, naps, resultsPath, clobber=clobber)
+
+    # modelling results
+    mdlr.init_mem(n, nstars, resultsPath / 'modelling', clobber=clobber)
+    # BG residuals
+    bgResiduPath = resultsPath / 'cube-bg'
+    bgshape = (n,) + cube.ishape
+    residu = make_shared_mem(bgResiduPath, bgshape, np.nan, clobber=clobber)
+
+    # aperture parameters
+    # cmb.init_mem(n, resultsPath / 'aps.par', clobber=clobber)
+    optStatPath = resultsPath / 'opt.stat'
+    opt_stat = make_shared_mem(optStatPath, (n, tracker.ngroups), np.nan, clobber=clobber)
+
+    # tracking data
+    cooFile = resultsPath / 'coords'
+    coords = make_shared_mem(cooFile, (n, 2), np.nan, clobber=clobber)
+
+    chrono.mark('Memory alloc')
+
+    # ===============================================================================
+    # main compute
+    # synced counter to keep track of how many jobs have been completed
+    manager = Manager()
+
+    # task executor  # TODO: there is probably a better one in joblib
+    Task = task(subsize)
+    worker = Task(proc.process)
+
+    chunks = mit.divide(args.nprocesses, range(*subset))
+    chunks2 = chunks.copy()
+    rngs = mit.pairwise(next(zip(*chunks2)) + (subset[1],))
+
+
+    def proc_(irng, data, residu, coords, opt_stat,
+              tracker, mdlr,
+              p0bg, p0ap, sky_width, sky_buf):
+
+        # use detections from max image to compute CoM and offset from initial
+        # reference image
+        i0, i1 = irng
+        coo = segImx.com_bg(data[i0])
+        lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
+        lbad2 = ~segImx.inside_detection_region(coo)
+        weights = (~(lbad | lbad2)).astype(int)
+        tracker.update_offset(coo, weights)
+
+        for i in range(*irng):
+            worker(i, data, residu, coords, opt_stat, tracker, mdlr,
+                   p0bg, p0ap, sky_width, sky_buf)
+
+    try:
+        # Fork the worker processes to perform computation concurrently
+        logger.info('About to fork into %i processes', args.nprocesses)
+
+        # NOTE: This is for testing!!
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker, )) as pool:
+        #     results = pool.map(Task(test), range(*subset))
+
+        # NOTE: This is for tracking!!
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker, )) as pool:
+        #     results = pool.starmap(bg_sub,
+        #         ((chunk, cube.data, residu, coords, tracker, mdlr)
+        #             for chunk in chunks))
+
+        # NOTE: This is for photometry!
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker,)) as pool:
+        #     results = pool.starmap(
+        #             Task(proc.proc1),
+        #             ((i, cube.data, residu, coords, tracker, optstat,
+        #               p0ap, sky_width, sky_buf)
+        #              for i in range(*subset)))
+
+
+        # from IPython import embed
+        # embed()
+        # raise SystemExit
+
+        # NOTE: chunked sequential mapping (doesn't work if there are frame shifts)
+        # chunks = mit.divide(args.nprocesses, range(*subset))
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker,)) as pool:
+        #     results = pool.starmap(proc_,
+        #             ((chunk, cube.data, residu, coords, opt_stat,
+        #               tracker, mdlr, p0bg, p0ap,
+        #               sky_width, sky_buf)
+        #                 for chunk in chunks))
+
+        #
+        with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+                            initargs=(config_worker,)) as pool:
+            results = pool.starmap(proc_,
+                ((rng, cube.data, residu, coords, opt_stat,
+                  tracker, mdlr, p0bg, p0ap, sky_width, sky_buf)
+                        for rng in rngs))
+
+
+
+
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker, )) as pool:
+        #     results = pool.starmap(
+        #         proc, ((i, cube.data, coords,
+        #                 tracker, mdlr, cmb,
+        #                 successes, failures,
+        #                 counter, prgLog)
+        #                 for i in range(*subset)))
+
+        # get frame numbers of successes and failures
+
+    except Exception as err:
+        # catch errors so we can safely shut down the listeners
+        logger.exception('Exception during parallel loop.')
+        plot_diagnostics = False
+        plot_lightcurves = False
+    else:
+        # put code here that that must be executed if the try clause does
+        # not raise an exception
+        # The use of the else clause is better than adding additional code to
+        # the try clause because it avoids accidentally catching an exception
+        # that wasn’t raised by the code being protected by the try … except
+        # statement.
+
+        # Hang around for the workers to finish their work.
+        pool.join()
+        logger.info('Workers done')  # Logging in the parent still works normally.
+        chrono.mark('Main compute')
+    finally:
+        # A finally clause is always executed before leaving the try statement,
+        # whether an exception has occurred or not.
+        # any unhandled exceptions will be raised after finally clause,
+        # basically just KeyboardInterrupt for now.
+
+        # check task status
+        failures = Task.report()
+        # TODO: print opt failures
+
+        # Workers all done, listening can now stop.
+        logger.info('Telling listener to stop ...')
+        stop_logging_event.set()
+        logListner.join()
+
+        chrono.mark('Process shutdown')
+
+        # diagnostics
+        if plot_diagnostics:
+
+            # TODO: GUI
+            # TODO: if interactive dock figs together
+            # dock for figures
+            # connect ts plots with frame display
+
+            from obstools.phot.diagnostics import new_diagnostics, save_figures
+
+            figs = new_diagnostics(coords, tracker.rcoo[tracker.ir],
+                                   proc.Appars, opt_stat)
+            save_figures(figs, figPath)
+
+        if plot_lightcurves:
+            from obstools.phot.diagnostics import plot_aperture_flux
+
+            figs = plot_aperture_flux(fitspath, proc, tracker)
+            save_figures(figs, figPath)
+
+        chrono.mark('Diagnostics')
+        chrono.report()  # TODO: improve report formatting
+
+        # try:
+        # from _qtconsole import qtshell  # FIXME
+        # qtshell(vars())
+        # except Exception as err:
+        embed()
+
+    # with mp.Pool(10, worker_logging_init, (config_worker, )) as pool:   # , worker_logging_init, (q, logmix)
+    #     results = pool.starmap(
+    #         work, ((i, counter, prgLog)
+    #                for i in range(n)))
+
+    # #
+    # import sys
+    # from recipes.io.utils import TracePrints
+    # sys.stdout = TracePrints()
+
+    # n = 50
+    # with Parallel(n_jobs=8, verbose=0, initializer=worker_logging_init,
+    #               initargs=(counter, config_worker)) as parallel: #)) as parallel:#
+    #     results = parallel(
+    #         delayed(work)(i)#, cube.data, tracker, mdlr, counter, residu)
+    #         for i in range(n))
+
+    # sys.stdout = sys.stdout.stdout
+
+# if __name__ == '__main__':
+#     main()

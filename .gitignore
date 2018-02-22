@@ -15,7 +15,7 @@ __pycache__
 *.bak*
 
 # devs
-*/dev/*
+dev/
 EMvsCON_*.py
 CVs.py
 fitshead.py

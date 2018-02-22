@@ -1,32 +1,31 @@
 import matplotlib.pyplot as plt
-from obstools.plan.viz_blit import VisPlot
-# from obstools.plan.viz import resolver
-import time
+from obstools.plan.visibilities import VizPlot
 
 if __name__ == '__main__':
-
-    # t0 = time.time()
-    # resolver('CTCV J1928-5001')
-    # print('resolve took', time.time()-t0)
-    #
-    # t0 = time.time()
-    # resolver('CTCV J1928-5001')
-    # print('resolve took', time.time()-t0)
-
-    #from .viz import VisPlot
-    targets = ['CTCV J1928-5001',
-            # 'IGR J14536-5522',
+    mcvs = ['AR Sco',
+            'V895 Cen',
+            'V895 Cen',
+            'IGR J14536-5522',
+            '1RXS J174320.1-042953',
+            'RX J1610.1+0352',
+            'RX J1745.5-2905',
+            'SDSS J151415.65+074446.4',
+            '2XMM J154305.5-522709',
+            '2MASS J19283247-5001344',
+            'QS Tel',
+            'V1432 Aql',
+            'CRTS SSS100805 J194428-420209',
             'IGR J19552+0044',
-            # 'QS Tel',
-            # 'V1432 Aql',
-            # 'HU Aqr',
-            # 'CD Ind',
-            'CRTS SSS100805 J194428-420209']
-
-    viz = VisPlot(targets=targets)
-    viz.plot_vis(sort=False)
-    #viz.add_target('V895 Cen')
-
+            'HU Aqr',
+            'CD Ind',
+            'CE Gru',
+            'BL Hyi',
+            'RX J0154.0-5947',
+            'FL Cet',
+            'FO Aqr']
+    viz = VizPlot(mcvs)
+    viz.plot_vis(cmap='jet')  # sort=False
+    viz.add_target('V895 Cen')
     viz.connect()
 
     plt.show()

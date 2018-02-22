@@ -1,27 +1,26 @@
-import ctypes
-import logging
-from collections import namedtuple #Callable
 
 import numpy as np
-import astropy.units as u
-
+from matplotlib._contour import QuadContourGenerator
+from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle, Ellipse as _Ellipse, Annulus
-from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.widgets import RadioButtons, CheckButtons
-from matplotlib._contour import QuadContourGenerator
-
 from obstools.aps import ApertureCollection, SkyApertures
 
-from recipes.parallel.synced import SyncedArray
-from recipes.dict import AttrDict
-from recipes.logging import LoggingMixin
 from recipes.list import flatten
+from recipes.logging import LoggingMixin
+from grafico.imagine import VideoDisplay
+
+import logging
+from collections import namedtuple  # Callable
 
 
+# TODO: better spacing between legend entries
+# TODO: legend art being clipped
 
-def lm_extract_values_stderr(pars):
-    return np.transpose([(p.value, p.stderr) for p in pars.values()])
+
+# def lm_extract_values_stderr(pars):
+#     return np.transpose([(p.value, p.stderr) for p in pars.values()])
 
 
 def rotation_matrix_2D(theta):
@@ -37,10 +36,9 @@ def rotate_2D(xy, theta):
 
 
 def edge_proximity(self, xy):
-
     xyprox = np.subtract(xy, self.center)
     x, y = xyprox.T
-    theta = np.arctan2(y,x) # angle between position and ellipse centre
+    theta = np.arctan2(y, x)  # angle between position and ellipse centre
     alpha = np.radians(self.angle)
     phi = theta - alpha
     a, b = self.a, self.b
@@ -62,7 +60,6 @@ def ellipse_picker(self, event):
 
 
 def annulus_picker(self, event):
-
     mouse_position = (event.x, event.y)
 
     if None in mouse_position:
@@ -106,7 +103,6 @@ def binary_contours(b):
     return c
 
 
-
 class Ellipse(_Ellipse):
     @property
     def a(self):
@@ -119,230 +115,38 @@ class Ellipse(_Ellipse):
         return self.height / 2
 
 
-class FrameProcessor(LoggingMixin):
-    # @classmethod
-    # def from_fits(self, filename, **options):
-    #     ''
-
-    def __init__(self, datacube, tracker=None, modeller=None, apmaker=None,
-                 bad_pixel_mask=None):
-
-        self.data = datacube
-        self.tracker = tracker
-        self.modeller = modeller
-        self.maker = apmaker
-        self.bad_pixel_mask = bad_pixel_mask
-
-    def __call__(self, i):
-
-        data = self.data[i]
-        track = self.tracker
-        mdlr = self.modeller
-        mkr = self.maker
-        apD = self.apData
-
-        # prep background image
-        imbg = track.background(data)
-
-        # fit and subtract background
-        residu, p_bg = mdlr.background_subtract(data, imbg.mask)
-        dat = mdlr.data[mdlr.bg]
-        p, pstd = lm_extract_values_stderr(p_bg)
-        # try:
-        dat.params[i] = p
-        dat.params_std[i] = pstd
-        # except Exception as err:
-        #     print(p, pstd)
-        #     print(dat.params[i]._shared)
-        #     print(dat.params_std[i]._shared)
-
-        # track stars
-        com = track(residu)
-        # save coordinates in shared data array.
-        self.coords[i] = com[track.ir]
-
-        # PSF photometry
-        # Calculate the standard deviation of the data distribution of each pixel
-        data_std = np.ones_like(data)  # FIXME:
-        # fit models
-        results = mdlr.fit(residu, data_std, self.bad_pixel_mask, )
-        # save params
-        mdlr.save_params(i, results)
-        # model selection for each star
-        best_models, params, pstd = self.model_selection(i, results)
-
-        # PSF-guided aperture photometry
-        # create scaled apertures from models
-        appars = mkr.combine_results(best_models, params, axis=0)  # coo_fit, sigma_xy, theta
-        aps = mkr.create_apertures(com, appars)
-        apsky = mkr.create_apertures(com, appars, sky=True)
-
-        # save appars
-        apD.sigma_xy[i], apD.theta[i] = appars[1:]
-
-        # do background subtracted aperture photometry
-        flx, flxBG = self.aperture_photometry(residu, aps, apsky)
-        apD.flux[i], apD.bg[i] = flx, flxBG
-
-        # save coordinates in shared data array.
-        # if
-        # self.coords[i] = coo_fit
-        # only overwrites coordinates if mdlr.tracker is None
-
-    def init_mem(self, n=None):
-        """
-
-        Parameters
-        ----------
-        n : number of frames (mostly for testing purposes to avoid large memory allocation)
-
-        Returns
-        -------
-
-        """
-        # global apData
-
-        n = n or len(self.data)
-        nstars = len(self.tracker.use_labels)
-        naps = np.size(self.maker.r)
-        #nfit = len(self.modeller.use_labels)
-
-        # reference star coordinates
-        self.coords = SyncedArray(shape=(n, 2))
-
-        # NOTE: You should check how efficient these memory structures are.
-        # We might be spending a lot of our time synching access??
-
-        # HACK: Initialize shared memory with nans...
-        SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
-
-        apData = self.apData = AttrDict()
-        apData.bg = SyncedArray(shape=(n, nstars))
-        apData.flux = SyncedArray(shape=(n, nstars, naps))
-
-        apData.sigma_xy = SyncedArray(shape=(n, 2))  # TODO: for nstars (optionally) ???
-        apData.rsky = SyncedArray(shape=(n, 2))
-        apData.theta = SyncedArray(shape=(n,))
-        # cog_data = np.empty((n, nstars, 2, window*window))
-
-        self.modeller.init_mem(n)
-
-    def model_selection(self, i, results):
-        """
-        Do model selection (per star) based on goodness of fit metric(s)
-        """
-
-        pars, paru, gof = results
-        best_models, params, pstd = [], [], []
-        # loop over stars
-        for j, g in enumerate(gof.swapaxes(0, 1)):  # zip(pars, paru, gof)
-            ix, mdl, msg = self.modeller.model_selection(g)
-            if msg:
-                self.logger.warning('%s (Frame %i, Star %i)', (msg, i, j))
-
-            if ix is not None:
-                self.logger.info('Best model: %s (Frame %i, Star %i)' % (mdl, i, j))
-
-            # TODO: if best_model is self.db.bg:
-            #     "logging.warning('Best model is BG')"
-            #     "flux is upper limit?"
-
-            # yield mdl, p
-            best_models.append(mdl)
-            params.append(pars[ix][j])
-            pstd.append(paru[ix][j])
-        return best_models, params, pstd
-
-    def aperture_photometry(self, data, aps, skyaps):
-
-        method = 'exact'
-
-        # a quantity is needed for photutils
-        udata = u.Quantity(data, copy=False)
-
-        m3d = self.tracker.segm.masks3D()
-        masks = m3d.any(0, keepdims=True) & ~m3d
-        masks |= self.bad_pixel_mask
-
-        Flux = np.empty(np.shape(aps))
-        if Flux.ndim == 1:
-            Flux = Flux[:, None]
-        FluxBG = np.empty(np.shape(skyaps))
-        for j, (ap, ann) in enumerate(zip(aps, skyaps)):
-            mask = masks[j]
-
-            # sky
-            flxBG, flxBGu = ann.do_photometry(udata,
-                                              # error,
-                                              mask=mask,
-                                              # effective_gain,#  must have same shape as data
-                                              # TODO: ERROR ESTIMATE
-                                              method=method)  # method='subpixel', subpixel=5)
-            m = ap.to_mask(method)[0]
-            area = (m.data * m.cutout(~mask)).sum()
-            fluxBGpp = flxBG / area  # Background Flux per pixel
-            flxBGppu = flxBGu / area
-            FluxBG[j] = fluxBGpp
-
-            # multi apertures ??
-            for k, app in enumerate(np.atleast_1d(ap)):
-                flux, flux_err = app.do_photometry(udata,
-                                                   mask=mask,
-                                                   # error, #TODO: ERROR ESTIMATE
-                                                   # effective_gain,#  must have same shape as data
-                                                   method=method)
-                # get the area of the aperture excluding masked pixels
-                m = ap.to_mask(method)[0]
-                area = (m.data * m.cutout(~mask)).sum()
-
-                Flux[j, k] = flux - (fluxBGpp * area)
-
-        return Flux, FluxBG
-
-    def save_params(self, i, coo):
-        if self.tracker is not None:
-            self.coords[i] = coo
-            # self.sigma[i] =
-
-    def estimate_max_shift(self, nframes, snr=5, npixels=7):
-        """Estimate the maximal positional shift for stars"""
-        step = len(self) // nframes  # take `nframes` frames evenly spaced across data set
-        maxImage = self[::step].max(0)  #
-
-        threshold = detect_threshold(maxImage, snr)  # detection at snr of 5
-        segImage = detect_sources(maxImage, threshold, npixels)
-        mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
-                          for (xs, ys) in segImage.slices], 0)
-
-        # TODO: check for cosmic rays inside sky apertures!
-
-        return mxshift, maxImage, segImage
 
 
-from grafico.imagine import FitsCubeDisplay
 
-
-class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
+class FrameProcessorGUI(VideoDisplay, LoggingMixin):
+    # TODO split off basic gui without legend
     # TODO: Inherit from mpl Animation??
+    # TODO: grey out buttons (calibrated / background) if option not avail
 
     _xpcom = dict(marker='x', ms=6, ls='none', picker=5)
     xcomProp = dict(mec='r', **_xpcom)
     xpeakProp = dict(mec='k', **_xpcom)
     xfitProp = dict(mec='g', **_xpcom)
 
-    apStarProp = dict(ec='c', ls='-', fc='none', lw=1)
-    apSkyProp = dict(ec='b', fc='none', lw=1)
+    apStarProp = dict(ec='g', ls='-', fc='none', lw=1)
+    apSkyProp = dict(ec='c', fc='none', lw=1)
     # winProp = dict(ec='g', fc='none', ls=':', lw=1.5, picker=5)
+
     # TODO: mpl collections - make the shortcuts work!
     winProp = dict(edgecolor='g', facecolor='none',
                    linestyle=':', linewidth=1.5, picker=5)
 
-    def __init__(self, proc, **kws):
+    def __init__(self, data, coords, tracker, mdlr, apdata, residu=None, **kws):
 
-        filename = proc.data.filename
-        FitsCubeDisplay.__init__(self, filename, connect=False, **kws)
+        # filename = cube.filename
+        VideoDisplay.__init__(self, data, connect=False, **kws)
 
-        self.proc = proc
+        # self.proc = proc
+        self.coords = coords
+        self.tracker = tracker
+        self.modeller = mdlr
+        self.apData = apdata
+        self.residu = residu
 
         # create position markers (initially empty)
         marks = []
@@ -354,8 +158,12 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
         # create apertures
         Aps = namedtuple('Apertures', ('stars', 'sky'))
-        self.aps = Aps(ApertureCollection(**self.apStarProp),
-                       SkyApertures(**self.apSkyProp))
+        r0 = np.zeros(tracker.nsegs)
+        c0 = tracker.rcoo_xy
+        θ = np.zeros(tracker.nsegs)
+        self.aps = Aps(
+                ApertureCollection(r=r0, coords=c0, angles=θ, **self.apStarProp),
+                SkyApertures(r=r0, coords=c0, angles=θ, **self.apSkyProp))
 
         for aps in self.aps:
             aps.add_to_axes(self.ax)
@@ -380,7 +188,7 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         self.update(0)
 
         # bg grid #HACK
-        self._bggrid = proc.modeller.bg.grid_from_data(self.data[0])
+        # self._bggrid = self.modeller.bg.grid_from_data(self.data[0])
 
         # toDO
         # self.playing = False
@@ -420,16 +228,16 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
             fig = plt.figure(figsize=figsize)
 
             self._gs = gs = GridSpec(2, 5,
-                              left=0.05, right=0.95,
-                              top=0.98, bottom=0.05,
-                              hspace=0, wspace=0,
-                              height_ratios=(2, 1))
+                                     left=0.05, right=0.95,
+                                     top=0.98, bottom=0.05,
+                                     hspace=0, wspace=0,
+                                     height_ratios=(2, 1))
 
             ax = fig.add_subplot(gs[0, :])
 
             # axes = self.init_axes(fig)
         # else:
-            # axes = namedtuple('AxesContainer', ('image',))(ax)
+        # axes = namedtuple('AxesContainer', ('image',))(ax)
 
         self.divider = make_axes_locatable(ax)
         # ax = axes.image
@@ -445,30 +253,31 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         size = super().guess_figsize(data)
         # create a bit more space below the figure for the frame nr indicator
         size[1] += 1.5
-        # logging.debug('CubeDisplayBase: Guessed figure size: (%.1f, %.1f)', *size)
+        # logging.debug('VideoDisplayBase: Guessed figure size: (%.1f, %.1f)', *size)
         return size
 
     def add_buttons(self):
         """"""
         ttlprp = dict(fontweight='bold', size='large')
         self.lax = lax = self.figure.add_subplot(self._gs[1, :2], frameon=False,
-                                      xticks=[], yticks=[])
+                                                 xticks=[], yticks=[])
         lax.set_title('Markers', **ttlprp)
         proxies = self.add_legend()
-        art = self.aps + (self.windows, ) + self.markers + (self.outlines,)
-        visible = (True, True, True, True, True, True, False)
+        art = self.aps + (self.windows,) + self.markers + (self.outlines,)
+        fitvis = bool(self.modeller.nmodels)
+        visible = (True, True, fitvis, True, False, fitvis, False)
         self.lgb = LegendGuiBase(self.figure, art, proxies, visible)
 
         rax1 = self.figure.add_subplot(self._gs[1, 2], aspect='equal', frameon=False)
-        self.image_selector = RadioButtons(
-            rax1, ('Raw', 'Calibrated', 'BG subtracted'))
+        self.image_selector = RadioButtons( # FIXME: should be check buttons
+                rax1, ('Raw', 'Calibrated', 'BG subtracted'))
         rax1.set_title('Image Data', **ttlprp)
         self.image_selector.on_clicked(self.image_button_action)
 
         rax2 = self.figure.add_subplot(self._gs[1, 3], aspect='equal', frameon=False)
         self.mask_selector = CheckButtons(
-            rax2, ('Bad pixels', 'Stars'), (False, False))
-            # todo: right stars / faint stars
+                rax2, ('Bad pixels', 'Stars'), (False, False))
+        # todo: right stars / faint stars
         rax2.set_title('Masks', **ttlprp)
         self.mask_selector.on_clicked(self.image_button_action)
 
@@ -480,7 +289,7 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
     def image_button_action(self, label):
         print('button i')
         image = self.get_image_data(self.frame)
-        self.imagePlot.set_data(image) # FIXME: update histogram!
+        self.imagePlot.set_data(image)  # FIXME: update histogram!
         self.figure.canvas.draw()
 
     # def mask_button_action(self, label):
@@ -493,15 +302,14 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
         s = self.image_selector.value_selected
         # get image data to display
-        image = self.data[i]
-        if s == 'Calibrated':
-            logging.warning('need calibration image')
 
-        if s == 'BG subtracted':
-            mdlr = self.proc.modeller
-            mdl = mdlr.bg
-            p = mdlr.data[mdl].params[i, 0]
-            image = mdl.residuals(p, image, self._bggrid)
+        if s == 'Raw':
+            image = self.data[i]
+        elif s == 'BG subtracted':
+            image = self.residu[i]
+        elif s == 'Calibrated':
+            logging.warning('need calibration image')
+            image = self.data[i]
 
         mask = self.get_image_mask()
 
@@ -509,11 +317,11 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
     def get_image_mask(self):
         # apply masks
-        trk = self.proc.tracker
+        trk = self.tracker
         stat = self.mask_selector.get_status()
         mask = False
         if stat[0]:
-            mask |= self.proc.bad_pixel_mask
+            mask |= self.tracker.bad_pixel_mask
         if stat[1]:
             mask |= trk.segm.to_mask(trk.use_labels)
         return mask
@@ -522,13 +330,12 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         self.logger.debug('set_frame: %s', i)
 
         # get image
-        i, image = FitsCubeDisplay.update(self, i)
+        i, image = VideoDisplay.update(self, i)
 
-        #
-        proc = self.proc
-        trk = proc.tracker
+        # proc = self.proc
+        trk = self.tracker
 
-        coords = proc.coords[i]
+        coords = self.coords[i]
         centroids = (coords + trk.rvec)[:, ::-1]
 
         # update markers
@@ -540,26 +347,39 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
             peaks = trk.segm.imax(image, trk.use_labels)
             self.markers.peak.set_data(peaks[:, ::-1].T)
 
-        if mprx.mdl.get_visible():
-            mdlr = self.proc.modeller
-            mdl = mdlr.models[0]
-            cxf = mdlr.data[mdl].params[i, :, :2].T
+        if self.modeller.nmodels and mprx.mdl.get_visible():
+            # mdl = mdlr.models[0]
+            cxf = self.modeller.data[0].params[i, :, :2].T
             self.markers.mdl.set_data(cxf)
 
         # update apertures
         self.aps.stars.coords = centroids
+        self.aps.sky.coords = centroids #  will duplicate coordinates automatically
+        for g, lbls in enumerate(self.tracker.groups):
+            # NOTE: better to have one ApertureCollection per group to use drawing optimiztions
+            ix = lbls - 1
+            a, b, theta = self.apData.stars[i, g]
+            self.aps.stars.a[ix] = a
+            self.aps.stars.b[ix] = b
+            self.aps.stars.angles[ix] = theta
 
-        sxy = proc.apData.sigma_xy[i]
-        angle = proc.apData.theta[i]
-        self.aps.stars.a, self.aps.stars.b = sxy * proc.maker.r
-        self.aps.stars.angles = angle
+        a_sky_in, a_sky_out, b_sky_out = self.apData.sky[i, g]
+        b_sky_in = a_sky_in * (b_sky_out / a_sky_out)
+        self.aps.sky.a = a_sky_in, a_sky_out
+        self.aps.sky.b = b_sky_in, b_sky_out
+        self.aps.sky.angles = theta
+
+        # sxy = self.apData.sigmaXY[i]
+        # angle = self.apData.theta[i]
+        # self.aps.stars.a, self.aps.stars.b = sxy * self.apData.r
+        # self.aps.stars.angles = angle
 
         # inner and outer semi-major and -minor for sky
-        a, b = proc.maker.rsky * sxy[None].T
-        self.aps.sky.coords = centroids
-        self.aps.sky.angles = angle
-        self.aps.sky.a = a
-        self.aps.sky.b = b
+        # a, b = self.apData.rsky * sxy[None].T
+        # self.aps.sky.coords = centroids
+        # self.aps.sky.angles = angle
+        # self.aps.sky.a = a
+        # self.aps.sky.b = b
         # self.aps.sky.outer.a, self.aps.sky.outer.b = skyout
 
         # contour tracking regions
@@ -579,12 +399,18 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
     def add_legend(self):
 
-        #TODO: better to have titles inside axes to they don't begin overlapping
+        # TODO: better to have titles inside axes to they don't begin overlapping
         #  on figure resize
+        # Toggle label visibility with art
 
-        tr = None # NOTE: having the artist transform with the axes would
+        tr = None  # NOTE: having the artist transform with the axes would
         # probably be better, but hard to get ellipse to draw correctly then
         common = dict(transform=tr)
+
+        # "legend" texts properties
+        txtoff = (40, 0)
+        txtprp = dict(fontdict=dict(weight='bold', size='medium'),
+                      transform=None, va='center', clip_on=True)
 
         # Apertures from model fits
         # epos = np.array((0.1, 0.8))
@@ -598,13 +424,20 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
         apStar = Ellipse(epos, *r, a, **self.apStarProp, **common,
                          picker=ellipse_picker)  # aperture
-        #apSkyin = Ellipse(epos, *r[1], a, **self.apSkyProp, **common, picker=ellipse_picker)
-        #apSkyout = Ellipse(epos, *r[2], a, **self.apSkyProp, **common, picker=ellipse_picker)
+        # apSkyin = Ellipse(epos, *r[1], a, **self.apSkyProp, **common, picker=ellipse_picker)
+        # apSkyout = Ellipse(epos, *r[2], a, **self.apSkyProp, **common, picker=ellipse_picker)
 
         w = 7
         rxy = (21, 25)
         skyprx = Annulus(epos, rxy, w, a, **self.apSkyProp, **common,
                          picker=annulus_picker)
+
+        # rs = 4, 7, 10
+        # txt = 'Auto aps.' \n' + r'$(r_{\bigstar}=%g\sigma$,' \
+                             # r' $r_{sky}=(%g\sigma, %g\sigma))$' % rs
+        txt = 'Auto aps.'
+        text = lax.text(*(epos + txtoff), txt, **txtprp)
+
 
         # from obstools.aps import ApertureCollection
         #
@@ -617,17 +450,28 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         rw = rh = 25
         rpos = lax.transAxes.transform((0.075, 0.5)) - rw / 2
         rect = Rectangle(rpos, rw, rh, **self.winProp, **common)  # windows
-        xfit = Line2D(*epos[None].T, **self.xfitProp, **common)  # fit position
+
+        pos = rpos + (rect.get_width() / 2, rect.get_height() / 2)
+        lax.text(*(pos + txtoff), 'Model windows', **txtprp)
+
 
         # skyprx = SkyAps(apSkyin, apSkyout)
         # TODO: mpl.Container?
         aprx = type(self.aps)(apStar, skyprx)
 
-        # Centre markers
+        # CoM markers
         xpos = lax.transAxes.transform([0.6, 0.85])
-        xcom = Line2D(*xpos[None].T, **self.xcomProp, **common)  # CoM markers
+        xcom = Line2D(*xpos[None].T, **self.xcomProp, **common)
+        lax.text(*(xpos + txtoff), 'Centroids', **txtprp)
+        # peak position markers
         xpkpos = lax.transAxes.transform([0.6, 0.5])
-        xpk = Line2D(*xpkpos[None].T, **self.xpeakProp, **common)  # CoM markers
+        xpk = Line2D(*xpkpos[None].T, **self.xpeakProp, **common)
+        lax.text(*(xpkpos + txtoff), 'Peaks', **txtprp)
+        # fit position
+        xfitpos = lax.transAxes.transform([0.6, 0.15])
+        xfit = Line2D(*xfitpos[None].T, **self.xfitProp, **common)
+        lax.text(*(xfitpos + txtoff), 'Fit pos.', **txtprp)
+        # collect in namedtuple
         mprx = type(self.markers)(xcom, xpk, xfit)
 
         # tracking region contours proxy
@@ -635,10 +479,10 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         b = np.square(np.mgrid[:r, :r] - r / 2).sum(0) < (r / 3) ** 2
         c = binary_contours(b)
         # c = np.subtract(c, r/2 + 0.5) + xpos
-        #xpos =
+        # xpos =
         # c = np.subtract(c, r / 2 + 0.5) * 4 + np.squeeze(xcom.get_data())# / 2
         # c = np.add(c, xpos)
-        c = np.subtract(c, r / 2 + 0.5) * 4.5 + (373.065, 133.237)
+        c = np.subtract(c, r / 2 + 0.5) * 4.5 + (269, 96)
 
         cntr = Line2D(*c[0].T, color='r', transform=None, picker=5)
 
@@ -654,22 +498,6 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         for art in artists:
             lax.add_artist(art)
 
-        txtoff = (40, 0)
-        txtprp = dict(fontdict=dict(weight='bold', size='medium'),
-                      transform=None, va='center', clip_on=True)
-
-        rs = 4, 7, 10
-        txt = 'Auto aps.\n' + r'$(r_{\bigstar}=%g\sigma$,' \
-                              r' $r_{sky}=(%g\sigma, %g\sigma))$' % rs
-        text = lax.text(*(epos + txtoff), txt, **txtprp)
-
-        pos = rpos + (rect.get_width() / 2, rect.get_height() / 2)
-        lax.text(*(pos + txtoff), 'Model windows', **txtprp)
-
-        #
-        lax.text(*(xpos + txtoff), 'Centroids', **txtprp)
-        lax.text(*(xpkpos + txtoff), 'Peaks', **txtprp)
-
         return artists
 
     def show_windows(self):
@@ -681,7 +509,7 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
         """
         # model windows
-        trk = self.proc.tracker
+        trk = self.tracker
         segm = trk.segm
         ix = segm.indices(trk.use_labels)  # TODO: method of StarTracker class
         slices = np.take(segm.slices, ix, 0)
@@ -711,8 +539,8 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
         """
         # TODO: method of TrackerGui class
 
-        trk = self.proc.tracker
-        segm = self.proc.tracker.segm
+        trk = self.tracker
+        segm = self.tracker.segm
         data = segm.data
         outlines = []
 
@@ -743,105 +571,96 @@ class FrameProcessorGUI(FitsCubeDisplay, LoggingMixin):
 
     def connect(self):
 
-        FitsCubeDisplay.connect(self)
+        VideoDisplay.connect(self)
         self.lgb.connect()
 
-    # def add_legend(self):
-    #     from matplotlib.lines import Line2D
-    #     from matplotlib.patches import Rectangle, Ellipse, Circle
-    #     from matplotlib.legend_handler import HandlerPatch, HandlerLine2D
-    #
-    #     def handleSquare(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-    #         xy = (xdescent, ydescent - width / 3)
-    #         return Rectangle(xy, width, width)
-    #
-    #     def handleEllipse(w, h, angle):
-    #         def _handler(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-    #             xy = (xdescent + width / 2, ydescent + height / 2)
-    #             return Ellipse(xy, w, h, angle=angle, lw=1)
-    #         return _handler
-    #
-    #     # def handleCircle(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-    #     #     w = width / 2
-    #     #     return Circle((xdescent + width / 2, ydescent + width / 8), width / 3.5, lw=1)
-    #
-    #     xcomProp = dict(mec='r', marker='x', ms=6, ls='none')
-    #     xfitProp = dict(mec='g', mfc='g', marker='o', ms=3, ls='none')
-    #     xpeakProp = dict(mec='k', marker='x', ms=6, ls='none')
-    #
-    #     apStarProp = dict(ec='c', ls='-', fc='none', lw=1)
-    #     apSkyProp = dict(ec='b', fc='none', lw=1)
-    #     winProp = dict(ec='g', fc='none', ls=':', lw=1.5)
-    #
-    #     # Apertures from model fits
-    #     apStar = Ellipse((0, 0), 1, 1, **apStarProp)  # aperture
-    #     apSkyin = Ellipse((0, 0), 1, 1, **apSkyProp)
-    #     apSkyout = Ellipse((0, 0), 1, 1, **apSkyProp)
-    #     rect = Rectangle((0, 0), 1.4, 1.4, **winProp)  # windows
-    #     xfit = Line2D([0], [0], **xfitProp)  # fit position
-    #
-    #     # Circular aps
-    #     xcom = Line2D([0], [0], **xcomProp)  # CoM markers
-    #
-    #     sx, sy = 3, 3.5 # TODO: from model?
-    #     rs = r0, r1, r2 = 4, 7, 10
-    #     a = 45
-    #     proxies = (((apStar, apSkyin, apSkyout, xfit),
-    #                 r'Auto aps. ($r_{\bigstar}=%g\sigma$, $r_{sky}=(%g\sigma, %g\sigma))$' % rs),
-    #                (rect, 'Model windows'),
-    #                (xcom, 'Centroid (CoM)'))
-    #
-    #     handler_map = {  # Line2D : HandlerDelegateLine2D(),
-    #         rect: HandlerPatch(handleSquare),
-    #         apStar: HandlerPatch(handleEllipse(sx * r0, sy * r0, a)),
-    #         apSkyin: HandlerPatch(handleEllipse(sx * r1, sy * r1, a)),
-    #         apSkyout: HandlerPatch(handleEllipse(sx * r2, sy * r2, a)),
-    #         # apCir: HandlerPatch(handleCircle)
-    #     }
-    #
-    #     leg1 = self.ax.legend(*zip(*proxies),  # proxies, labels,
-    #                           #title='Markers',
-    #                           loc=3, ncol=2,
-    #                           labelspacing=2,
-    #                           handletextpad=1,
-    #                           # borderaxespad=-5,
-    #                           borderpad=1,
-    #                           framealpha=0.5,
-    #                           prop=dict(weight='bold', size='medium'),
-    #                           handler_map=handler_map,
-    #                           bbox_to_anchor=(0, -1.35),
-    #                           # bbox_transform=fig.transFigure,
-    #                           )
-    #     leg1.set_title('Markers', dict(weight='bold', size='large'))
-    #     leg1.draggable()
-    #
-    #     fig = self.figure
-    #     # fig.subplots_adjust(top=0.83)
-    #     figsize = fig.get_size_inches() + [0, 1]
-    #     fig.set_size_inches(figsize)
-    #
-    #     return leg1
+    def add_legend(self):
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Rectangle, Ellipse, Circle
+        from matplotlib.legend_handler import HandlerPatch, HandlerLine2D
+
+        def handleSquare(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+            xy = (xdescent, ydescent - width / 3)
+            return Rectangle(xy, width, width)
+
+        def handleEllipse(w, h, angle):
+            def _handler(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+                xy = (xdescent + width / 2, ydescent + height / 2)
+                return Ellipse(xy, w, h, angle=angle, lw=1)
+            return _handler
+
+        # def handleCircle(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
+        #     w = width / 2
+        #     return Circle((xdescent + width / 2, ydescent + width / 8), width / 3.5, lw=1)
+
+
+        # Apertures from model fits
+        apStar = Ellipse((0, 0), 1, 1, **apStarProp)  # aperture
+        apSkyin = Ellipse((0, 0), 1, 1, **apSkyProp)
+        apSkyout = Ellipse((0, 0), 1, 1, **apSkyProp)
+        rect = Rectangle((0, 0), 1.4, 1.4, **winProp)  # windows
+        xfit = Line2D([0], [0], **xfitProp)  # fit position
+
+        # Circular aps
+        xcom = Line2D([0], [0], **xcomProp)  # CoM markers
+
+        sx, sy = 3, 3.5 # TODO: from model?
+        rs = r0, r1, r2 = 4, 7, 10
+        a = 45
+        proxies = (((apStar, apSkyin, apSkyout, xfit),
+                    r'Auto aps. ($r_{\bigstar}=%g\sigma$, $r_{sky}=(%g\sigma, %g\sigma))$' % rs),
+                   (rect, 'Model windows'),
+                   (xcom, 'Centroid (CoM)'))
+
+        handler_map = {  # Line2D : HandlerDelegateLine2D(),
+            rect: HandlerPatch(handleSquare),
+            apStar: HandlerPatch(handleEllipse(sx * r0, sy * r0, a)),
+            apSkyin: HandlerPatch(handleEllipse(sx * r1, sy * r1, a)),
+            apSkyout: HandlerPatch(handleEllipse(sx * r2, sy * r2, a)),
+            # apCir: HandlerPatch(handleCircle)
+        }
+
+        leg1 = self.ax.legend(*zip(*proxies),  # proxies, labels,
+                              #title='Markers',
+                              loc=3, ncol=2,
+                              labelspacing=2,
+                              handletextpad=1,
+                              # borderaxespad=-5,
+                              borderpad=1,
+                              framealpha=0.5,
+                              prop=dict(weight='bold', size='medium'),
+                              handler_map=handler_map,
+                              bbox_to_anchor=(0, -1.35),
+                              # bbox_transform=fig.transFigure,
+                              )
+        leg1.set_title('Markers', dict(weight='bold', size='large'))
+        leg1.draggable()
+
+        fig = self.figure
+        # fig.subplots_adjust(top=0.83)
+        figsize = fig.get_size_inches() + [0, 1]
+        fig.set_size_inches(figsize)
+
+        return leg1
 
     # def play(self):
     #     if self.playing:
     #         return
     #
     # def pause(self):
-        'todo'
+    # 'todo'
 
     # def
-
-
-
 
 
 from grafico.interactive import ConnectionMixin, mpl_connect
 
 
-class LegendGuiBase(ConnectionMixin):  # TODO: move to separate script....
+class LegendGuiBase(ConnectionMixin):
     """
     Enables toggling marker / bar / cap visibility by selecting on the legend.
     """
+
     def __init__(self, figure, art, proxies, states=None, use_blit=False):
         """enable legend picking"""
 
@@ -905,3 +724,204 @@ class LegendGuiBase(ConnectionMixin):  # TODO: move to separate script....
             fig.canvas.blit(fig.bbox)
         else:
             fig.canvas.draw()
+
+
+
+# class FrameProcessor(LoggingMixin):
+#     # @classmethod
+#     # def from_fits(self, filename, **options):
+#     #     ''
+#
+#     def __init__(self, datacube, tracker=None, modeller=None, apmaker=None,
+#                  bad_pixel_mask=None):
+#
+#         self.data = datacube
+#         self.tracker = tracker
+#         self.modeller = modeller
+#         self.maker = apmaker
+#         self.bad_pixel_mask = bad_pixel_mask
+#
+#     def __call__(self, i):
+#
+#         data = self.data[i]
+#         track = self.tracker
+#         mdlr = self.modeller
+#         mkr = self.maker
+#         apD = self.apData
+#
+#         # prep background image
+#         imbg = track.background(data)
+#
+#         # fit and subtract background
+#         residu, p_bg = mdlr.background_subtract(data, imbg.mask)
+#         dat = mdlr.data[mdlr.bg]
+#         p, pstd = lm_extract_values_stderr(p_bg)
+#         # try:
+#         dat.params[i] = p
+#         dat.params_std[i] = pstd
+#         # except Exception as err:
+#         #     print(p, pstd)
+#         #     print(dat.params[i]._shared)
+#         #     print(dat.params_std[i]._shared)
+#
+#         # track stars
+#         com = track(residu)
+#         # save coordinates in shared data array.
+#         self.coords[i] = com[track.ir]
+#
+#         # PSF photometry
+#         # Calculate the standard deviation of the data distribution of each pixel
+#         data_std = np.ones_like(data)  # FIXME:
+#         # fit models
+#         results = mdlr.fit(residu, data_std, self.bad_pixel_mask, )
+#         # save params
+#         mdlr.save_params(i, results)
+#         # model selection for each star
+#         best_models, params, pstd = self.model_selection(i, results)
+#
+#         # PSF-guided aperture photometry
+#         # create scaled apertures from models
+#         appars = mkr.combine_results(best_models, params, axis=0)  # coo_fit, sigma_xy, theta
+#         aps = mkr.create_apertures(com, appars)
+#         apsky = mkr.create_apertures(com, appars, sky=True)
+#
+#         # save appars
+#         apD.sigma_xy[i], apD.theta[i] = appars[1:]
+#
+#         # do background subtracted aperture photometry
+#         flx, flxBG = self.aperture_photometry(residu, aps, apsky)
+#         apD.flux[i], apD.bg[i] = flx, flxBG
+#
+#         # save coordinates in shared data array.
+#         # if
+#         # self.coords[i] = coo_fit
+#         # only overwrites coordinates if mdlr.tracker is None
+#
+#     def init_mem(self, n=None):
+#         """
+#
+#         Parameters
+#         ----------
+#         n : number of frames (mostly for testing purposes to avoid large memory allocation)
+#
+#         Returns
+#         -------
+#
+#         """
+#         # global apData
+#
+#         n = n or len(self.data)
+#         nstars = len(self.tracker.use_labels)
+#         naps = np.size(self.maker.r)
+#         # nfit = len(self.modeller.use_labels)
+#
+#         # reference star coordinates
+#         self.coords = SyncedArray(shape=(n, 2))
+#
+#         # NOTE: You should check how efficient these memory structures are.
+#         # We might be spending a lot of our time synching access??
+#
+#         # HACK: Initialize shared memory with nans...
+#         SyncedArray.__new__.__defaults__ = (None, None, np.nan, ctypes.c_double)  # lazy HACK
+#
+#         apData = self.apData = AttrDict()
+#         apData.bg = SyncedArray(shape=(n, nstars))
+#         apData.flux = SyncedArray(shape=(n, nstars, naps))
+#
+#         apData.sigma_xy = SyncedArray(shape=(n, 2))  # TODO: for nstars (optionally) ???
+#         apData.rsky = SyncedArray(shape=(n, 2))
+#         apData.theta = SyncedArray(shape=(n,))
+#         # cog_data = np.empty((n, nstars, 2, window*window))
+#
+#         self.modeller.init_mem(n)
+#
+#     def model_selection(self, i, results):
+#         """
+#         Do model selection (per star) based on goodness of fit metric(s)
+#         """
+#
+#         pars, paru, gof = results
+#         best_models, params, pstd = [], [], []
+#         # loop over stars
+#         for j, g in enumerate(gof.swapaxes(0, 1)):  # zip(pars, paru, gof)
+#             ix, mdl, msg = self.modeller.model_selection(g)
+#             if msg:
+#                 self.logger.warning('%s (Frame %i, Star %i)', (msg, i, j))
+#
+#             if ix is not None:
+#                 self.logger.info('Best model: %s (Frame %i, Star %i)' % (mdl, i, j))
+#
+#             # TODO: if best_model is self.db.bg:
+#             #     "logging.warning('Best model is BG')"
+#             #     "flux is upper limit?"
+#
+#             # yield mdl, p
+#             best_models.append(mdl)
+#             params.append(pars[ix][j])
+#             pstd.append(paru[ix][j])
+#         return best_models, params, pstd
+#
+#     def aperture_photometry(self, data, aps, skyaps):
+#
+#         method = 'exact'
+#
+#         # a quantity is needed for photutils
+#         udata = u.Quantity(data, copy=False)
+#
+#         m3d = self.tracker.segm.masks3D()
+#         masks = m3d.any(0, keepdims=True) & ~m3d
+#         masks |= self.bad_pixel_mask
+#
+#         Flux = np.empty(np.shape(aps))
+#         if Flux.ndim == 1:
+#             Flux = Flux[:, None]
+#         FluxBG = np.empty(np.shape(skyaps))
+#         for j, (ap, ann) in enumerate(zip(aps, skyaps)):
+#             mask = masks[j]
+#
+#             # sky
+#             flxBG, flxBGu = ann.do_photometry(udata,
+#                                               # error,
+#                                               mask=mask,
+#                                               # effective_gain,#  must have same shape as data
+#                                               # TODO: ERROR ESTIMATE
+#                                               method=method)  # method='subpixel', subpixel=5)
+#             m = ap.to_mask(method)[0]
+#             area = (m.data * m.cutout(~mask)).sum()
+#             fluxBGpp = flxBG / area  # Background Flux per pixel
+#             flxBGppu = flxBGu / area
+#             FluxBG[j] = fluxBGpp
+#
+#             # multi apertures ??
+#             for k, app in enumerate(np.atleast_1d(ap)):
+#                 flux, flux_err = app.do_photometry(udata,
+#                                                    mask=mask,
+#                                                    # error, #TODO: ERROR ESTIMATE
+#                                                    # effective_gain,#  must have same shape as data
+#                                                    method=method)
+#                 # get the area of the aperture excluding masked pixels
+#                 m = ap.to_mask(method)[0]
+#                 area = (m.data * m.cutout(~mask)).sum()
+#
+#                 Flux[j, k] = flux - (fluxBGpp * area)
+#
+#         return Flux, FluxBG
+#
+#     def save_params(self, i, coo):
+#         if self.tracker is not None:
+#             self.coords[i] = coo
+#             # self.sigma[i] =
+#
+#     def estimate_max_shift(self, nframes, snr=5, npixels=7):
+#         """Estimate the maximal positional shift for stars"""
+#         step = len(self) // nframes  # take `nframes` frames evenly spaced across data set
+#         maxImage = self[::step].max(0)  #
+#
+#         threshold = detect_threshold(maxImage, snr)  # detection at snr of 5
+#         segImage = detect_sources(maxImage, threshold, npixels)
+#         mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
+#                           for (xs, ys) in segImage.slices], 0)
+#
+#         # TODO: check for cosmic rays inside sky apertures!
+#
+#         return mxshift, maxImage, segImage
