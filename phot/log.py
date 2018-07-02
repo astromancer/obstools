@@ -1,8 +1,8 @@
-
 import logging
 import logging.config
 import logging.handlers
 import multiprocessing as mp
+
 
 # import random
 
@@ -47,10 +47,10 @@ def listener_process(q, stop_event, config):
     # print('root handlers', root.handlers)
 
     listener = logging.handlers.QueueListener(q, MyHandler())
-    logger = logging.getLogger('setup')
+    logger = logging.getLogger()
     # print('setup handlers', logger.handlers)
     #
-    logger.info('Starting listner')
+    logger.info('Starting listener')
     listener.start()
 
     # if os.name == 'posix':
@@ -67,7 +67,7 @@ def listener_process(q, stop_event, config):
     listener.stop()
 
 
-def worker_init(config): #counter,
+def worker_init(config):  # counter,
     """
     This initialises logging for the worker according to the specified
     configuration,
@@ -86,8 +86,8 @@ def worker_init(config): #counter,
 
     # print('3')
     # try:
-        # print(vars(logger))
-        # logger.info('Initializing')
+    # print(vars(logger))
+    # logger.info('Initializing')
     # except Exception as err:
     #     import traceback
     #     traceback.print_exc()
@@ -103,7 +103,6 @@ def worker_init(config): #counter,
     #     # would appear - hence the "if posix" clause.
     #     logger = logging.getLogger('setup')
     #     logger.critical('Should not appear, because of disabled logger ...')
-
 
 
 def config(logpath, q):
@@ -157,7 +156,8 @@ def config(logpath, q):
     # We disable existing loggers to disable the "setup" logger used in the
     # parent process. This is needed on POSIX because the logger will
     # be there in the child following a fork().
-    fmt = '{asctime:<23} {name:<32} {process:5d}|{processName:<17} {levelname:<10} {message}'
+    fmt = '{asctime:<23} {name:<32} {process:5d}|{processName:<17} ' \
+          '{levelname:<10} {message}'
     config_listener = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -169,9 +169,9 @@ def config(logpath, q):
             },
             'console': {
                 'class': 'logging.Formatter',
-                 'format': '{asctime:<10} {name:<32} {levelname:<10} {message}',
-                 # 'datefmt': '%H:%M:%S',
-                 'style': '{',
+                'format': '{asctime:<10} {name:<32} {levelname:<10} {message}',
+                # 'datefmt': '%H:%M:%S',
+                'style': '{',
             },
             # 'barebones': {
             #     'class': 'logging.Formatter',
@@ -185,20 +185,20 @@ def config(logpath, q):
         #     }
         # },
         'handlers': {
-            'console': {# log INFO (or higher) messages to console
+            'console': {  # log INFO (or higher) messages to console
                 'class': 'logging.StreamHandler',
                 'level': 'INFO',
                 'formatter': 'console',
                 # 'filters': ['debugfilter']
 
             },
-            'file': {# log *ALL* messages to *.log file
+            'file': {  # log *ALL* messages to *.log file
                 'class': 'logging.FileHandler',
                 'filename': str(logpath / 'main.log'),
                 'mode': 'w',
                 'formatter': 'detailed',
             },
-            'errors': {# log ERROR messages to *.errors.log file
+            'errors': {  # log ERROR messages to *.errors.log file
                 'class': 'logging.FileHandler',
                 'filename': str(logpath / 'errors.log'),
                 'mode': 'w',

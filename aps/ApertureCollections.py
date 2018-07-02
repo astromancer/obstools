@@ -14,9 +14,9 @@ from matplotlib.colors import colorConverter
 
 from recipes.iter import as_sequence, cycleN
 from recipes.io import warn as Warn
-from recipes.dict import TransDict, SmartDict
+from recipes.dict import TransDict, Many2OneMap
 from recipes.meta import altflaggerFactory
-from motley import banner
+# from motley import banner
 
 # from decor import expose, profile
 # from decor.misc import unhookPyQt
@@ -28,7 +28,7 @@ from IPython import embed
 rgba_array = colorConverter.to_rgba_array
 
 
-def rotation_matrix_2D(theta):
+def rotation_matrix_2d(theta):
     """Rotation matrix"""
     cos = np.cos(theta)
     sin = np.sin(theta)
@@ -37,7 +37,7 @@ def rotation_matrix_2D(theta):
 
 
 def rotate_2D(xy, theta):
-    return rotation_matrix_2D(theta) @ xy
+    return rotation_matrix_2d(theta) @ xy
 
 
 def pick_handler(artist, event):
@@ -119,7 +119,7 @@ class KeywordTranslator(TransDict):
         return {self._map.get(key, key): val for key, val in dic.items()}
 
 
-class PropertyConverter(SmartDict):
+class PropertyConverter(Many2OneMap):
     """Keyword value conversion"""
 
     # @expose.args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )

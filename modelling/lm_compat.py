@@ -12,7 +12,7 @@ import itertools as itt
 import numpy as np
 import lmfit as lm  # TODO: is this slow??
 
-from recipes.pprint import minimalNumericFormat
+from recipes.pprint import decimal_repr
 # from recipes.logging import LoggingMixin
 
 
@@ -51,7 +51,7 @@ class lmMixin():
 
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
-        self.logger.debug('Guessed: (%s)' % ', '.join(map(minimalNumericFormat, p0)))
+        self.logger.debug('Guessed: (%s)' % ', '.join(map(decimal_repr, p0)))
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
 

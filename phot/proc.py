@@ -12,7 +12,7 @@ from addict import Dict
 from recipes.logging import LoggingMixin, ProgressLogger, func2str
 from recipes.string import resolve_percentage
 
-from ..modelling import make_shared_mem
+from ..modelling.utils import make_shared_mem
 
 
 # from recipes.list import flatten
@@ -55,7 +55,7 @@ def phot(ap, image, mask, method='exact'):
 
     """
     # get pixel values
-    apMask = ap.to_mask(method)[0]
+    apMask = ap.to_boolean(method)[0]
     valid = apMask.cutout(~mask)
     pixWeights = apMask.data * apMask.cutout(~mask)
     pixVals = apMask.cutout(image)
@@ -100,7 +100,8 @@ def phot2(ap, image, masks, method='exact'):
     areas = np.empty(m)
     stddevs = np.empty(m)
 
-    for i, apMask, mask in itt.zip_longest(range(m), apMasks, masks, fillvalue=masks[0]):
+    for i, apMask, mask in itt.zip_longest(range(m), apMasks, masks,
+                                           fillvalue=masks[0]):
         pixWeights = apMask.data * apMask.cutout(~mask)
         pixVals = apMask.cutout(image)
 
@@ -131,7 +132,7 @@ def phot2(ap, image, masks, method='exact'):
 
 def phot_bg(ap, image, mask, method='exact'):
     """
-    Calculate aperture sum, stdddev and area while ignoring masked pixels
+    Calculate aperture sum, stddev and area while ignoring masked pixels
 
     Parameters
     ----------
@@ -167,7 +168,7 @@ def phot_bg(ap, image, mask, method='exact'):
 
 def flux_estimate(ap, image, masks, ap_sky, im_sky, mask_sky):
     """
-    Flux in ADU / electrons (photons) per pixel
+    Flux in counts (ADU / electrons / photons) per pixel
 
     Parameters
     ----------
@@ -238,7 +239,8 @@ class ApertureOptimizer(object):
 
     def snr(self, image, masks, image_sky, mask_sky):
         counts, _, npix = phot2(self.ap, image, masks, self.method)
-        counts_bg, _, npixbg = phot2(self.ap_sky, image_sky, mask_sky, self.method)
+        counts_bg, _, npixbg = phot2(self.ap_sky, image_sky, mask_sky,
+                                     self.method)
         return snr_star(counts, npix, counts_bg, npixbg)
 
     def update(self, *args, **kwargs):
@@ -253,8 +255,8 @@ class ApertureOptimizer(object):
                   sky_width, sky_buf, r_sky_min):
         """Inverted SNR for minimization"""
         return -self.update_snr(p0, cxy, im, mask,
-                                    im_sky, mask_sky,
-                                    sky_width, sky_buf, r_sky_min).sum()
+                                im_sky, mask_sky,
+                                sky_width, sky_buf, r_sky_min).sum()
 
     def fit(self, p0, *args):
         return minimize(self.objective, p0, args, bounds=self.bounds)
@@ -335,7 +337,7 @@ class TaskExecutor(object):
         """
         self.compute_size = n = int(compute_size)
         self.loc = tempfile.mktemp()
-        self.status = make_shared_mem(self.loc, n, 0, 'i')
+        self.status = make_shared_mem(self.loc, n, 'i', 0)
         self.counter = counter
         self.fail_counter = fail_counter
 
@@ -359,7 +361,7 @@ class TaskExecutor(object):
 
     def __call__(self, func):
         self.func = func
-        self.name = func2str(func, show_class=True, show_module_depth=1)
+        self.name = func2str(func, show_class=True, submodule_depth=1)
         self.progLog.name = self.name
         return self.catch
 
@@ -443,7 +445,7 @@ class FrameProcessor(LoggingMixin):
 
         """
 
-        comm = np.nan, 'f', clobber
+        comm = 'f', np.nan, clobber
         flxFile = loc / 'aps.flx'
         self.Flx = make_shared_mem(flxFile, (n, nstars, naps), *comm)
         flxFile = loc / 'aps.flx.std'
@@ -461,18 +463,38 @@ class FrameProcessor(LoggingMixin):
         parSky = loc / 'aps.par.sky'
         self.Appars.sky = make_shared_mem(parSky, (n, ngroups, 3), *comm)
 
-    def proc0(self, i, data, residu, coords, tracker, mdlr, p0):
+    def process(self, i, data, calib, residu, coords, opt_stat, tracker, mdlr,
+                p0bg, p0aps, sky_width=5, sky_buf=0.5):
+
+        # TODO: if you loop through the finding first, you will have better
+        # relative positions for photometry. Alternatively, do precision check
+        # on rcoo and start the photometry once that is done
+
+        self.proc0(i, data, calib, residu, coords, tracker, mdlr, p0bg)
+        self.optimal_aperture_photometry(i, data, residu, coords, tracker,
+                                         opt_stat, p0aps,
+                                         sky_width, sky_buf)
+
+    def proc0(self, i, data, calib, residu, coords, tracker, mdlr, p0):
         image = data[i]
 
+        bias, flat = calib
+        if bias is not None:
+            image = image - bias
+        if flat is not None:
+            image = image / flat
+
         # prep background image
-        imbg = tracker.mask_detected(image)
+        # imbg = tracker.mask_segments(image)
 
         # fit and subtract background
-        resi, p_bg = mdlr.background_subtract(image, imbg.mask, p0)
+        p_bg, resi = mdlr._fit_reduce(image)
+
         # p, pu = lm_extract_values_stderr(p_bg)
-        mdlr.data[-1].params[i] = np.hstack(p_bg)
+        # mdlr.data[-1].params[i] = np.hstack(p_bg)
         # mdlr.data[-1].params_std[i] = pu
         # mdlr._save_params(mdlr.bg, i, 0, (p, pu, None))
+        mdlr.data[i] = p_bg
         residu[i] = resi
 
         # track stars
@@ -480,9 +502,8 @@ class FrameProcessor(LoggingMixin):
         # save coordinates in shared data array.
         coords[i] = com[tracker.ir]
 
-    def optimal_aperture_photomerty(self, i, data, residu, coords, tracker,
-                                    status, p0,
-                                    sky_width=5, sky_buf=0.5):
+    def optimal_aperture_photometry(self, i, data, residu, coords, tracker,
+                                    status, p0, sky_width=5, sky_buf=0.5):
         """
         Optimization step to choose aperture size and shape.
 
@@ -507,22 +528,37 @@ class FrameProcessor(LoggingMixin):
 
         # check valid coordinates
         if np.isnan(coords[i]).any():
-            self.logger.warning('Invalid coords: frame %s. Skipping photometry.', i)
+            self.logger.warning(
+                    'Invalid coords: frame %s. Skipping photometry.', i)
             return
 
         # masks
         photmasks, skymask = tracker.prep_masks_phot()
+        # NOTE: using rmax here and passing a subset of the full array to do
+        # photometry will improve memory and cpu usage
+
         # star coordinates ith best relative positions
         cooxy = (coords[i] + tracker.rvec)[:, ::-1]
         # estimate minimal sky radius from detection segments
-        labels = tracker.segm.labels
-        r_sky_min = np.ceil(np.sqrt(tracker.segm.area(labels).max() / np.pi))
+        areas = tracker.segm.area(tracker.use_labels)
+        r_sky_min = np.ceil(np.sqrt(areas.max() / np.pi))
 
         # results = []
         skip_opt = False
         prevr = None
-        for g, labels in enumerate(tracker.groups):
-            ix = tracker.segm.indices(labels)
+        count = 0
+        last_group = min(tracker.ngroups, 2)
+        for g, (name, labels) in enumerate(tracker.groups.items()):
+            if 0 in labels:
+                continue  # this is the sky image
+            count += 1
+
+            self.logger.debug('Attempting optimized aperture photometry for '
+                              'group %i (%s): %s', g, name, tuple(labels))
+            # print(g, labels, ix, photmasks.shape)
+
+            # indices corresponding to labels (labels may not be sequential)
+            ix = tracker.segm.index(labels)
             masks = photmasks[ix]
 
             if skip_opt:
@@ -531,7 +567,8 @@ class FrameProcessor(LoggingMixin):
                 r, opt, flag = self.optimize_apertures(i, p0, cooxy[ix],
                                                        residu[i], masks,
                                                        data[i], skymask,
-                                                       r_sky_min, sky_width, sky_buf,
+                                                       r_sky_min, sky_width,
+                                                       sky_buf,
                                                        labels)
 
                 # save status
@@ -582,20 +619,18 @@ class FrameProcessor(LoggingMixin):
             # print(aps, aps_sky)
             # print(ix)
 
-            self.do_phot(i, ix, data, residu, aps, masks, aps_sky,
-                         skymask)
+            try:
+                self.do_phot(i, ix, data, residu, aps, masks, aps_sky,
+                             skymask)
+            except Exception as err:
+                from IPython import embed
+                embed(header='Caught the following error: %s\n\n'
+                             'Will be re-raised upon exit.' % str(err))
+                raise
 
-    def process(self, i, data, residu, coords, opt_stat, tracker, mdlr, p0bg, p0aps,
-                sky_width=5, sky_buf=0.5):
-
-        # NOTE: if you loop through the finding first, you will have better
-        # relative positions for photometry. Alternatively, do precision check
-        # on rcoo and start the photomerty once that is done
-
-        # self.proc0(i, data, residu, coords, tracker, mdlr, p0bg)
-        self.optimal_aperture_photomerty(i, data, residu, coords, tracker,
-                                         opt_stat, p0aps,
-                                         sky_width, sky_buf)
+            if count == last_group:
+                # only try do the optimization for the first 2 label groups
+                break
 
     def optimize_apertures(self, i, p0, cooxy, im, photmasks, im_sky, skymask,
                            r_sky_min, sky_width, sky_buf, labels):
@@ -608,6 +643,7 @@ class FrameProcessor(LoggingMixin):
         # to start with. We skip the optimization step for faint stars if
         # the snr is too low based on the p0 params
         opt.update(cooxy, *p0, sky_width, sky_buf, r_sky_min)
+
         snr = opt.snr(im, photmasks, im_sky, skymask)
         low_snr = snr < 1.2
         # self.logger.info('SNR: %s', snr)
@@ -618,8 +654,8 @@ class FrameProcessor(LoggingMixin):
             return None, opt, -2
 
         # remove low snr stars
-        cooxy = cooxy[~low_snr]
-        photmasks = photmasks[~low_snr]
+        # cooxy = cooxy[~low_snr]
+        # photmasks = photmasks[~low_snr]
 
         # from IPython import embed
         # embed()
@@ -627,9 +663,12 @@ class FrameProcessor(LoggingMixin):
         try:
             # maximize snr
             r = minimize(opt.objective, p0,
-                         (cooxy, im, photmasks, im_sky, skymask,
+                         (cooxy[~low_snr],
+                          im, photmasks[~low_snr],
+                          im_sky, skymask,
                           sky_width, sky_buf, r_sky_min),
                          bounds=opt.bounds)
+
         except Exception as err:
             self.logger.exception('Optimization error: frame %s, labels %s',
                                   i, labels)
@@ -647,6 +686,10 @@ class FrameProcessor(LoggingMixin):
         else:
             flag = 1
 
+        if low_snr.any():
+            # put back the low snr coordinates we removed
+            opt.update(cooxy, r.x, sky_width, sky_buf, r_sky_min)
+
         return r, opt, flag  # .ap, opt.ap_sky
 
     def do_phot(self, i, js, data, residu, aps, photmasks, aps_sky, skymask):
@@ -662,14 +705,15 @@ class FrameProcessor(LoggingMixin):
         self.Flx[i, js, 0] = flx
         self.FlxStd[i, js, 0] = flx_std
         self.FlxBG[i, js] = flx_bg
-        self.FlxBGStd[i, js] = flx_bg_std  # residual sky image noise (read-, dark-, sky-  noise)
+        self.FlxBGStd[
+            i, js] = flx_bg_std  # residual sky image noise (read-, dark-, sky-  noise)
 
     def oldprocess(self, i, data, coords, tracker, mdlr, cmb, counter=None,
                    prgLog=None):
         image = data[i]
 
         # prep background image
-        imbg = tracker.mask_detected(image)
+        imbg = tracker.mask_segments(image)
 
         # fit and subtract background
         resi, p_bg = mdlr.background_subtract(image, imbg.mask)
@@ -689,9 +733,11 @@ class FrameProcessor(LoggingMixin):
         # Calculate the standard deviation of the data distribution of each pixel
         data_std = np.ones_like(image)  # FIXME:
         # fit models
-        results = mdlr.fit(resi, data_std, tracker.bad_pixel_mask, )  # = p, pu, gof
+        results = mdlr.fit(resi, data_std,
+                           tracker.bad_pixel_mask, )  # = p, pu, gof
         # select best model
-        best = bestIx, bestModels, params, pstd = self.model_selection(i, mdlr, results)
+        best = bestIx, bestModels, params, pstd = self.model_selection(i, mdlr,
+                                                                       results)
 
         # save params
         mdlr.save_params(i, results, best)
@@ -700,7 +746,8 @@ class FrameProcessor(LoggingMixin):
         # create scaled apertures from models
         # best_models = mdlr.models[bestIx] # per detected object
         # TODO: pass in info on which objects share the same psf
-        appars = cmb.combine_results(bestModels, params, pstd, axis=0)  # coo_fit, sigma_xy, theta
+        appars = cmb.combine_results(bestModels, params, pstd,
+                                     axis=0)  # coo_fit, sigma_xy, theta
         aps = cmb.create_apertures(appars, com)
         apsky = cmb.create_apertures(appars, com, sky=True)
 
@@ -723,7 +770,8 @@ class FrameProcessor(LoggingMixin):
 
         # check valid coordinates
         if np.isnan(coords[i]).any():
-            self.logger.warning('Invalid coords: frame %s. Skipping photometry.', i)
+            self.logger.warning(
+                    'Invalid coords: frame %s. Skipping photometry.', i)
             return None, None, None
 
         # star coordinates ith best relative positions
@@ -798,7 +846,7 @@ class FrameProcessor(LoggingMixin):
         # a quantity is needed for photutils
         udata = u.Quantity(data, copy=False)
 
-        m3d = tracker.segm.masks3D()
+        m3d = tracker.segm.to_boolean_3d()
         masks = m3d.any(0, keepdims=True) & ~m3d
         masks |= tracker.bad_pixel_mask
 
@@ -873,7 +921,8 @@ class FrameProcessor(LoggingMixin):
                 p = pars[ix][j]
                 pu = paru[ix][j]
                 if mdlr.nmodels > 1:
-                    self.logger.info('Best model: %s (Frame %i, Star %i)', mdl, i, j)
+                    self.logger.info('Best model: %s (Frame %i, Star %i)', mdl,
+                                     i, j)
 
             # TODO: if best_model is self.db.bg:
             #     "logging.warning('Best model is BG')"
@@ -1027,7 +1076,7 @@ class FrameProcessor(LoggingMixin):
 #         # a quantity is needed for photutils
 #         udata = u.Quantity(data, copy=False)
 #
-#         m3d = self.tracker.segm.masks3D()
+#         m3d = self.tracker.segm.to_boolean_3d()
 #         masks = m3d.any(0, keepdims=True) & ~m3d
 #         masks |= self.bad_pixel_mask
 #
@@ -1071,7 +1120,7 @@ class FrameProcessor(LoggingMixin):
 #             self.coords[i] = coo
 #             # self.sigma[i] =
 #
-#     def estimate_max_shift(self, nframes, snr=5, npixels=7):
+#     def check_image_drift(self, nframes, snr=5, npixels=7):
 #         """Estimate the maximal positional shift for stars"""
 #         step = len(self) // nframes  # take `nframes` frames evenly spaced across data set
 #         maxImage = self[::step].max(0)  #

@@ -240,7 +240,7 @@ class FitsCube(object):
 
     # def display(self, *args, **kws):
     #     # NOTE: cannot pickle!!
-    #     from grafico.imagine import VideoDisplay
+    #     from graphical.imagine import VideoDisplay
     #     return VideoDisplay(self, *args, **kws)
     #
 

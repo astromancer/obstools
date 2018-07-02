@@ -156,7 +156,7 @@ class FrameProcessor(LoggingMixin):
         # a quantity is needed for photutils
         udata = u.Quantity(data, copy=False)
 
-        m3d = self.tracker.segm.masks3D()
+        m3d = self.tracker.segm.to_boolean_3d()
         masks = m3d.any(0, keepdims=True) & ~m3d
         masks |= self.bad_pixel_mask
 

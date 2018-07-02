@@ -6,19 +6,9 @@ import numpy as np
 from scipy.optimize import leastsq
 
 from recipes.list import find_missing_numbers
-from recipes.logging import LoggingMixin
+# from recipes.logging import LoggingMixin
 
-
-# from magic.string import banner
-
-# from myio import warn
-
-
-# from decor.misc import cache_last_return
-
-# from IPython import embed
-# from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
-# from decor.misc import unhookPyQt
+from obstools.modelling.core import Model
 
 # TODO:  use astropy.models!!!!??? // lmfit.models
 # ****************************************************************************************************
@@ -27,13 +17,25 @@ def constant(p, grid):
 
 
 # ****************************************************************************************************
-def circularGaussian(p, grid):
+def circularGaussian(p, grid):  # todo: sphericalGaussian (nd)
     """Circular Gaussian function for fitting star profiles."""
-    # relatively optimized for speed
+    # relatively fast gaussian evaluation for fitting
     _, _, z0, a, d = p
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]
-    r = (yxm * yxm).sum(0)  # squared radial distance from centre
-    return z0 * np.exp(-a * r) + d
+    r2 = (yxm * yxm).sum(0)  # squared radial distance from centre
+    return z0 * np.exp(-a * r2) + d
+
+def circularGaussianMean0(p, r2):  # todo: sphericalGaussian (nd)
+    """Circular Gaussian function for fitting star profiles."""
+    # relatively fast gaussian evaluation for fitting
+    z0, a = p
+    # yxm = grid - p[1::-1, np.newaxis, np.newaxis]
+    # r2 = (yxm * yxm).sum(0)  # squared radial distance from centre
+    return z0 * np.exp(-a * r2)
+
+def radialGaussianPSF(p, r2):
+    a, *z0 = p
+    return z0 * np.exp(-a * r2)
 
 
 # ****************************************************************************************************
@@ -96,7 +98,7 @@ def no_nan(p):
 
 
 # ****************************************************************************************************
-class PSF(LoggingMixin):
+class PSF(Model):
     """Class that implements the point source function."""
 
     def __init__(self, F, default_params, to_cache=None):
@@ -144,7 +146,8 @@ class PSF(LoggingMixin):
         return self.F(p, grid)
 
     def __repr__(self):
-        return self.F.__name__  # NOTE: This may be confusing, but it makes the logs more readible
+        return self.F.__name__
+        # NOTE: This may be confusing, but it makes the logs more readible
 
     def fit(self, data, grid, std=None, **kws):
         """guess p0 and fit"""
@@ -200,10 +203,10 @@ class PSF(LoggingMixin):
         if std is None:
             return self.rs(p, data, grid)
         w = self.rs(p, data, grid) / std
-        if np.isnan(w).any():
-            from IPython import embed
-            embed()
-            raise SystemExit
+        # if np.isnan(w).any():
+        #     from IPython import embed
+        #     embed()
+        #     raise SystemExit
         return w
 
     def fwrs(self, p, data, grid, std=None):

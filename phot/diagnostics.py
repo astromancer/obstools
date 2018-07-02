@@ -9,8 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-from grafico.ts import TSplotter
-from grafico.imagine import ImageDisplay
+from graphical.ts import TSplotter
+from graphical.imagine import ImageDisplay
 # from obstools.psf.psf import GaussianPSF
 from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 from motley.profiler.timers import timer
@@ -521,7 +521,8 @@ def plot_aperture_flux(fitspath, proc, tracker):
 
     #TODO: label top / right axes
 
-    timePath = next(fitspath.parent.glob('*.utc'))
+    # timePath = next(fitspath.parent.glob('*.time'))
+    timePath = fitspath.with_suffix('.time')
     t = Time(np.loadtxt(timePath, str))
 
     flux, flxStd = proc.Flx.squeeze().T, proc.FlxStd.squeeze().T
@@ -596,7 +597,7 @@ def plot_lc(t, flux, flxStd, labels, description=''):
 
 @timer
 def plot_lc_aps(apdata, labels):
-    # from grafico.multitab import MplMultiTab
+    # from graphical.multitab import MplMultiTab
     ##ui = MplMultiTab()
     figs = []
 
@@ -674,7 +675,7 @@ def from_params(model, params, scale=3, **kws):
 
 
 
-from grafico.imagine import VideoDisplayA
+from graphical.imagine import VideoDisplayA
 
 # def foo(cube, coords, appars):
 
@@ -683,208 +684,6 @@ from grafico.imagine import VideoDisplayA
 
 
 
-from grafico.imagine import FitsCubeDisplay
-
-
-class FrameDisplay(FitsCubeDisplay):
-    # TODO: blit
-    # TODO: let the home button restore the original config
-
-    # TODO: enable scroll through - ie inherit from VideoDisplayA
-    #     - middle mouse to switch between prePlot and current frame
-    #     - toggle legend elements
-
-    # TODO: make sure annotation appear on image area or on top of other stars
-
-    def __init__(self, filename, *args, **kwargs):
-        # self.foundCoords = found # TODO: let model carry centroid coords?
-        FitsCubeDisplay.__init__(self, filename, *args, **kwargs)
-
-        # FIXME:  this is not always appropriate NOTE: won't have to do this if you use wcs
-        # self.ax.invert_xaxis()    # so that it matches sky orientation
-
-    def add_aperture_from_model(self, model, params, r_scale_sigma, rsky_sigma, **kws):
-        # apertures from elliptical fit
-
-        apColour = 'g'
-        aps, ap_data = from_params(model, params, r_scale_sigma,
-                                   ec=apColour, lw=1, ls='--', **kws)
-        aps.axadd(self.ax)
-        # aps.annotate(color=apColour, size='small')
-
-        # apertures based on finder + scaled by fit
-        # from obstools.aps import ApertureCollection
-        apColMdl = 'c'
-        sigma_xy = ap_data[:, 2:4]
-        r = np.nanmean(sigma_xy) * r_scale_sigma * np.ones(len(foundCoords))
-        aps2 = ApertureCollection(coords=foundCoords[:, ::-1], radii=r,
-                                  ec=apColMdl, ls='--', lw=1)
-        aps2.axadd(self.ax)
-        # aps2.annotate(color=apColMdl, size='small')
-
-        # skyaps
-        rsky = np.multiply(np.nanmean(sigma_xy), rsky_sigma)
-        # rsky = np.nanmean(sigma_xy) * rsky_sigma * np.ones_like(foundCoords)
-        coosky = [foundCoords[:, ::-1]] * 2
-        coosky = np.vstack(list(zip(*coosky)))
-        apssky = ApertureCollection(coords=coosky, radii=rsky,
-                                    ec='b', ls='-', lw=1)
-        apssky.axadd(self.ax)
-
-        # Mark aperture centers
-        self.ax.plot(*params[:, 1::-1].T, 'x', color=apColour)
-
-    def mark_found(self, xy, style='rx'):
-        # Mark coordinates from finder algorithm
-        return self.ax.plot(*xy, style)
-
-    def add_windows(self, xy, window, sdist=None, enumerate=True):
-        from matplotlib.patches import Rectangle
-        from matplotlib.collections import PatchCollection
-
-        n = len(xy)
-        if sdist is None:
-            from scipy.spatial.distance import cdist
-            sdist = cdist(xy, xy)
-
-        # since the distance matrix is symmetric, ignore lower half
-        try:
-            sdist[np.tril_indices(n)] = np.inf
-        except:
-            print('FUCKUP with add_windows ' * 100)
-            embed()
-            raise
-        ix = np.where(sdist < window / 2)
-        overlapped = np.unique(ix)
-
-        # corners
-        llc = xy - window / 2
-        urc = llc + window
-        # patches
-        patches = [Rectangle(coo, window, window) for coo in llc]
-        # colours
-        c = np.array(['g'] * n)
-        c[overlapped] = 'r'
-        rectangles = PatchCollection(patches,
-                                     edgecolor=c, facecolor='none',
-                                     lw=1, linestyle=':')
-        self.ax.add_collection(rectangles)
-
-        # annotation
-        text = []
-        if enumerate:
-            # names = np.arange(n).astype(str)
-            for i in range(n):
-                txt = self.ax.text(*urc[i], str(i), color=c[i])
-                text.append(txt)
-                # ax.annotate(str(i), urc[i], (0,0), color=c[i],
-                #                  transform=ax.transData)
-
-            # print('enum_'*100)
-            # embed()
-        return rectangles, text
-
-    def add_detection_outlines(self, outlines):
-        from matplotlib.colors import to_rgba
-        overlay = np.empty(self.data.shape + (4,))
-        overlay[...] = to_rgba('0.8', 0)
-        overlay[..., -1][~outlines.mask] = 1
-        # ax.hold(True) # triggers MatplotlibDeprecationWarning
-        self.ax.imshow(overlay)
-
-    def add_vectors(self, vectors, ref=None):
-        if ref is None:
-            'cannot plot vectors without reference star'
-        Y, X = self.foundCoords[ref]
-        V, U = vectors.T
-        self.ax.quiver(X, Y, U, V, color='r', scale_units='xy', scale=1, alpha=0.6)
-
-    def add_legend(self):
-        from matplotlib.lines import Line2D
-        from matplotlib.patches import Rectangle, Ellipse, Circle
-        from matplotlib.legend_handler import HandlerPatch, HandlerLine2D
-
-        def handleSquare(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-            w = width  # / 1.75
-            xy = (xdescent, ydescent - width / 3)
-            return Rectangle(xy, w, w)
-
-        def handleEllipse(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-            return Ellipse((xdescent + width / 2, ydescent + height / 2), width / 1.25, height * 1.25, angle=45, lw=1)
-
-        def handleCircle(legend, orig_handle, xdescent, ydescent, width, height, fontsize):
-            w = width / 2
-            return Circle((xdescent + width / 2, ydescent + width / 8), width / 3.5, lw=1)
-
-        apColCir = 'c'
-        apColEll = 'g'
-        apColSky = 'b'
-
-        # Sky annulus
-        pnts = [0], [0]
-        kws = dict(c=apColSky, marker='o', ls='None', mfc='None')
-        annulus = (Line2D(*pnts, ms=6, **kws),
-                   Line2D(*pnts, ms=14, **kws))
-
-        # Fitting
-        apEll = Ellipse((0, 0), 0.15, 0.15, ls='--', ec=apColEll, fc='none', lw=1)  # aperture
-        rect = Rectangle((0, 0), 1, 1, ec=apColEll, fc='none', ls=':')  # window
-        xfit = Line2D(*pnts, mec=apColEll, marker='x', ms=3, ls='none')  # fit position
-
-        # Circular aps
-        apCir = Circle((0, 0), 1, ls='--', ec=apColCir, fc='none', lw=1)
-        xcom = Line2D(*pnts, mec=apColCir, marker='x', ms=6, ls='none')  # CoM markers
-
-        proxies = (((apEll, xfit, rect), 'Elliptical aps. ($%g\sigma$)' % 3),
-                   (apCir, 'Circular aps. ($%g\sigma$)' % 3),
-                   (annulus, 'Sky annulus'),
-                   # (rect, 'Fitting window'),
-                   # ( xfit, 'Fit position'),
-                   (xcom, 'Centre of Mass'))
-
-        # proxies = [apfit, annulus, rect, xfit, xcom] # markers in nested tuples are plotted over each other in the legend YAY!
-        # labels = [, 'Sky annulus', 'Fitting window', 'Fit position', 'Centre of Mass']
-
-        handler_map = {  # Line2D : HandlerDelegateLine2D(),
-            rect: HandlerPatch(handleSquare),
-            apEll: HandlerPatch(handleEllipse),
-            apCir: HandlerPatch(handleCircle)
-        }
-
-        leg1 = self.ax.legend(*zip(*proxies),  # proxies, labels,
-                              framealpha=0.5, ncol=2, loc=3,
-                              handler_map=handler_map,
-                              bbox_to_anchor=(0., 1.02, 1., .102),
-                              # bbox_to_anchor=(0, 0.5),
-                              # bbox_transform=fig.transFigure,
-                              )
-        leg1.draggable()
-
-        fig = self.figure
-        fig.subplots_adjust(top=0.83)
-        figsize = fig.get_size_inches() + [0, 1]
-        fig.set_size_inches(figsize)
-
-
-from grafico.imagine import FitsCubeDisplay
-
-
-def displayCube(fitsfile, coords, rvec=None):
-    # TODO: colour the specific stars used to track differently
-
-    def updater(aps, i):
-        cxx = coords[i, None]
-        if rvec is not None:
-            cxx = cxx + rvec  # relative positions of all other stars
-        else:
-            cxx = cxx[None]  # make 2d else aps doesn't work
-        # print('setting:', aps, i, cxx)
-        aps.coords = cxx[:, ::-1]
-
-    im = FitsCubeDisplay(fitsfile, {}, updater,
-                         autoscale_figure=False, sidebar=False)
-    im.ax.invert_xaxis()  # so that it matches sky orientation
-    return im
 
 
 # def display_frame_coords(data, foundCoords, params=None, model=None, window=None,

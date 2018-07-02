@@ -1,13 +1,16 @@
+import logging
+
 import motley
+import numpy
 from motley.progress import ProgressBar
 from motley.table import Table
 from recipes.logging import LoggingMixin
+from recipes.string import get_module_name
 
 import numpy as np
 
-
-def mad(a):
-    return np.median(np.abs(a - np.median(a)))
+# module level logger
+logger = logging.getLogger(get_module_name(__file__))
 
 
 def null_func(*args):
@@ -22,7 +25,8 @@ class ProgressLogger(ProgressBar, LoggingMixin):
 
     def create(self, end):
         self.end = end
-        self.every = np.ceil((10 ** -(self.sigfig + 2)) * self.end)  # only have to updat text every so often
+        self.every = np.ceil((10 ** -(self.sigfig + 2)) * self.end)
+        # only have to update text every so often
 
     def progress(self, state, info=None):
         if self.needs_update(state):
@@ -38,7 +42,8 @@ class ProgressLogger(ProgressBar, LoggingMixin):
 
 def progressFactory(log=True, print_=True):
     if not log:
-        global ProgressLogger   # not sure why this is neded
+        global ProgressLogger  # not sure why this is needed
+
         class ProgressLogger(ProgressLogger):
             progress = null_func
 
@@ -49,20 +54,18 @@ def progressFactory(log=True, print_=True):
     return ProgressLogger, ProgressBar
 
 
-
 def table_coords(coo, ix_fit, ix_scale, ix_loc):
-
     # TODO: maybe add flux estimate
 
     # create table: coordinates
     ocoo = np.array(coo[:, ::-1], dtype='O')
     cootbl = Table(ocoo,
-                col_headers=list('xy'),
-                col_head_props=dict(bg='g'),
-                row_headers=range(len(coo)),    #starts numbering from 0
-                # number_rows=True,
-                align='>', # easier to read when right aligned
-                )
+                   col_headers=list('xy'),
+                   col_head_props=dict(bg='g'),
+                   row_headers=range(len(coo)),  # starts numbering from 0
+                   # number_rows=True,
+                   align='>',  # easier to read when right aligned
+                   )
 
     # add colour indicators for tracking / fitting / scaling info
     ms = 2
@@ -79,9 +82,8 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
     tags[m != 0] = 'x'
     # tags[:] = 'x' * ms
 
-
     col_headers = motley.rainbow(labels, bg=cols)
-    tt = Table(tags,  title='\n',  #title,   # title_props=None,
+    tt = Table(tags, title='\n',  # title,   # title_props=None,
                col_headers=col_headers,
                frame=False, align='^',
                col_borders='', cell_whitespace=0)
@@ -98,14 +100,14 @@ def table_cdist(sdist, window, _print=False):
     n = len(sdist)
     # check for stars that are close together
     # sdist = cdist(coo, coo)  # pixel distance between stars
-    #sdist[np.tril_indices(n)] = np.inf # since the distance matrix is symmetric, ignore lower half
-    #mask = (sdist == np.inf)
+    # sdist[np.tril_indices(n)] = np.inf # since the distance matrix is symmetric, ignore lower half
+    # mask = (sdist == np.inf)
 
     # create distance matrix as table, highlighting stars that are potentially too close together
     #  and may cause problems
     bg = 'light green'
     # tbldat = np.ma.array(sdist, mask=mask, copy=True)
-    tbl = Table(sdist, #tbldat,
+    tbl = Table(sdist,  # tbldat,
                 title='Distance matrix',
                 col_headers=range(n),
                 row_headers=range(n),
@@ -114,9 +116,8 @@ def table_cdist(sdist, window, _print=False):
                 align='>')
 
     if sdist.size > 1:
-
         # FIXME: MaskError: Cannot convert masked element to a Python int.
-        #/home/hannes/work/motley/table.py in colourise(self, states, *colours, **kws)
+        # /home/hannes/work/motley/table.py in colourise(self, states, *colours, **kws)
         #     651         #
         #     652
         # --> 653         propList = motley.get_state_dicts(states, *colours, **kws)
@@ -144,9 +145,60 @@ def table_cdist(sdist, window, _print=False):
         c += (sdist < window)
         tbl.colourise(c, *' yr')
         tbl.show_colourbar = False
-        tbl.flag_headers(c, bg=[bg]*3, fg='wyr')
+        tbl.flag_headers(c, bg=[bg] * 3, fg='wyr')
 
     if _print and n > 1:
         print(tbl)
 
-    return tbl#, c
+    return tbl  # , c
+
+
+def rand_median(cube, ncomb, subset, nchoose=None):
+    """
+    median combine `ncomb`` frames randomly from amongst `nchoose` in the interval
+    `subset`
+
+    Parameters
+    ----------
+    cube
+    ncomb
+    subset
+    nchoose
+
+    Returns
+    -------
+
+    """
+    if isinstance(subset, int):
+        subset = (0, subset)  # treat like a slice
+
+    i0, i1 = subset
+    if nchoose is None:  # if not given, select from entire subset
+        nchoose = i1 - i0
+
+    # get frame indices
+    nfirst = min(nchoose, i1 - i0)
+    ix = np.random.randint(i0, i0 + nfirst, ncomb)
+    # create median image for init
+    logger.info('Combining %i frames from amongst frames (%i->%i) for '
+                'reference image.', ncomb, i0, i0 + nfirst)
+    return np.median(cube[ix], 0)
+
+
+def duplicate_if_scalar(seq):
+    """
+
+    Parameters
+    ----------
+    seq : {number, array-like}
+
+    Returns
+    -------
+
+    """
+    # seq = np.atleast_1d(seq)
+    if np.size(seq) == 1:
+        seq = np.ravel([seq, seq])
+    if np.size(seq) != 2:
+        raise ValueError('Input should be of size 1 or 2')
+    return seq

@@ -39,7 +39,7 @@ class TransFormatter(ticker.ScalarFormatter):
                 sign = '-' * int(x<0)
                 return r'{}$\infty$'.format(sign)
 
-        return minimalNumericFormat(x,2)
+        return decimal_repr(x,2)
 #         #return super().pprint_val(x)   #FIXME: does not produce correct range of ticks
 
 

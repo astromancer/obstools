@@ -1,20 +1,12 @@
 # standard library
-import sys
-import os
-import time
-import ctypes
-import shutil
-import socket
-import inspect
-import logging
-import logging.config
-import logging.handlers
-import tempfile
-import itertools as itt
-from pathlib import Path
-from collections import defaultdict
 import multiprocessing as mp
+import os
+import socket
+import sys
 from multiprocessing.managers import SyncManager  # , NamespaceProxy
+from pathlib import Path
+
+import logging.handlers
 
 # ===============================================================================
 # Check input file | doing this before all the slow imports
@@ -25,44 +17,52 @@ if not fitspath.exists():
     raise IOError('File does not exist: %s' % fitsfile)
 
 # execution time stamps
-from motley.profiler.timers import Chrono, timer_extra
+from motley.profiler.timers import Chrono
 
 chrono = Chrono()
+# TODO: option for active reporting; inherit from LoggingMixin, make Singleton
 chrono.mark('start')
 
 # ===============================================================================
 # related third party libs
+
 import numpy as np
-import astropy.units as u
-# from joblib import Parallel, delayed
-from joblib.pool import MemmappingPool
+from scipy import ndimage
+from joblib.pool import MemmapingPool as MemmappingPool  # Parallel, delayed
+from addict.addict import Dict
 import more_itertools as mit
 
 chrono.mark('Imports: 3rd party')
 
 # local application libs
+from obstools.phot.utils import rand_median
+from obstools.phot.proc import FrameProcessor
+from obstools.modelling.utils import make_shared_mem_nans
+
 from recipes.interactive import is_interactive
 from recipes.parallel.synced import SyncedCounter
-from recipes.logging import ProgressLogger
 
 import slotmode
-from slotmode.vignette import Vignette2DCross
+from slotmode.image import SlotBackground
+
 # from slotmode import get_bad_pixel_mask
 # * #StarTracker, SegmentationHelper, GraphicalStarTracker
 #
-from obstools.fastfits import FitsCube
-from obstools.phot.trackers import SlotModeTracker, estimate_max_shift
-from obstools.modelling import ImageModeller, AperturesFromModel, make_shared_mem
-from obstools.modelling.bg import Poly2D
-from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
+# from obstools.modelling.core import *
+# from obstools.fastfits import FitsCube
+# from obstools.modelling.bg import Poly2D
+# from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 from obstools.phot import log  # listener_process, worker_init, logging_config
-from obstools.phot.proc import FrameProcessor, TaskExecutor
+from obstools.phot.proc import TaskExecutor
+from obstools.phot.trackers.core import SegmentationHelper, SlotModeTracker, \
+    check_image_drift
 
 # from motley.printers import func2str
-
-from IPython import embed
+from graphical.imagine import ImageDisplay
 
 chrono.mark('Import: local libs')
+
+
 # ===============================================================================
 
 # class SyncedProgressLogger(ProgressLogger):
@@ -70,6 +70,19 @@ chrono.mark('Import: local libs')
 #                  logname='progress'):
 #         ProgressLogger.__init__(self, precision, width, symbol, align, sides, logname)
 #         self.counter = SyncedCounter()
+
+
+def display(image, title, **kws):
+    if isinstance(image, SegmentationHelper):
+        im = image.display(**kws)
+    else:
+        im = ImageDisplay(image, **kws)
+
+    im.ax.set_title(title)
+
+    if args.live:
+        idisplay(im.figure)
+    return im
 
 
 # TODO: colourful logs - like daquiry / technicolor
@@ -98,10 +111,6 @@ def task(size, maxfail=None):
     return TaskExecutor(size, counter, fail_counter, maxfail)
 
 
-# def lm_extract_values_stderr(pars):
-#     return np.transpose([(p.value, p.stderr) for p in pars.values()])
-
-
 if __name__ == '__main__':
     # def main():
     chrono.mark('Main start')
@@ -113,8 +122,10 @@ if __name__ == '__main__':
     # parse command line args
     parser = argparse.ArgumentParser('phot',  # fromfile_prefix_chars='@',
                                      description='Parallelized generic time-series photometry routines')
-    parser.add_argument('fitsfile', type=FitsCube,
+    parser.add_argument('fitsfile', type=str,  # type=FitsCube,
                         help='filename of fits data cube to process.')
+    parser.add_argument('-ch', '--channel', type=int,  # type=FitsCube,
+                        help='amplifier channel')
     # TODO: process many files at once
     parser.add_argument(
             '-n', '--subset', nargs='*', type=int,
@@ -141,22 +152,25 @@ if __name__ == '__main__':
             help='Aperture specification')
     # TODO: option for opt
 
-
     # plotting
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--plot', action='store_true', default=True,
-                        help='Do plots')
+                       help='Do plots')
     group.add_argument('--no-plots', dest='plot', action='store_false',
-                        help="Don't do plots")
+                       help="Don't do plots")
 
     parser.add_argument('--verbose', '-v', action='count')
     parser.add_argument('--version', action='version',
                         version='%(prog)s %s')
     args = parser.parse_args(sys.argv[1:])
 
+    # add some args manually
+    args.live = is_interactive()
 
     # data
-    cube = args.fitsfile
+    cube = np.lib.format.open_memmap(args.fitsfile)  # TODO: paths.input
+    ch = args.channel
+    cube = cube[:, ch]
 
     # check / resolve options
     clobber = args.clobber
@@ -184,8 +198,9 @@ if __name__ == '__main__':
         print_progress = True
         log_progress = False
 
-    if is_interactive:  # turn off logging when running interactively (debug)
+    if args.live:  # turn off logging when running interactively (debug)
         from recipes.interactive import exit_register
+        from IPython.display import display as idisplay
 
         log_progress = print_progress = False
         monitor_mem = False
@@ -195,7 +210,7 @@ if __name__ == '__main__':
         from atexit import register as exit_register
         from recipes.io.utils import WarningTraceback
 
-        # check_mem = True            # prevent execution if not enough memory available
+        # check_mem = True    # prevent execution if not enough memory available
         monitor_mem = False  # True
         monitor_cpu = False  # True  # True
         # monitor_qs = True  # False#
@@ -210,15 +225,15 @@ if __name__ == '__main__':
 
     # ===============================================================================
     # create folder output data to be saved
-    resultsPath = fitspath.with_suffix('.phot')
+    resultsPath = fitspath.with_suffix('.ch%i.phot' % ch)
     # create logging directory
-    logPath = resultsPath / 'logs'
+    logPath = resultsPath / 'logs'  # TODO: paths.log
     if not logPath.exists():
         logPath.mkdir(parents=True)
 
     # create directory for plots
     if plot_diagnostics:
-        figPath = resultsPath / 'plots'
+        figPath = resultsPath / 'plots'  # TODO: paths.figures
         if not figPath.exists():
             figPath.mkdir()
 
@@ -228,7 +243,7 @@ if __name__ == '__main__':
     config_main, config_listener, config_worker = log.config(logPath, logQ)
     logging.config.dictConfig(config_main)
     # create log listner process
-    logger = logging.getLogger('setup')
+    logger = logging.getLogger()
     logger.info('Creating log listener')
     stop_logging_event = mp.Event()
     logListner = mp.Process(target=log.listener_process, name='logListener',
@@ -244,9 +259,46 @@ if __name__ == '__main__':
     # FIXME: any Exception that happens below will stall the log listner indefinitely
 
     n = len(cube)
+    ishape = cube.shape[-2:]
     frame0 = cube[0]
 
-    # create flat field from sky data
+    # bad pixels
+    # ----------
+    bad_pixel_mask = slotmode.get_bad_pixel_mask(frame0, args.channel + 1)
+    # TODO: handle bad_pixels as negative label in SegmentationHelper ???
+    # TODO: option to try flat field out the bad pixels
+
+    # flat fielding
+    # -------------
+    # Some of the bad pixels can be flat fielded out
+    flatpath = fitspath.with_suffix('.flat.npz')  # TODO: paths.calib.flat
+    if flatpath.exists():
+        logger.info('Loading flat field image from %r', flatpath.name)
+        flat = np.load(flatpath)['flat']
+        flat_flat = flat[flat != 1]
+    else:
+        'still experimental'
+        # construct flat field for known bad pixels by computing the ratio
+        # between the median pixel value and the median of it's neighbours
+        # across multiple (default 1000) frames
+        # from slotmode import neighbourhood_median
+        #
+        # flat_cols = [100]
+        # flat_ranges = [[14, (130, 136)],
+        #                [15, (136, 140)]]
+        # flat_mask = slotmode._mask_from_indices(ishape, None, flat_cols,
+        #                                         None, flat_ranges)
+        # flat = neighbourhood_median(cube, flat_mask)  #
+        # flat_flat = flat[flat_mask]
+
+
+    # calib = (None, flat)
+    calib = (None, None)
+
+    # create sample image
+    image = rand_median(cube, 5, 100)  # / flat
+
+    # extract flat field from sky
     # flat = slotmode.make_flat(cube[2136:])
     # image /= flat
     # TODO: save this somewhere so it's quicker to resume
@@ -267,39 +319,161 @@ if __name__ == '__main__':
     # mdlBG = Vignette2DCross(orders_x, bpx, orders_y, bpy)
 
     # TODO: try fit for the breakpoints ??
-    orders_x, orders_y = (5, 1), (4, 1, 5)
+    # orders_x, orders_y = (5, 1), (4, 1, 5)
     # bpx = np.multiply((0, 0.94, 1), image.shape[1])
-    sy, sx = cube.ishape
-    bpx = (0, 10, sx)
-    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
-    bpy = (0, 10, 37.5, sy)
-    mdlBG = Vignette2DCross(orders_x, bpx, orders_y, bpy)
-    mdlBG.set_grid((sy, sx))
+    # sy, sx = ishape
+    # # orders = orders_x, orders_y = (1, 3), (3, 1, 3)     # channel 1
+    # orders = orders_x, orders_y = (1, 3), (1, 1, 1)
+    # breaks = (0, 162, sx), (0, 3, 17, sy)  # 6x6
+    # smoothness = (True, False)
 
-    # bad pixels
-    bad_cols = [59, 295]
-    bad_pix = [(22, 262), (0, 96), (1, 96), (2, 96), (3, 96)]
-    #  Some SLOTMODE cubes have all 0s in first column for some obscure reason
-    if np.median(frame0[:, 0]) / np.median(cube[0]) < 0.2:
-        bad_cols.append(0)
-    #
-    bad_pixel_mask = slotmode.make_bad_pixel_mask(frame0, bad_pix, bad_cols)
+    # This for Amp3 (channel 2) binning 3x3
+    sy, sx = ishape
+    orders = orders_x, orders_y = (5, 1), (3, 1, 3)
+    breaks = (0, 10, sx), (0, 10, 38, sy)  # 3x3
+    smoothness = (False, False)
+
+    from slotmode.vignette import Vignette2DCross
+
+    vignette = Vignette2DCross(orders, breaks, smoothness)
+    vignette.set_grid(image)
+
+    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
+    # bpy = (0, 10, 37.5, sy)
+    # bpy = (0, 3.5, 17.5, sy)  # 6x6
+    # orders = (1, 3), (1, 1, 1)
+    # breaks = (0, 162, sx), (0, 3.5, 17.5, sy)
+    # breaks = bpx, bpy
+
+
+
+    # load SementationHelper from pickle
+    # segmPath = fitspath.with_suffix('.segm.pkl')
+
+    # First initialize the SlotBackground model from the image
+    snr = (10, 7, 5, 3)
+    npixels = (7, 5, 3)
+    dilate = (5, 3)
+
+    # models = []
+    mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
+            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+
+
+    # TODO: hyperparameter search
+    def hyperparameter_search(breaks):
+        import itertools as itt
+        # given the breakpoints, search polynomial orders
+        npy, npx = np.add(map(len, breaks), 1)
+        npy0 = np.ones_like(npy)
+        npx0 = np.ones_like(npx)
+
+        #
+        yrngs, xrngs = (5, 3), (7, 3, 7)
+        z = itt.repeat(0)
+        ybounds = zip(z, yrngs)
+        xbounds = zip(z, xrngs)
+        smbounds = (0, 1)
+
+        p0 = np.r_[npy0, npx0, 0, 0]  # last too zeros for smoothness
+        # minimize(hyper_objective, p0, (data, ))
+
+
+    def hyper_objective(p0, data):
+        # init the model and get best fit residuals
+        'todo'
+
+
+    # check for non-convergence
+    # failed = [np.isnan(x).any() for x in [p0bg.bleed, p0bg.vignette.y,
+    #                                       p0bg.vignette.x]]
+    if 'bleed' in mdlr.names:
+        failed = np.isnan(p0bg.bleed).any()
+        if failed:
+            # replace nans with zero
+            p0bg.bleed = 0   # Maybe do this at the model class ???
+
+    # segmentation (this one only contains the stars, not the frame transfer
+    # bleed masks
+    segm = SegmentationHelper(seg_data)
+
+    # everything in here will be used for sky
+    notSky = seg_data.astype(bool) | bad_pixel_mask
+    skyRegion = ~notSky
+    skyImageMasked = np.ma.MaskedArray(image, notSky)
+
+    # residuals (for sample image)
+    resi = mdlr.residuals(p0bg, image)
+    # masked residuals
+    skyResiMasked = np.ma.MaskedArray(resi, ~skyRegion)
+
+    # save_pickle(segmPath, segm)  # TODO: paths.segm
 
     # init the tracker
-    # TODO: SlotModeTracker.from_cube(cube, ncomb, *args)
-    tracker, image, p0bg = SlotModeTracker.from_cube_segment(cube, 25, 100,
-                                                             mask=bad_pixel_mask,
-                                                             bgmodel=mdlBG,
-                                                             snr=(10, 3),
-                                                             dilate=(3,))
+    # select here groups by snr to do photometry
+    labels4CoM = np.hstack(groups[1:3])
+    com = segm.com_bg(resi, labels4CoM)
+    tracker = SlotModeTracker(com, seg_data, groups, labels4CoM,
+                              bad_pixel_mask)
 
     # estimate maximal positional shift of stars by running detection loop on
     # maximal image of 1000 frames evenly distributed across the cube
-    mxshift, maxImage, segImx = estimate_max_shift(cube, 1000, bad_pixel_mask,
-                                                   snr=3)
+    mxshift, maxImage, segImx = check_image_drift(cube, 1000, bad_pixel_mask,
+                                                  snr=5)
 
-    # TODO: plot some initial diagnostics
-    # image, detections, rcoo, bad_pixels
+
+    # display
+    displayed = Dict()
+    if args.plot:
+        # initial diagnostic images (for the modelled sample image)
+        # todo: these samples can be done with Mixin class for FitsCube
+        # think `cube.sample(1000).max()` # :))
+        displayed.image = display(image, 'Sample image')
+        displayed.segmentation = display(segm, 'Segmentation')
+        displayed.residual = display(skyResiMasked, 'Sky Residuals')
+        # add CoM ticks
+        displayed.residual.ax.plot(*com[:, ::-1].T, 'rx', ms=3)
+        # drift image
+        displayed.drift = display(maxImage, 'Sample Max (Frame Drift)')
+        # FIXME: -------------------------------------------------------
+        # could be `segImx.slices.plot(displayed.drift.ax, ec='maroon')`
+        from obstools.phot.trackers.core import Slices
+        slices = Slices(segImx)
+        r = slices.plot(displayed.drift.ax, edgecolor='maroon')
+        # --------------------------------------------------------------
+
+        # plot cross sections for bg fit
+        figs_yx = mdlr.plot_fit_results(skyImageMasked, p0bg)
+        for w, fig in zip('yx', figs_yx):
+            obj = idisplay(fig) if args.live else fig
+            displayed.cross[w] = obj
+
+        # TODO: plot psf for different group detections + models
+
+        #
+
+    # raise SystemExit
+
+    # tracker, image, p0bg = SlotModeTracker.from_cube_segment(cube, 25,
+    #                                                          100,
+    #                                                          mask=bad_pixel_mask,
+    #                                                          bgmodel=mdlBG,
+    #                                                          snr=(10, 3),
+    #                                                          npixels=(7, 3),
+    #                                                          dilate=(4, 3),
+    #                                                          deblend=True)
+    #
+    # if plot_diagnostics: # thread??
+    # resi = mdlBG.residuals(p0bg, image)
+    # resi_masked = tracker.mask_segments(resi, bad_pixel_mask)
+    # resi_clip = sigma_clipping.sigma_clip(resi_masked)
+
+    # check fit
+    # resi = mdlBG.residuals(p0bg, image)
+    # ImageDisplay(tracker.segm)
+    # ImageDisplay(tracker.mask_segments(resi, bad_pixel_mask))
+    # mdlBG.plot_fit_results(tracker.mask_segments(image, bad_pixel_mask), p0bg)
+
 
 
     # TODO: for slotmode: if stars on other amplifiers, can use these to get sky
@@ -312,16 +486,15 @@ if __name__ == '__main__':
     else:
         p0ap = (3, 3, 0)
 
-
     # create psf models
     # models = EllipticalGaussianPSF(),
-    models = ()
+    # models = ()
     # create image modeller
-    mdlr = ImageModeller(tracker.segm, models, mdlBG,
-                         use_labels=tracker.use_labels)
+    # mdlr = ImageModeller(tracker.segm, models, mdlBG,
+    #                      use_labels=tracker.use_labels)
 
     # create object that generates the apertures from modelling results
-    cmb = AperturesFromModel(3, (8, 12))
+    # cmb = AperturesFromModel(3, (8, 12))
 
     chrono.mark('Pre-compute')
 
@@ -332,26 +505,29 @@ if __name__ == '__main__':
     ngroups = tracker.ngroups
     naps = 1  # number of apertures per star
 
+    # TODO: single structured file may be better??
+    # TODO: paths.modelling etc..
+
     # create frame processor
     proc = FrameProcessor()
     # TODO: folder structure for multiple aperture types circular / elliptical
     proc.init_mem(n, nstars, ngroups, naps, resultsPath, clobber=clobber)
 
     # modelling results
-    mdlr.init_mem(n, nstars, resultsPath / 'modelling', clobber=clobber)
+    mdlr.init_mem(n, resultsPath / 'modelling/bg.par', clobber=clobber)
     # BG residuals
-    bgResiduPath = resultsPath / 'cube-bg'
-    bgshape = (n,) + cube.ishape
-    residu = make_shared_mem(bgResiduPath, bgshape, np.nan, clobber=clobber)
+    bgResiduPath = resultsPath / 'residual'
+    bgshape = (n,) + ishape
+    residu = make_shared_mem_nans(bgResiduPath, bgshape, clobber)
 
     # aperture parameters
     # cmb.init_mem(n, resultsPath / 'aps.par', clobber=clobber)
     optStatPath = resultsPath / 'opt.stat'
-    opt_stat = make_shared_mem(optStatPath, (n, tracker.ngroups), np.nan, clobber=clobber)
+    opt_stat = make_shared_mem_nans(optStatPath, (n, tracker.ngroups), clobber)
 
     # tracking data
     cooFile = resultsPath / 'coords'
-    coords = make_shared_mem(cooFile, (n, 2), np.nan, clobber=clobber)
+    coords = make_shared_mem_nans(cooFile, (n, 2), clobber)
 
     chrono.mark('Memory alloc')
 
@@ -360,7 +536,7 @@ if __name__ == '__main__':
     # synced counter to keep track of how many jobs have been completed
     manager = Manager()
 
-    # task executor  # TODO: there is probably a better one in joblib
+    # task executor  # there might be a better one in joblib ??
     Task = task(subsize)
     worker = Task(proc.process)
 
@@ -368,27 +544,67 @@ if __name__ == '__main__':
     chunks2 = chunks.copy()
     rngs = mit.pairwise(next(zip(*chunks2)) + (subset[1],))
 
+    # mdlr.logger.info('hello world')
 
-    def proc_(irng, data, residu, coords, opt_stat,
-              tracker, mdlr,
+    # raise SystemExit
+
+    def proc_(irng, data, calib, residu, coords, opt_stat, tracker, mdlr,
               p0bg, p0ap, sky_width, sky_buf):
+
+        #
+        logger.info('Model names: %s', tuple(mdl.name for mdl in mdlr.models))
+        # logger.info(tuple(mdlr.values()))
 
         # use detections from max image to compute CoM and offset from initial
         # reference image
         i0, i1 = irng
+        # labels in tracker.segm corresponding to those in segImx
+        lbl = np.sort(ndimage.median(tracker.segm.data, segImx.data,
+                                     segImx.labels)).astype(int)
         coo = segImx.com_bg(data[i0])
+
+        # check bad CoM
         lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
-        lbad2 = ~segImx.inside_detection_region(coo)
-        weights = (~(lbad | lbad2)).astype(int)
-        tracker.update_offset(coo, weights)
+        lbad2 = ~segImx.inside_segment(coo)
+        ignix = lbl[lbad | lbad2] - 1
+        #
+        weights = np.zeros(len(tracker.use_labels))
+        weights[lbl - 1] = 1
+        weights[ignix] = 0
+
+        coo_tr = np.zeros_like(tracker.rcoo)
+        coo_tr[lbl - 1] = coo
+        off = tracker.update_offset(coo_tr, weights)
+
+        logger.info('Init tracker at offset (%.3f, %.3f) for frame %i',
+                    *off, i0)
 
         for i in range(*irng):
-            worker(i, data, residu, coords, opt_stat, tracker, mdlr,
+            worker(i, data, calib, residu, coords, opt_stat, tracker, mdlr,
                    p0bg, p0ap, sky_width, sky_buf)
+
 
     try:
         # Fork the worker processes to perform computation concurrently
         logger.info('About to fork into %i processes', args.nprocesses)
+
+        # THIS IS FOR DEBUGGING PICKLING ERRORS
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # import pickle
+        # clone = pickle.loads(pickle.dumps(mdlr))
+        #
+        # for i in range(1000):
+        #     if i % 10:
+        #         print(i)
+        #     proc.process(i, cube, calib, residu, coords, opt_stat,
+        #                  tracker, clone, p0bg, p0ap, sky_width, sky_buf)
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+        # rng = next(rngs)
+        # proc_(rng, cube, residu, coords, opt_stat,tracker, mdlr, p0bg, p0ap, sky_width, sky_buf)
+
+        # raise SystemExit
 
         # NOTE: This is for testing!!
         # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
@@ -411,7 +627,6 @@ if __name__ == '__main__':
         #               p0ap, sky_width, sky_buf)
         #              for i in range(*subset)))
 
-
         # from IPython import embed
         # embed()
         # raise SystemExit
@@ -421,21 +636,22 @@ if __name__ == '__main__':
         # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
         #                     initargs=(config_worker,)) as pool:
         #     results = pool.starmap(proc_,
-        #             ((chunk, cube.data, residu, coords, opt_stat,
+        #             ((chunk, cube, residu, coords, opt_stat,
         #               tracker, mdlr, p0bg, p0ap,
         #               sky_width, sky_buf)
         #                 for chunk in chunks))
 
         #
+
+        # raise SystemExit
+
         with MemmappingPool(args.nprocesses, initializer=log.worker_init,
                             initargs=(config_worker,)) as pool:
             results = pool.starmap(proc_,
-                ((rng, cube.data, residu, coords, opt_stat,
-                  tracker, mdlr, p0bg, p0ap, sky_width, sky_buf)
-                        for rng in rngs))
-
-
-
+                                   ((rng, cube, calib, residu, coords, opt_stat,
+                                     tracker, mdlr, p0bg, p0ap, sky_width,
+                                     sky_buf)
+                                    for rng in rngs))
 
         # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
         #                     initargs=(config_worker, )) as pool:
@@ -463,8 +679,13 @@ if __name__ == '__main__':
 
         # Hang around for the workers to finish their work.
         pool.join()
-        logger.info('Workers done')  # Logging in the parent still works normally.
+        logger.info('Workers done')  # Logging in the parent still works
         chrono.mark('Main compute')
+
+        # Workers all done, listening can now stop.
+        logger.info('Telling listener to stop ...')
+        stop_logging_event.set()
+        logListner.join()
     finally:
         # A finally clause is always executed before leaving the try statement,
         # whether an exception has occurred or not.
@@ -472,19 +693,13 @@ if __name__ == '__main__':
         # basically just KeyboardInterrupt for now.
 
         # check task status
-        failures = Task.report()
+        failures = Task.report()  # FIXME:  stuck here
         # TODO: print opt failures
-
-        # Workers all done, listening can now stop.
-        logger.info('Telling listener to stop ...')
-        stop_logging_event.set()
-        logListner.join()
 
         chrono.mark('Process shutdown')
 
         # diagnostics
         if plot_diagnostics:
-
             # TODO: GUI
             # TODO: if interactive dock figs together
             # dock for figures
@@ -496,6 +711,12 @@ if __name__ == '__main__':
                                    proc.Appars, opt_stat)
             save_figures(figs, figPath)
 
+            # GUI
+            from obstools.phot.gui_dev import FrameProcessorGUI
+
+            gui = FrameProcessorGUI(cube, coords, tracker, mdlr, proc.Appars,
+                                    residu, clim_every=1e6)
+
         if plot_lightcurves:
             from obstools.phot.diagnostics import plot_aperture_flux
 
@@ -505,11 +726,14 @@ if __name__ == '__main__':
         chrono.mark('Diagnostics')
         chrono.report()  # TODO: improve report formatting
 
-        # try:
-        # from _qtconsole import qtshell  # FIXME
-        # qtshell(vars())
-        # except Exception as err:
-        embed()
+        if not args.live:
+            # try:
+            # from _qtconsole import qtshell  # FIXME
+            # qtshell(vars())
+            # except Exception as err:
+            from IPython import embed
+
+            embed()
 
     # with mp.Pool(10, worker_logging_init, (config_worker, )) as pool:   # , worker_logging_init, (q, logmix)
     #     results = pool.starmap(

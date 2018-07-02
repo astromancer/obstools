@@ -2,7 +2,7 @@ import numpy as np
 from numpy.polynomial.polynomial import polyval2d
 from scipy.optimize import minimize
 
-from .model import Model, StaticGridMixin
+from .core import Model, StaticGridMixin
 
 
 def grid_from_data(image):
@@ -12,10 +12,7 @@ def grid_from_data(image):
     return gxy
 
 
-
-
 class Poly2D(StaticGridMixin, Model):
-
     name = 'poly2d'
 
     def __init__(self, nx, ny):
@@ -29,7 +26,7 @@ class Poly2D(StaticGridMixin, Model):
     def set_mask(self, mask):
         # static_mask
         self.mask = np.array(mask, bool)
-        #self.grid = np.indices(self.mask.shape)[::-1]
+        # self.grid = np.indices(self.mask.shape)[::-1]
 
     def set_grid(self, image):
         self.grid = np.indices(image.shape)[::-1]
@@ -39,6 +36,9 @@ class Poly2D(StaticGridMixin, Model):
         #     self.mask = image.mask
         # else:
         #     self.mask = None
+
+    def p0guess(self, data, grid, stddev=None):
+        return np.ones(self.npar)
 
     def __call__(self, p, grid):
         # grid is xy-coords
@@ -53,28 +53,30 @@ class Poly2D(StaticGridMixin, Model):
     #
     #     return Model.residuals(self, p, image, grid)
 
-    def fit(self, image, p0=None, **kws):
+    def fit(self, image, p0=None, grid=None, **kws):
 
-        if self.grid is None:
-            self.set_grid(image)
+        # if self.grid is None:
+        #     self.set_grid(image)
 
-        grid = self.grid
-        mask = self.mask
-        if np.ma.isMA(image):
-            mask |= image.mask
-            grid = grid[:, ~mask]
+        # grid = self.grid
+        # mask = self.mask
 
         # only fit unmasked pixels
-        image = image[~mask]
+        # if np.ma.isMA(image):
+        #     mask |= image.mask
+
+        # image = image[~mask]
+        # grid = grid[:, ~mask]
 
         if p0 is None:
             p0 = np.ones(self.npar)
 
+        # from IPython import embed
+        # embed()
+
         r = minimize(self.rss, p0, (image, grid), **kws)
 
         return r.x
-
-
 
 # class Poly2DMasked(Poly2D):
 #     name = 'poly2dMasked'
