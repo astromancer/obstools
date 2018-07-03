@@ -183,7 +183,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
     def __reduce__(self):
         # helper method for unpickling. note __getnewargs__ doesn't seem to work
-        return ImageSegmentsModeller, \
+        return self.__class__, \
                (self.segm, list(self.models), self.groups)
 
     # def __getnewargs__(self):
