@@ -8,7 +8,7 @@ from pathlib import Path
 
 import logging.handlers
 
-|<:L0|\|0\/A666
+
 
 # ===============================================================================
 # Check input file | doing this before all the slow imports
