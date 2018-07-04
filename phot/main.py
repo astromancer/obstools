@@ -298,7 +298,7 @@ if __name__ == '__main__':
     calib = (None, None)
 
     # create sample image
-    image = rand_median(cube, 5, 100)  # / flat
+    image = rand_median(cube, 10, 100)  # / flat
 
     # extract flat field from sky
     # flat = slotmode.make_flat(cube[2136:])
@@ -499,6 +499,7 @@ if __name__ == '__main__':
     # cmb = AperturesFromModel(3, (8, 12))
 
     chrono.mark('Pre-compute')
+    input('Musical interlude 🎵🎵 ♬🎶𝅘𝅥𝅮 🎶')
 
     # ===============================================================================
     # create shared memory

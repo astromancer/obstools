@@ -17,6 +17,8 @@ __pycache__
 # devs
 dev/
 */dev/
+*dev*
+
 EMvsCON_*.py
 CVs.py
 fitshead.py
@@ -31,6 +33,9 @@ psf/stars.*.py
 psf/psffit.*py
 psf/psffind.py
 
+modelling/ImSegMdl_pickle_test.py
+
+
 plan/.coordcache
 plan/.sitecache
 plan/.ipynb_checkpoints
@@ -42,6 +47,8 @@ plan/viz.py.bak
 plan/viztest.py
 plan/plan.py
 
+
+
 transients/gaia/alerts.csv
 spectra
 
@@ -52,3 +59,7 @@ phot/phot.leak.py
 phot/proc2.py
 phot/main.dev.py
 phot/slotmain.py
+phot/phot_setup.py
+phot/trackers/test_mp.py 
+
+
