@@ -1,8 +1,8 @@
 # pycharm
 .idea/
 
-# kate tmp files
-*.kate-swp
+# tmp files
+*swp
 *~
 
 # python files
@@ -16,6 +16,7 @@ __pycache__
 
 # devs
 dev/
+*/dev/
 EMvsCON_*.py
 CVs.py
 fitshead.py
