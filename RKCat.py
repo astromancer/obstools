@@ -3,7 +3,7 @@ import logging
 import functools
 import itertools as itt
 from collections import OrderedDict
-''
+
 
 import numpy as np
 from astropy.coordinates import SkyCoord
