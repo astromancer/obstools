@@ -175,40 +175,31 @@ class Model(OptionallyNamed, LoggingMixin):
 
 class ModelContainer(AttrReadItem, Indexable, OrderedDict):
 
-    def __init__(self, models=(), names=None, **kws):
+    def __init__(self, models=(), **kws):
 
-        # check non empty
-        assert len(kws) or len(models), 'No models given.'
-
-        # if names is None:
-        #     names = [m.name for m in models]
-        # else:
-        #     assert len(names) == len(models)
-
-        # # filter None
-        # models = tuple(filter(None, models))
+        mapping = ()
+        if len(models):
+            models = tuple(filter(None, models))
+            names = [m.name for m in models]
+            if None in names:
+                raise ValueError('All models passed to container must be '
+                                 'named. You can name them implicitly by '
+                                 'initializing %s via keyword arguments' %
+                                 self.__class__.__name__)
+            mapping = zip(names, models)
 
         # load models into dict
-        OrderedDict.__init__(self)  # , zip(names, models), **kws)
+        OrderedDict.__init__(self, mapping, **kws)
+        # note init with kws can mean we loose order in python < 3.6
 
-        # update model names
-        for i, mdl in enumerate(models):
-            if not mdl:
-                continue
+    def __setitem__(self, key, value):
+        # make sure the model has the same name that it is keyed on in the dict
+        if key != value.name:
+            # set the model name (avoid duplicate names in dtype for models
+            # of the same class)
+            value.name = key
 
-            if names is None:
-                name = mdl.name
-            else:
-                name = names[i]
-                # set model names if given (avoid duplicate names in dtype)
-                self.add_model(mdl, name)
-
-            self[name] = mdl
-
-        if kws:
-            # note init with kws can mean we loose order in python < 3.6
-            for name, mdl in kws.items():
-                self.add_model(mdl, name)
+        return super().__setitem__(key, value)
 
     # def make_repr(self):
     #     # ensure we format nicely considering we might have nested models
@@ -222,14 +213,9 @@ class ModelContainer(AttrReadItem, Indexable, OrderedDict):
     #            ',\n'.join(map(fmt.format, self.items())) \
     #            + '}'
 
-    def __getnewargs__(self):
-        return tuple(self.models)
-
-    def add_model(self, model, name):
-        # add the model to the dict
-        self[name] = model
-        # set the model name (avoid duplicate names in dtype)
-        model.name = name  # TODO: log
+    # def __getnewargs__(self):
+    #     print('ping')
+    #     return tuple(self.models)
 
     # @property
     # def models(self):

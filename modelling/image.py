@@ -23,116 +23,9 @@ from ..phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 # idea: detect stars that share windows and fit simultaneously
 
 
-# todo: class ModelUser?
-
-class ImageSegmentsModel(LabelUser, LoggingMixin):
-    """
-    Interface for model fitting and comparison on segmented images
-    """
-
-    # TODO: mask_policy.  filter / set error to inf
-    # TODO: option to fit centres or use Centroids
-    # idea: detect stars that share windows and fit simultaneously
-
-    def __init__(self, model, segm, use_labels=None):
-        """
-
-        Parameters
-        ----------
-        segm : SegmentationHelper instance
-
-        """
-
-        self.segm = segm  # maybe check if GriddedSegments ?
-        self.model = model
-        self.name = getattr(self, 'name', model.name)
-        self._has_compound = isinstance(model, CompoundModel)
-
-        LabelUser.__init__(self, use_labels)
-
-    def __call__(self, p, labels=None, out=None):
-        labels = self.resolve_labels(labels)
-        assert len(p) == len(labels)
-
-        if out is None:
-            out = np.zeros(self.segm.shape)
-
-        mdl = self.model
-        for i, (sly, slx) in enumerate(self.segm.iter_slices(labels)):
-            out[sly, slx] += mdl(p[i], self.adapt_grid(self.segm.subgrids[i]))
-
-        return out
-
-    # @property
-    # def name(self):
-    #     return self.model.name
-
-    def adapt_grid(self, grid):
-        return grid
-
-    #  TODO: def residuals(self): etc
-
-    def get_dtype(self):
-        return self.model.get_dtype()
-
-    def _get_output(self, labels, fill=np.nan):
-        dtype = self.model.get_dtype()
-        shape = (len(labels),)
-        if len(dtype) == 1:  # simple model
-            name, base, size = dtype[0]
-            shape += (self.model.npar,)
-        else:
-            base = dtype
-
-        out = np.full(shape, fill, base)
-        return out
-
-    def p0guess(self, data, labels=None, stddev=None, **kws):
-
-        mask = kws.pop('mask', False)
-        extract = kws.pop('extract', False)
-        labels = self.resolve_labels(labels)
-        segmented = self.segm.coslice(data, stddev, labels=labels, mask_bg=mask,
-                                      flatten=extract)
-        p0 = np.empty(len(labels), self.model.get_dtype())
-        for i, (sub, substd) in enumerate(segmented):
-            grid = self.segm.subgrids[labels[i]]
-            p0[i] = self.model.p0guess(sub, grid, substd)
-
-        return p0
-
-    def fit(self, data, stddev=None, labels=None, **kws):  # p0?????
-        """
-        Fit the model for each segment
-        """
-        mdl = self.model
-        mask = kws.pop('mask', False)
-        extract = kws.pop('extract', False)
-        labels = self.resolve_labels(labels)
-        segmented = self.segm.coslice(data, stddev, labels=labels, mask_bg=mask,
-                                      flatten=extract)
-        results = self._get_output(labels)
-        for i, (sub, substd) in enumerate(segmented):
-            grid = self.segm.subgrids[labels[i]]
-            results[i] = mdl.fit(None, sub, grid, substd)
-
-        return results
-
-
-class BackgroundModel(ImageSegmentsModel):
-
-    def __init__(self, segm, model, use_labels=(0,)):
-        # segm = segmentation.copy()
-        segm.allow_zero = True
-        ImageSegmentsModel.__init__(self, model, segm, use_labels)
-
-
-# def _construct_ImageSegmentsModeller(*args):
-#     return ImageSegmentsModeller(*args)
-
 class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     """
-    Model fitting and comparison on segmented CCD frame
+    Model fitting and comparison on segmented image frame
     """
 
     # TODO: mask_policy.  filter / set error to inf
@@ -182,14 +75,9 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         # self.group_sizes = self.groups.sizes  # not dynamic
 
     def __reduce__(self):
-        # helper method for unpickling. note __getnewargs__ doesn't seem to work
+        # helper method for unpickling.
         return self.__class__, \
                (self.segm, list(self.models), self.groups)
-
-    # def __getnewargs__(self):
-    #     # raise ValueError()
-    #     print('hi')
-    #     return self, self.segm, self.models, self.groups
 
     def model_to_labels(self):
         """
@@ -614,6 +502,9 @@ class ModellingResultsMixin(object):
         self.best = AttrDict()
         self.resData = defaultdict(list)
         self.saveRes = save_residual
+
+        self.loc = None
+        self.data = None
 
     def init_mem(self, shape, loc=None, clobber=False):
 
