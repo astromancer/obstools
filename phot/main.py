@@ -12,6 +12,8 @@ import logging.handlers
 
 # ===============================================================================
 # Check input file | doing this before all the slow imports
+from graphical.multitab import MplMultiTab
+
 fitsfile = sys.argv[1]
 fitspath = Path(fitsfile)
 path = fitspath.parent
@@ -74,13 +76,23 @@ chrono.mark('Import: local libs')
 #         self.counter = SyncedCounter()
 
 
-def display(image, title, **kws):
+class SampleImage(object):
+    def __init__(self, data):
+
+        assert data.ndim == 3
+        self.data = data
+
+    def sample(self, ):
+
+
+def display(image, title=None, ui=None, **kws):
     if isinstance(image, SegmentationHelper):
         im = image.display(**kws)
     else:
         im = ImageDisplay(image, **kws)
 
-    im.ax.set_title(title)
+    if title:
+        im.ax.set_title(title)
 
     if args.live:
         idisplay(im.figure)
@@ -413,10 +425,13 @@ if __name__ == '__main__':
 
     # init the tracker
     # select here groups by snr to do photometry
+    groupsOpt = groups[1:3]
     labels4CoM = np.hstack(groups[1:3])
     com = segm.com_bg(resi, labels4CoM)
-    tracker = SlotModeTracker(com, seg_data, groups, labels4CoM,
+    tracker = SlotModeTracker(com, seg_data, groupsOpt, labels4CoM,
                               bad_pixel_mask)
+
+    # TODO: need a way of doing forced photometry at relative positions
 
     # estimate maximal positional shift of stars by running detection loop on
     # maximal image of 1000 frames evenly distributed across the cube
@@ -430,19 +445,25 @@ if __name__ == '__main__':
         # initial diagnostic images (for the modelled sample image)
         # todo: these samples can be done with Mixin class for FitsCube
         # think `cube.sample(1000).max()` # :))
+
+        # embed in multi tab window
+        ui = MplMultiTab()
         displayed.image = display(image, 'Sample image')
         displayed.segmentation = display(segm, 'Segmentation')
         displayed.residual = display(skyResiMasked, 'Sky Residuals')
         # add CoM ticks
         displayed.residual.ax.plot(*com[:, ::-1].T, 'rx', ms=3)
-        # drift image
-        displayed.drift = display(maxImage, 'Sample Max (Frame Drift)')
+
+        # camera drift image
+        displayed.drift = display(maxImage, 'Sample Max (Camera Drift)')
         # FIXME: -------------------------------------------------------
         # could be `segImx.slices.plot(displayed.drift.ax, ec='maroon')`
         from obstools.phot.trackers.core import Slices
         slices = Slices(segImx)
         r = slices.plot(displayed.drift.ax, edgecolor='maroon')
         # --------------------------------------------------------------
+
+
 
         # plot cross sections for bg fit
         figs_yx = mdlr.plot_fit_results(skyImageMasked, p0bg)
@@ -499,13 +520,13 @@ if __name__ == '__main__':
     # cmb = AperturesFromModel(3, (8, 12))
 
     chrono.mark('Pre-compute')
-    input('Musical interlude 🎵🎵 ♬🎶𝅘𝅥𝅮 🎶')
+    input('Musical interlude')
 
     # ===============================================================================
     # create shared memory
     # aperture positions / radii / angles
     nstars = tracker.nsegs
-    ngroups = tracker.ngroups
+    # ngroups = tracker.ngroups
     naps = 1  # number of apertures per star
 
     # TODO: single structured file may be better??
@@ -513,7 +534,8 @@ if __name__ == '__main__':
 
     # create frame processor
     proc = FrameProcessor()
-    # TODO: folder structure for multiple aperture types circular / elliptical
+    # TODO: folder structure for multiple aperture types circular /
+    # elliptical / optimal
     proc.init_mem(n, nstars, ngroups, naps, resultsPath, clobber=clobber)
 
     # modelling results
@@ -696,7 +718,7 @@ if __name__ == '__main__':
         # basically just KeyboardInterrupt for now.
 
         # check task status
-        failures = Task.report()  # FIXME:  stuck here
+        failures = Task.report()  # FIXME:  we sometimes get stuck here
         # TODO: print opt failures
 
         chrono.mark('Process shutdown')
@@ -712,6 +734,10 @@ if __name__ == '__main__':
 
             figs = new_diagnostics(coords, tracker.rcoo[tracker.ir],
                                    proc.Appars, opt_stat)
+            if args.live:
+                for fig, name in figs.items():
+                    idisplay(fig)
+
             save_figures(figs, figPath)
 
             # GUI

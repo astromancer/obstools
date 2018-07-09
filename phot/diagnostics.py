@@ -16,21 +16,196 @@ from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 from motley.profiler.timers import timer
 from motley.table import Table
 from recipes.misc import is_interactive
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from IPython import embed
+from graphical.formatters import LinearRescaleFormatter
 
-tsplt = TSplotter()
+
+tsplt = TSplotter()  # fixme Singleton YUCK!!!
 
 logger = logging.getLogger('diagnostics')
+
+
+#
+# class HackedImageGrid(ImageGrid):
+#     """
+#     I DONT WANT MY AXES SHARED MOTHERFUCKERS
+#     """
+#
+#     _defaultCbarAxesClass = CbarAxes
+#
+#     def __init__(self, fig,
+#                  rect,
+#                  nrows_ncols,
+#                  ngrids=None,
+#                  direction="row",
+#                  axes_pad=0.02,
+#                  add_all=True,
+#                  share_x=None,
+#                  share_y=None,
+#                  share_all=False,
+#                  aspect=True,
+#                  label_mode="L",
+#                  cbar_mode=None,
+#                  cbar_location="right",
+#                  cbar_pad=None,
+#                  cbar_size="5%",
+#                  cbar_set_cax=True,
+#                  axes_class=None,
+#                  ):
+#         """
+#         GO PISS IN THE WIND
+#         """
+#         self._nrows, self._ncols = nrows_ncols
+#
+#         if ngrids is None:
+#             ngrids = self._nrows * self._ncols
+#         else:
+#             if not 0 <= ngrids < self._nrows * self._ncols:
+#                 raise Exception
+#
+#         self.ngrids = ngrids
+#
+#         axes_pad = _extend_axes_pad(axes_pad)
+#         self._axes_pad = axes_pad
+#
+#         self._colorbar_mode = cbar_mode
+#         self._colorbar_location = cbar_location
+#         if cbar_pad is None:
+#             # horizontal or vertical arrangement?
+#             if cbar_location in ("left", "right"):
+#                 self._colorbar_pad = axes_pad[0]
+#             else:
+#                 self._colorbar_pad = axes_pad[1]
+#         else:
+#             self._colorbar_pad = cbar_pad
+#
+#         self._colorbar_size = cbar_size
+#
+#         self._init_axes_pad(axes_pad)
+#
+#         if direction not in ["column", "row"]:
+#             raise Exception("")
+#
+#         self._direction = direction
+#
+#         if axes_class is None:
+#             axes_class = self._defaultLocatableAxesClass
+#             axes_class_args = {}
+#         else:
+#             if isinstance(axes_class, maxes.Axes):
+#                 axes_class_args = {}
+#             else:
+#                 axes_class, axes_class_args = axes_class
+#
+#         self.axes_all = []
+#         self.axes_column = [[] for _ in range(self._ncols)]
+#         self.axes_row = [[] for _ in range(self._nrows)]
+#
+#         self.cbar_axes = []
+#
+#         h = []
+#         v = []
+#         if isinstance(rect, (str, Number)):
+#             self._divider = SubplotDivider(fig, rect, horizontal=h, vertical=v,
+#                                            aspect=aspect)
+#         elif isinstance(rect, SubplotSpec):
+#             self._divider = SubplotDivider(fig, rect, horizontal=h, vertical=v,
+#                                            aspect=aspect)
+#         elif len(rect) == 3:
+#             kw = dict(horizontal=h, vertical=v, aspect=aspect)
+#             self._divider = SubplotDivider(fig, *rect, **kw)
+#         elif len(rect) == 4:
+#             self._divider = Divider(fig, rect, horizontal=h, vertical=v,
+#                                     aspect=aspect)
+#         else:
+#             raise Exception("")
+#
+#         rect = self._divider.get_position()
+#
+#         # reference axes
+#         self._column_refax = [None for _ in range(self._ncols)]
+#         self._row_refax = [None for _ in range(self._nrows)]
+#         self._refax = None
+#
+#         for i in range(self.ngrids):
+#
+#             col, row = self._get_col_row(i)
+#
+#             if share_all:
+#                 if self.axes_all:
+#                     sharex = self.axes_all[0]
+#                     sharey = self.axes_all[0]
+#                 else:
+#                     sharex = None
+#                     sharey = None
+#             else:
+#                 if share_x:
+#                     sharex = self._column_refax[col]
+#                 else:
+#                     sharex = None
+#
+#                 if share_y:
+#                     sharey = self._row_refax[row]
+#                 else:
+#                     sharey = None
+#
+#             ax = axes_class(fig, rect, sharex=sharex, sharey=sharey,
+#                             **axes_class_args)
+#
+#             self.axes_all.append(ax)
+#             self.axes_column[col].append(ax)
+#             self.axes_row[row].append(ax)
+#
+#             if share_all:
+#                 if self._refax is None:
+#                     self._refax = ax
+#             if sharex is None:
+#                 self._column_refax[col] = ax
+#             if sharey is None:
+#                 self._row_refax[row] = ax
+#
+#             cax = self._defaultCbarAxesClass(fig, rect,
+#                                         orientation=self._colorbar_location)
+#             self.cbar_axes.append(cax)
+#
+#         self.axes_llc = self.axes_column[0][-1]
+#
+#         self._update_locators()
+#
+#         if add_all:
+#             for ax in self.axes_all+self.cbar_axes:
+#                 fig.add_axes(ax)
+#
+#         if cbar_set_cax:
+#             if self._colorbar_mode == "single":
+#                 for ax in self.axes_all:
+#                     ax.cax = self.cbar_axes[0]
+#             elif self._colorbar_mode == "edge":
+#                 for index, ax in enumerate(self.axes_all):
+#                     col, row = self._get_col_row(index)
+#                     if self._colorbar_location in ("left", "right"):
+#                         ax.cax = self.cbar_axes[row]
+#                     else:
+#                         ax.cax = self.cbar_axes[col]
+#             else:
+#                 for ax, cax in zip(self.axes_all, self.cbar_axes):
+#                     ax.cax = cax
+#
+#         self.set_label_mode(label_mode)
 
 
 def new_diagnostics(coords, rcoo, Appars, optstat):
     figs = {}
     # coordinate diagnostics
-    fig = plot_coord_scatter(coords, rcoo)
-    figs['coords.scatter'] = fig
-    fig = plot_coord_walk(coords)
-    figs['coords.walk'] = fig
+    fig = plot_coord_moves(coords, rcoo)
+    figs['coords.moves'] = fig
+
+    # fig = plot_coord_scatter(coords, rcoo)
+    # figs['coords.scatter'] = fig
+    # fig = plot_coord_walk(coords)
+    # figs['coords.walk'] = fig
+
     fig = plot_coord_jumps(coords)
     figs['coords.jump'] = fig
 
@@ -39,38 +214,67 @@ def new_diagnostics(coords, rcoo, Appars, optstat):
     figs['opt.stat'] = fig
     fig = plot_appars_walk(Appars.stars, ('a', 'b', 'theta'), 'Star apertures')
     figs['aps.star.walk'] = fig
-    fig = plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'), 'Sky apertures')
+    fig = plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'),
+                           'Sky apertures')
     figs['aps.sky.walk'] = fig
 
     return figs
 
 
 def ap_opt_stat_map(optstat):
-
     # TODO: clearer frame numbers for axes and format_coords
     # FIXME: legend being cut off
 
-    nf, ns = optstat.shape
-    nq = nf * (ns + 1)
+    nf, ng = optstat.shape
+    #  nf - number of frames, ng - number of optimization groups;
+    ngg = (ng + 1)  # + 1 for whitespace separator in image
+
+    #     flags -
+    #  1 : success
+    #  0 : Optimization converged on boundary
+    # -1 : no convergence
+    # -2 : low SNR, skip
+    # -3 : minimize subroutine exception
+
+    nq = nf * ngg
     # make image twice as wide as is tall
-    h = int(np.ceil(np.sqrt(nq / 2)))
-    w = int(np.ceil(nq / h))
-    z = np.full((h, w), np.nan)
+    nc_by_ng = int(np.ceil(np.sqrt(2 * nq) / ngg))
+    nc = nc_by_ng * ngg
+    nr = int(np.ceil(nq / nc))
+    padw = int(nc * nr / ngg - nf)
 
-    nqq = int(np.ceil(h / (ns + 1)))
-    for k in range(ns):
-        z[k::(ns + 1)] = np.hstack([optstat[:, k],
-                                    np.full(w * nqq - nf, np.nan)]).reshape(-1, w)
+    z = np.full((nr * nc_by_ng, ngg), np.nan)
+    # z[:nf, :ng] = optstat
+    # zz = z.reshape(nc_by_ng, nr, ngg).swapaxes(0, 1).reshape((nr, -1)).T
 
-    im = ImageDisplay(z, origin='upper', cmap='jet_r', clims=(-3, 1))
+    image = np.full((nr, nc), np.nan)
+    j = 0
+    for i in range(nr):
+        if (i % ngg) == 2:
+            continue
+
+        image[i] = optstat[j:j + nc, i % 3]
+
+        # print(i, image[i].shape, optstat[j:j+nc, i % 3].shape, j)
+
+        if not (i % 3):
+            j += nc % 3
+
+    # extent = [0, nc, 0, nf] ; aspect=nc/nf
+
+    im = ImageDisplay(image, origin='upper', cmap='jet_r',
+                      interval='minmax')
     cmap = im.imagePlot.get_cmap()
+
+    # hack the yscale
+    fmt = LinearRescaleFormatter(nf / nr)
+    im.ax.yaxis.set_major_formatter(fmt)
+    #
 
     proxies = [Rectangle((0, 0), 1, 1, color=c)
                for c in cmap(np.linspace(0, 1, 5))]
     labels = ['error', 'SNR < 1.2. skipped', 'not converged', 'on bound', 'OK']
     im.ax.legend(proxies, labels, loc=2, bbox_to_anchor=(0, 1.2))
-
-
 
     return im.figure
 
@@ -94,7 +298,8 @@ def diagnostics(modelDb, locData):
     # print(tbl)
 
     # Check which model is preferred
-    lbgb = modelDb.best.ix == modelDb._ix[modelDb.db.bg]  # this is where the pure bg model is the best fit
+    lbgb = modelDb.best.ix == modelDb._ix[
+        modelDb.db.bg]  # this is where the pure bg model is the best fit
 
     badflux = np.isnan(modelDb.best.flux) | lbgb
     fpm = np.ma.masked_where(badflux, modelDb.best.flux)
@@ -133,9 +338,12 @@ def fit_summary(modelDb, locData):
 
     # summary table
     coo = locData.rcoo[modelDb.ix_fit]
-    col_headers = list(map('Star {0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, modelDb.ix_fit, coo))
+    col_headers = list(
+            map('Star {0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, modelDb.ix_fit,
+                coo))
     tbl = Table(tbl,
-                title='Fitting summary: Unconvergent', title_props=dict(txt='bold', bg='m'),
+                title='Fitting summary: Unconvergent',
+                title_props=dict(txt='bold', bg='m'),
                 row_headers=names, col_headers=col_headers)
 
     return tbl
@@ -150,12 +358,13 @@ def diagnostic_figures(locData, apData, modelDb, fitspath=None, save=True):
     rcoo = locData.rcoo  # finder.Rcoo[ix]
     ir = locData.ir  # finder.ir
     w = locData.window  # finder.window
-    star_labels = list(map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, ix, rcoo))
+    star_labels = list(
+            map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, ix, rcoo))
 
     # #plot some statistics on the parameters!!
     # masked parameters, masked parameter variance
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")  # nans cause Runtimewarning
+        warnings.simplefilter('ignore')  # nans cause Runtimewarning
         pm, paltm, fpm = diagnostics(modelDb, locData)
     fitcoo = pm[..., 1::-1]  # - locData.rcoo[list(modelDb.ix_fit)]
     fitcoo -= np.nanmedian(fitcoo, 0)
@@ -250,82 +459,84 @@ def plot_param_hist(p, names):
     return fig
 
 
-def plot_density_map(data, range=None, bins=100, filename=None, **kws):
-    """
-    Plot coordinate scatter. Plot density map in regions with many points for
-    efficiency
-    """
-    from matplotlib.cm import get_cmap
-
-    data = np.asarray(data).squeeze()
-    print(data.shape, data.ndim)
-    if data.ndim != 2 or 2 not in data.shape:
-        raise ValueError('`data` should be an array containing 2 column/row '
-                         'vectors.')
-    if data.shape[-1] == 2:
-        data = data.T
-
-    xdat, ydat = data
-
-    # resolve arguments / defaults
-    dthresh = kws.get('density_threshold', 3)  # density threshold
-    cmap = get_cmap(kws.pop('cmap', 'jet'))
-    # bins
-    if np.size(bins) == 1:
-        bins = np.array([bins, bins]).squeeze()  # yx bins
-    # range
-    if range is None:
-        range = [(np.floor(np.nanmin(xdat)), np.ceil(np.nanmax(xdat))),
-                 (np.floor(np.nanmin(ydat)), np.ceil(np.nanmax(ydat)))]
-    range = np.asarray(range)
-
-    # histogram the data
-    hh, locx, locy = np.histogram2d(xdat, ydat, bins, range)
-    posx = np.digitize(xdat, locx)
-    posy = np.digitize(ydat, locy)
-
-    # select points within the histogram
-    ind = (posx > 0) & (posx <= bins[0]) & (posy > 0) & (posy <= bins[1])
-    hhsub = hh[posx[ind] - 1, posy[ind] - 1]  # values of the histogram where the points are
-    xdat1 = xdat[ind][hhsub < dthresh]  # low density points
-    ydat1 = ydat[ind][hhsub < dthresh]
-    # fill the areas with low density by NaNs
-    hh[hh < dthresh] = np.nan
-
-    # plot coordinate scatter
-    fig, ax = plt.subplots(figsize=(8, 8),)
-                           #subplot_kw=dict(aspect='equal'))
-
-    if not np.isnan(hh).all():
-        # plot density map
-        ext = range.flatten()
-        im = ax.imshow(np.flipud(hh.T), cmap=cmap, extent=ext,
-                       interpolation='none', origin='upper')
-
-        from mpl_toolkits.axes_grid1 import AxesGrid, make_axes_locatable
-        divider = make_axes_locatable(ax)
-        cax =divider.append_axes('right', size=0.25, pad=0.1)
-
-        cbar = fig.colorbar(im, cax=cax)
-        cbar.ax.set_ylabel('Density')
-
-    # plot individual points
-    ax.plot(xdat1, ydat1, '.', color=cmap(0))
-
-    ax.set_title('Coord scatter')
-    ax.set(xlabel='x', ylabel='y')
-    ax.grid()
-
-    fig.tight_layout()
-
-    # print('fix coo scatter ' * 100)
-    # embed()
-
-    return fig
+# def plot_density_map(ax, data, range=None, bins=100, filename=None, **kws):
+#     """
+#     Plot coordinate scatter. Plot density map in regions with many points for
+#     efficiency
+#     """
+#     from matplotlib.cm import get_cmap
+#
+#     data = np.asarray(data).squeeze()
+#     # print(data.shape, data.ndim)
+#     if data.ndim != 2 or 2 not in data.shape:
+#         raise ValueError('`data` should be an array containing 2 column/row '
+#                          'vectors.')
+#     if data.shape[-1] == 2:
+#         data = data.T
+#
+#     xdat, ydat = data
+#
+#     # resolve arguments / defaults
+#     dthresh = kws.get('density_threshold', 3)  # density threshold
+#     cmap = get_cmap(kws.pop('cmap', 'jet'))
+#     # bins
+#     if np.size(bins) == 1:
+#         bins = np.array([bins, bins]).squeeze()  # yx bins
+#     # range
+#     if range is None:
+#         range = [(np.floor(np.nanmin(xdat)), np.ceil(np.nanmax(xdat))),
+#                  (np.floor(np.nanmin(ydat)), np.ceil(np.nanmax(ydat)))]
+#     range = np.asarray(range)
+#
+#     # histogram the data
+#     hh, locx, locy = np.histogram2d(xdat, ydat, bins, range)
+#     posx = np.digitize(xdat, locx)
+#     posy = np.digitize(ydat, locy)
+#
+#     # select points within the histogram
+#     ind = (posx > 0) & (posx <= bins[0]) & (posy > 0) & (posy <= bins[1])
+#     # values of the histogram where the points are
+#     hhsub = hh[posx[ind] - 1, posy[ind] - 1]
+#     xdat1 = xdat[ind][hhsub < dthresh]  # low density points
+#     ydat1 = ydat[ind][hhsub < dthresh]
+#     # fill the areas with low density by NaNs
+#     hh[hh < dthresh] = np.nan
+#
+#     # plot coordinate scatter
+#     # fig, ax = plt.subplots(figsize=(8, 8),)
+#     #                        #subplot_kw=dict(aspect='equal'))
+#
+#     if not np.isnan(hh).all():
+#         # plot density map
+#         ext = range.flatten()
+#         im = ax.imshow(np.flipud(hh.T), cmap=cmap, extent=ext,
+#                        interpolation='none', origin='upper')
+#
+#         from mpl_toolkits.axes_grid1 import AxesGrid, make_axes_locatable
+#         divider = make_axes_locatable(ax)
+#         cax = divider.append_axes('right', size=0.25, pad=0.1)
+#
+#         cbar = fig.colorbar(im, cax=cax)
+#         cbar.ax.set_ylabel('Density')
+#
+#     # plot individual points
+#     ax.plot(xdat1, ydat1, '.', color=cmap(0))
+#
+#     ax.set_title('Coord scatter')
+#     ax.set(xlabel='x', ylabel='y')
+#     ax.grid()
+#
+#     fig.tight_layout()
+#
+#     # print('fix coo scatter ' * 100)
+#     # embed()
+#
+#     return fig
 
 
 # @timer
-def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
+def plot_coord_scatter(ax, coo, rcoo, window=None, filename=None,
+                       **kws):
     """
     Plot coordinate scatter. Plot density map in regions with many points for
     efficiency
@@ -334,8 +545,7 @@ def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
     from matplotlib.patches import Rectangle
 
     # plot coordinate scatter
-    fig, ax = plt.subplots(figsize=(8, 8),
-                           subplot_kw=dict(aspect='equal'))
+
     cmap = get_cmap('jet')
 
     # flatten data
@@ -346,8 +556,9 @@ def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
     # xyrange = np.add(window/2, [[-w4,w4],[-w4,w4]]) # hist  range
     # w2 = window / 2
     if window is None:
-        xyrange = np.array([(np.floor(np.nanmin(xdat)), np.ceil(np.nanmax(xdat))),
-                            (np.floor(np.nanmin(ydat)), np.ceil(np.nanmax(ydat)))])
+        xyrange = np.array(
+                [(np.floor(np.nanmin(xdat)), np.ceil(np.nanmax(xdat))),
+                 (np.floor(np.nanmin(ydat)), np.ceil(np.nanmax(ydat)))])
     else:
         w2 = window / 2
         xyrange = np.array([[-w2, w2], [-w2, w2]])
@@ -366,7 +577,8 @@ def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
 
     # select points within the histogram
     ind = (posx > 0) & (posx <= bins[0]) & (posy > 0) & (posy <= bins[1])
-    hhsub = hh[posx[ind] - 1, posy[ind] - 1]  # values of the histogram where the points are
+    hhsub = hh[posx[ind] - 1, posy[
+        ind] - 1]  # values of the histogram where the points are
     xdat1 = xdat[ind][hhsub < dthresh]  # low density points
     ydat1 = ydat[ind][hhsub < dthresh]
     hh[hh < dthresh] = np.nan  # fill the areas with low density by NaNs
@@ -376,7 +588,10 @@ def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
         ext = xyrange.flatten()
         im = ax.imshow(np.flipud(hh.T), cmap=cmap, extent=ext,
                        interpolation='none', origin='upper')
-        cbar = fig.colorbar(im)
+
+        div = make_axes_locatable(ax)
+        cax = div.append_axes('right', '5%')
+        cbar = ax.figure.colorbar(im, cax)
         cbar.ax.set_ylabel('Density')
 
     # plot individual points
@@ -393,24 +608,24 @@ def plot_coord_scatter(coo, rcoo, window=None, filename=None, **kws):
     # ax.set_ylim(lims)
 
     ax.set_title('Coord scatter')
-    ax.set_xlabel('x')
+    ax.set_xlabel('x')  # FIXME: wrong order
     ax.set_ylabel('y')
     ax.grid()
 
-    fig.tight_layout()
+    # fig.tight_layout()
 
     # print('fix coo scatter ' * 100)
     # embed()
 
-    return fig
+    # return fig
 
 
 # @timer
-def plot_coord_walk(coords):  # coords
+def plot_coord_walk(ax, coords):  # coords
     from matplotlib.collections import LineCollection
     # coordinate walk
-    fig, ax = plt.subplots(figsize=(8, 8),
-                           subplot_kw=dict(aspect='equal'))
+    # fig, ax = plt.subplots(figsize=(8, 8),
+    #                        subplot_kw=dict(aspect='equal'))
 
     # segments = coords.reshape(-1, 1, 2)
     # segments[-1, -1] = None
@@ -424,13 +639,35 @@ def plot_coord_walk(coords):  # coords
 
     ax.add_collection(lcol)
     ax.autoscale_view()
-    cbar = fig.colorbar(lcol)
+    #
+    div = make_axes_locatable(ax)
+    cax = div.append_axes('right', '5%')
+    cbar = ax.figure.colorbar(lcol, cax)
+    cbar.ax.set_ylabel('Frame')
 
     ax.grid()
-    ax.set(title='Coord walk', xlabel='x', ylabel='y')
-    cbar.ax.set_ylabel('frame')
+    ax.set(title='Coord walk',
+           xlabel='x', ylabel='y')  # FIXME: wrong order
 
-    return fig  # , lcol
+    # return fig  # , lcol
+
+
+def plot_coord_moves(coords, rcoo):
+    # fig = plt.figure(figsize=(18, 8))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8),
+                                   subplot_kw=dict(aspect='equal'))
+
+    #
+    plot_coord_scatter(ax1, coords, rcoo)
+    #
+    plot_coord_walk(ax2, coords)
+
+    xlim, ylim = (ax2.viewLim.get_points() - rcoo).T
+    ax1.set(xlim=xlim, ylim=ylim)
+
+    fig.tight_layout()
+
+    return fig
 
 
 # @timer
@@ -465,7 +702,6 @@ def plot_coord_jumps(coords):  # coords
 
 
 def plot_appars_walk(appars, names, title=None):
-
     # TODO: histogram ??
 
     nstars = appars.shape[1]
@@ -476,7 +712,7 @@ def plot_appars_walk(appars, names, title=None):
     for i, (ax, pars) in enumerate(zip(axes, appars.swapaxes(0, 1))):
         for x in pars.T:
             ax.plot(x)
-            ax.set_title('Group %i' % i) # TODO add segment labels
+            ax.set_title('Group %i' % i)  # TODO add segment labels
 
         xinv, = np.where(np.isnan(pars).any(1))
         ax.plot(xinv, np.zeros_like(xinv), 'rx')
@@ -519,7 +755,7 @@ def plot_lc_psf(fpm, labels):
 def plot_aperture_flux(fitspath, proc, tracker):
     from astropy.time import Time
 
-    #TODO: label top / right axes
+    # TODO: label top / right axes
 
     # timePath = next(fitspath.parent.glob('*.time'))
     timePath = fitspath.with_suffix('.time')
@@ -648,7 +884,8 @@ def from_params(model, params, scale=3, **kws):
     widths, heights = sigma_xy.T * scale * 2
     angles = np.degrees(ap_data[converged, -1])
 
-    aps = ApertureCollection(coords=coords, widths=widths, heights=heights, angles=angles, **kws)
+    aps = ApertureCollection(coords=coords, widths=widths, heights=heights,
+                             angles=angles, **kws)
     return aps, ap_data
 
 
@@ -673,17 +910,10 @@ def from_params(model, params, scale=3, **kws):
 # ====================================================================================================
 
 
-
-
 from graphical.imagine import VideoDisplayA
 
+
 # def foo(cube, coords, appars):
-
-
-
-
-
-
 
 
 # def display_frame_coords(data, foundCoords, params=None, model=None, window=None,
@@ -806,7 +1036,8 @@ def plot_monitor_data(mon_cpu_file, mon_mem_file):
     cols = cmap(np.linspace(0, 1, Ncpus))
     for i, o in enumerate(occ):
         t = Time(tc, format='unix').plot_date
-        ax1.plot_date(t, o, '.', color=cols[i], label=labels[i], lw=1)  # np.divide(qs, 5e3)
+        ax1.plot_date(t, o, '.', color=cols[i], label=labels[i],
+                      lw=1)  # np.divide(qs, 5e3)
     ax1.plot(t, np.mean(occ, 0), 'k-', label='cpu mean')
 
     ax1.set_xlabel('UT')
@@ -845,7 +1076,8 @@ if __name__ == '__main__':
     qfiles = list(path.rglob('phot.q.dat'))
     qfigs = list(map(plot_q_mon, qfiles))
 
-    cpufiles, memfiles = zip(*zip(*map(path.rglob, ('phot.cpu.dat', 'phot.mem.dat'))))
+    cpufiles, memfiles = zip(
+            *zip(*map(path.rglob, ('phot.cpu.dat', 'phot.mem.dat'))))
     monfigs = list(map(plot_monitor_data, cpufiles, memfiles))
     nlabels = [f.parent.name for f in qfiles]
     wlabels = ['Queues', 'Performance']

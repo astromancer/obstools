@@ -1,3 +1,7 @@
+"""
+Methods for tracking camera movements in CCD photometry
+"""
+
 # import inspect
 import functools
 import itertools as itt
@@ -683,7 +687,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         object array.
         """
 
-        self.logger.info('computing slices!!!')
+        self.logger.debug('computing slices!')
 
         slices = SegmentationImage.slices.fget(self)
         if self.allow_zero:
@@ -1485,10 +1489,11 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
     # TODO: bayesian version
     # TODO: make multiprocessing safe
-    # TODO: pickle!
 
     segmClass = SegmentationHelper
-    snr_weighting = True  # TODO: manage as properties ?
+
+    # TODO: manage as properties ?
+    snr_weighting = True
     snr_cut = 3
     _distance_cut = 10
     _saturation_cut = 95  # %
@@ -1601,6 +1606,10 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         self.offset = [0, 0]
 
         # label logic
+        # if use_labels is None:
+        #     # we want only to use the stars with high snr fro CoM tracking
+
+
         LabelUser.__init__(self, use_labels)
 
     def __call__(self, image, mask=None):
@@ -1644,9 +1653,9 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         # finally return the new coordinates
         return self.rcoo + off
 
-    @property
-    def ngroups(self):
-        return len(self.groups)
+    # @property
+    # def ngroups(self):
+    #     return len(self.groups)
 
     @property
     def nsegs(self):

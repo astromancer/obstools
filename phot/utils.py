@@ -1,5 +1,5 @@
 import logging
-
+import numbers
 import motley
 import numpy
 from motley.progress import ProgressBar
@@ -151,6 +151,42 @@ def table_cdist(sdist, window, _print=False):
         print(tbl)
 
     return tbl  # , c
+
+
+class SampleImage(object):
+    def __init__(self, data, n=None):
+        assert data.ndim == 3
+        self.data = data
+
+    def sample(self, n, subset):
+        """
+        Select a sample of `n` images randomly in the interval `subset`
+
+        Parameters
+        ----------
+        n
+        subset
+
+        Returns
+        -------
+
+        """
+
+        if isinstance(subset, numbers.Integer):
+            subset = (0, subset)  # treat like a slice
+
+        #
+        i0, i1 = subset
+
+        # get frame indices
+        nfirst = min(n, i1 - i0)
+        ix = np.random.randint(i0, i1, n)
+        # create median image for init
+        logger.info('Selecting %i frames from amongst frames (%i->%i) for '
+                    'sample image.', n, i0, i1)
+        return self.data[ix]
+
+    def median(self, ):
 
 
 def rand_median(cube, ncomb, subset, nchoose=None):

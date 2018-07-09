@@ -505,7 +505,7 @@ class FrameProcessor(LoggingMixin):
     def optimal_aperture_photometry(self, i, data, residu, coords, tracker,
                                     status, p0, sky_width=5, sky_buf=0.5):
         """
-        Optimization step to choose aperture size and shape.
+        Optimization step to determine best aperture size and shape.
 
         first try for bright stars, then for faint.  if faint opt failed fall
         back to results for bright. if both fail, fall back to opt init values
@@ -548,6 +548,9 @@ class FrameProcessor(LoggingMixin):
         prevr = None
         count = 0
         last_group = min(tracker.ngroups, 2)
+
+        # FIXME: tracker is really a modeller
+
         for g, (name, labels) in enumerate(tracker.groups.items()):
             if 0 in labels:
                 continue  # this is the sky image
@@ -634,6 +637,32 @@ class FrameProcessor(LoggingMixin):
 
     def optimize_apertures(self, i, p0, cooxy, im, photmasks, im_sky, skymask,
                            r_sky_min, sky_width, sky_buf, labels):
+
+        """
+
+        Parameters
+        ----------
+        i
+        p0
+        cooxy
+        im
+        photmasks
+        im_sky
+        skymask
+        r_sky_min
+        sky_width
+        sky_buf
+        labels
+
+        Returns
+        -------
+        flags -
+         1 : success
+         0 : Optimization converged on boundary
+        -1 : no convergence
+        -2 : low SNR, skip
+        -3 : minimize subroutine exception
+        """
 
         # optimized aperture photometry - search for highest snr aperture
         # create optimizer
