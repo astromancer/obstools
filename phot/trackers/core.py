@@ -14,7 +14,7 @@ from astropy.stats import median_absolute_deviation as mad
 from astropy.stats.sigma_clipping import sigma_clip
 from astropy.utils import lazyproperty
 from obstools.phot.utils import duplicate_if_scalar
-from photutils.detection.core import detect_threshold  # slow import!!
+from photutils.detection.core import detect_threshold
 from photutils.segmentation import detect_sources, SegmentationImage
 from recipes.dict import ListLike, AttrReadItem
 from recipes.logging import LoggingMixin

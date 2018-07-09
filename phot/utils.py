@@ -153,12 +153,14 @@ def table_cdist(sdist, window, _print=False):
     return tbl  # , c
 
 
-class SampleImage(object):
-    def __init__(self, data, n=None):
+class ImageSampler(object):
+    def __init__(self, data, sample_size=None):
         assert data.ndim == 3
         self.data = data
+        self.default_sample_size = sample_size
+        self._axis = 0
 
-    def sample(self, n, subset):
+    def sample(self, n=None, subset=None):
         """
         Select a sample of `n` images randomly in the interval `subset`
 
@@ -172,21 +174,35 @@ class SampleImage(object):
 
         """
 
-        if isinstance(subset, numbers.Integer):
+        if n is None and self.sample_size is None:
+            raise ValueError('Please give sample size (or initialize this '
+                             'class with a sample size')
+
+        if isinstance(subset, numbers.Integral):
             subset = (0, subset)  # treat like a slice
 
         #
         i0, i1 = subset
 
         # get frame indices
-        nfirst = min(n, i1 - i0)
+        # nfirst = min(n, i1 - i0)
         ix = np.random.randint(i0, i1, n)
         # create median image for init
-        logger.info('Selecting %i frames from amongst frames (%i->%i) for '
-                    'sample image.', n, i0, i1)
+        # logger.info('Selecting %i frames from amongst frames (%i->%i) for '
+        #             'sample image.', n, i0, i1)
         return self.data[ix]
 
-    def median(self, ):
+    def max(self, n=None, subset=None):
+        return self.sample(n, subset).max(self._axis)
+
+    def mean(self, n=None, subset=None):
+        return self.sample(n, subset).mean(self._axis)
+
+    def std(self, n=None, subset=None):
+        return self.sample(n, subset).std(self._axis)
+
+    def median(self, n=None, subset=None):
+        return np.median(self.sample(n, subset), self._axis)
 
 
 def rand_median(cube, ncomb, subset, nchoose=None):

@@ -39,7 +39,7 @@ import more_itertools as mit
 chrono.mark('Imports: 3rd party')
 
 # local application libs
-from obstools.phot.utils import rand_median
+from obstools.phot.utils import ImageSampler#, rand_median
 from obstools.phot.proc import FrameProcessor
 from obstools.modelling.utils import make_shared_mem_nans
 
@@ -75,14 +75,6 @@ chrono.mark('Import: local libs')
 #         ProgressLogger.__init__(self, precision, width, symbol, align, sides, logname)
 #         self.counter = SyncedCounter()
 
-
-class SampleImage(object):
-    def __init__(self, data):
-
-        assert data.ndim == 3
-        self.data = data
-
-    def sample(self, ):
 
 
 def display(image, title=None, ui=None, **kws):
@@ -310,7 +302,9 @@ if __name__ == '__main__':
     calib = (None, None)
 
     # create sample image
-    image = rand_median(cube, 10, 100)  # / flat
+    sampler = ImageSampler(cube)
+    image = sampler.median(10, 100)
+    # randimage = rand_median(cube, 10, 100)  # / flat
 
     # extract flat field from sky
     # flat = slotmode.make_flat(cube[2136:])
@@ -426,7 +420,7 @@ if __name__ == '__main__':
     # init the tracker
     # select here groups by snr to do photometry
     groupsOpt = groups[1:3]
-    labels4CoM = np.hstack(groups[1:3])
+    labels4CoM = np.hstack(groupsOpt)
     com = segm.com_bg(resi, labels4CoM)
     tracker = SlotModeTracker(com, seg_data, groupsOpt, labels4CoM,
                               bad_pixel_mask)
@@ -438,6 +432,7 @@ if __name__ == '__main__':
     mxshift, maxImage, segImx = check_image_drift(cube, 1000, bad_pixel_mask,
                                                   snr=5)
 
+    # TODO: also check kif bg level changes significantly during run
 
     # display
     displayed = Dict()
@@ -520,7 +515,7 @@ if __name__ == '__main__':
     # cmb = AperturesFromModel(3, (8, 12))
 
     chrono.mark('Pre-compute')
-    input('Musical interlude')
+    # input('Musical interlude')
 
     # ===============================================================================
     # create shared memory
