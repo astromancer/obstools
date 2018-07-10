@@ -17,7 +17,7 @@ from .utils import make_shared_mem
 from ..phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 
 
-from IPython import embed
+# from IPython import embed
 
 # TODO: class that fits all stars simultaneously with MCMC. compare for speed
 # / accuracy etc...
