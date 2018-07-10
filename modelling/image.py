@@ -3,12 +3,14 @@ import ctypes
 import warnings
 from collections import defaultdict
 from pathlib import Path
+import itertools as itt
 
 import numpy as np
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 from recipes.dict import AttrDict
 # from recipes.array import neighbours
 from recipes.logging import LoggingMixin
+from recipes.string import seq_repr_trunc
 
 from .core import Model, CompoundModel
 from .utils import make_shared_mem
@@ -34,6 +36,103 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
     # use record arrays for fit results (structured parameters)
     use_record = True
+
+    # @classmethod
+    # def from_image(cls, image, mask=None, snr=(10, 7, 5, 3),
+    #                npixels=(7, 5, 3), edge_cutoff=None, deblend=(True, False),
+    #                dilate=(4, 1), models=(), **kws):
+    #     """Multi-threshold blob detection"""
+    #
+    #
+    #     from obstools.phot.trackers import SegmentationHelper, LabelGroups, \
+    #         Record, iter_repeat_last
+    #
+    #     cls.logger.info('Running detection loop')
+    #
+    #     # make iterables
+    #     variters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
+    #     vargen = zip(*variters)
+    #
+    #     # segmentation data
+    #     data = np.zeros(image.shape, int)
+    #     original_mask = mask
+    #     if mask is None:
+    #         mask = np.zeros(image.shape, bool)
+    #
+    #     # first round detection without background model
+    #     residual = image
+    #     results = None
+    #     # keep track of group info + detection meta data
+    #     groups = LabelGroups(bg=[0])
+    #     groups.info = Record()
+    #     groups._auto_name_fmt = groups.info._auto_name_fmt = 'stars%i'
+    #     counter = itt.count(0)
+    #     go = True
+    #     j = 0
+    #     while go:
+    #         # keep track of iteration number
+    #         count = next(counter)
+    #         group_name = 'stars%i' % count
+    #
+    #         # detect
+    #         _snr, _npix, _dil, _debl = next(vargen)
+    #         sh = SegmentationHelper.detect(residual, mask, None, _snr, _npix,
+    #                                        edge_cutoff, _debl, _dil)
+    #
+    #         # update mask, get new labels
+    #         new_mask = sh.to_bool()
+    #         new_data = new_mask & np.logical_not(mask)
+    #
+    #         # since we dilated the detection masks, we may now be overlapping
+    #         # with previous detections. Remove overlapping pixels here
+    #         if dilate:
+    #             overlap = data.astype(bool) & new_mask
+    #             # print('overlap', overlap.sum())
+    #             sh.data[overlap] = 0
+    #             new_data[overlap] = False
+    #
+    #         if not new_data.any():
+    #             break
+    #
+    #         # aggregate
+    #         new_labelled = sh.data[new_data]
+    #         new_labels = np.unique(new_labelled)
+    #         data[new_data] += new_labelled + j
+    #         mask = mask | new_mask
+    #         # group
+    #         group = new_labels + j
+    #         groups[group_name] = group
+    #         groups.info[group_name] = \
+    #             dict(snr=_snr, npixels=_npix, dilate=_dil, deblend=_debl)
+    #         # update
+    #         j += new_labels.max()
+    #
+    #         #
+    #         # logger.info('detect_loop: round nr %i: %i new detections: %s',
+    #         #       count, len(group), tuple(group))
+    #         cls.logger.info(
+    #                 'detect_loop: round nr %i: %i new detections: %s',
+    #                 count, len(group), seq_repr_trunc(tuple(group)))
+    #
+    #         if count == 0:
+    #             # initialise the background model
+    #             model = cls(sh, kws, groups)
+    #         else:
+    #             # add segments to ignore
+    #             cls.logger.info('adding segments')
+    #             _, labels = model.segm.add_segments(sh, replace=True)
+    #
+    #             model.groups.append(labels)
+    #
+    #         # return model, results, data, mask, groups
+    #
+    #         # fit background
+    #         mimage = np.ma.MaskedArray(image, original_mask)
+    #         results, residual = model._fit_reduce(mimage)
+    #
+    #     # TODO: log what you found
+    #     return model, results, data, mask, groups
+
 
     def __init__(self, segm, models, label_groups=None):
         """
@@ -78,6 +177,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         # helper method for unpickling.
         return self.__class__, \
                (self.segm, list(self.models), self.groups)
+
 
     def model_to_labels(self):
         """

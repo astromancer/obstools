@@ -8,8 +8,6 @@ from pathlib import Path
 
 import logging.handlers
 
-
-
 # ===============================================================================
 # Check input file | doing this before all the slow imports
 from graphical.multitab import MplMultiTab
@@ -39,7 +37,7 @@ import more_itertools as mit
 chrono.mark('Imports: 3rd party')
 
 # local application libs
-from obstools.phot.utils import ImageSampler#, rand_median
+from obstools.phot.utils import ImageSampler  # , rand_median
 from obstools.phot.proc import FrameProcessor
 from obstools.modelling.utils import make_shared_mem_nans
 
@@ -74,7 +72,6 @@ chrono.mark('Import: local libs')
 #                  logname='progress'):
 #         ProgressLogger.__init__(self, precision, width, symbol, align, sides, logname)
 #         self.counter = SyncedCounter()
-
 
 
 def display(image, title=None, ui=None, **kws):
@@ -297,7 +294,6 @@ if __name__ == '__main__':
         # flat = neighbourhood_median(cube, flat_mask)  #
         # flat_flat = flat[flat_mask]
 
-
     # calib = (None, flat)
     calib = (None, None)
 
@@ -346,27 +342,13 @@ if __name__ == '__main__':
     vignette = Vignette2DCross(orders, breaks, smoothness)
     vignette.set_grid(image)
 
+
     # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
     # bpy = (0, 10, 37.5, sy)
     # bpy = (0, 3.5, 17.5, sy)  # 6x6
     # orders = (1, 3), (1, 1, 1)
     # breaks = (0, 162, sx), (0, 3.5, 17.5, sy)
     # breaks = bpx, bpy
-
-
-
-    # load SementationHelper from pickle
-    # segmPath = fitspath.with_suffix('.segm.pkl')
-
-    # First initialize the SlotBackground model from the image
-    snr = (10, 7, 5, 3)
-    npixels = (7, 5, 3)
-    dilate = (5, 3)
-
-    # models = []
-    mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
-            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
-
 
     # TODO: hyperparameter search
     def hyperparameter_search(breaks):
@@ -392,6 +374,69 @@ if __name__ == '__main__':
         'todo'
 
 
+
+
+
+    # load SementationHelper from pickle
+    # segmPath = fitspath.with_suffix('.segm.pkl')
+
+    raise SystemExit
+
+    # First initialize the SlotBackground model from the image
+    snr = (10, 7, 5, 3)
+    npixels = (7, 5, 3)
+    dilate = (5, 3)
+
+    # models = []
+    mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
+            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+
+    #
+    raise SystemExit
+
+    # experimental
+    # ..........................................................................
+    # loop sample median images across cube to get relative star positions
+
+    # ui = MplMultiTab()
+    snr = 3.0
+    npix = 3
+    ncomb = 25
+    bg = vignette(p0bg.vignette)
+    coms = []
+    nproc_init = 10
+    for interval in mit.pairwise(range(0, len(cube), len(cube) // nproc_init)):
+        image = sampler.median(ncomb, interval)
+
+        mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
+                image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+
+        segm = SegmentationHelper.detect(image, bad_pixel_mask, bg, snr, npix)
+        com = segm.com_bg(image)
+        coms.append(com)
+
+        im = segm.display()
+
+    #     ui.add_tab(im.figure)
+    # ui.show()
+
+    ndetected = list(map(len, coms))
+    max_nstars = max(ndetected)
+    comsRef = coms[np.argmax(ndetected)]
+    rxx = np.full((len(coms), max_nstars, 2), np.nan)
+    for i, com in enumerate(coms):
+        # print('i', i)
+        if len(com) == max_nstars:
+            rxx[i] = np.atleast_2d(com) - com[0]
+        else:
+            for cx in com:
+                j = np.square((comsRef - cx)).sum(1).argmin()
+                rxx[i, j] = cx - com[0]
+
+    #
+    rvec = np.nanmean(rxx, 0)
+    # ..........................................................................
+
     # check for non-convergence
     # failed = [np.isnan(x).any() for x in [p0bg.bleed, p0bg.vignette.y,
     #                                       p0bg.vignette.x]]
@@ -399,7 +444,7 @@ if __name__ == '__main__':
         failed = np.isnan(p0bg.bleed).any()
         if failed:
             # replace nans with zero
-            p0bg.bleed = 0   # Maybe do this at the model class ???
+            p0bg.bleed = 0  # Maybe do this at the model class ???
 
     # segmentation (this one only contains the stars, not the frame transfer
     # bleed masks
@@ -454,17 +499,14 @@ if __name__ == '__main__':
         # FIXME: -------------------------------------------------------
         # could be `segImx.slices.plot(displayed.drift.ax, ec='maroon')`
         from obstools.phot.trackers.core import Slices
+
         slices = Slices(segImx)
         r = slices.plot(displayed.drift.ax, edgecolor='maroon')
         # --------------------------------------------------------------
 
-
-
         # plot cross sections for bg fit
-        figs_yx = mdlr.plot_fit_results(skyImageMasked, p0bg)
-        for w, fig in zip('yx', figs_yx):
-            obj = idisplay(fig) if args.live else fig
-            displayed.cross[w] = obj
+        fig = mdlr.plot_fit_results(skyImageMasked, p0bg)
+        displayed.cross = (idisplay(fig) if args.live else fig)
 
         # TODO: plot psf for different group detections + models
 
@@ -491,8 +533,6 @@ if __name__ == '__main__':
     # ImageDisplay(tracker.segm)
     # ImageDisplay(tracker.mask_segments(resi, bad_pixel_mask))
     # mdlBG.plot_fit_results(tracker.mask_segments(image, bad_pixel_mask), p0bg)
-
-
 
     # TODO: for slotmode: if stars on other amplifiers, can use these to get sky
     # variability and decorellate TS
@@ -564,6 +604,7 @@ if __name__ == '__main__':
     chunks2 = chunks.copy()
     rngs = mit.pairwise(next(zip(*chunks2)) + (subset[1],))
 
+
     # mdlr.logger.info('hello world')
 
     # raise SystemExit
@@ -619,7 +660,6 @@ if __name__ == '__main__':
         #     proc.process(i, cube, calib, residu, coords, opt_stat,
         #                  tracker, clone, p0bg, p0ap, sky_width, sky_buf)
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 
         # rng = next(rngs)
         # proc_(rng, cube, residu, coords, opt_stat,tracker, mdlr, p0bg, p0ap, sky_width, sky_buf)

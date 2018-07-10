@@ -301,7 +301,7 @@ class SegmentedArray(np.ndarray):
     def __setitem__(self, key, value):
         np.ndarray.__setitem__(self, key, value)
         # set the data in the SegmentationHelper
-        print('Hitting up set data')
+        # print('Hitting up set data')
         self.parent.data = self
 
     def __reduce__(self):
@@ -444,7 +444,6 @@ class Slices(np.recarray):
         windows = PatchCollection(rectangles, **kws)
         ax.add_collection(windows)
         return windows
-
 
 
 class SegmentationHelper(SegmentationImage, LoggingMixin):
