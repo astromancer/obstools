@@ -107,7 +107,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
     def fit(self, p0, data, grid, stddev=None, *args, **kws):
         """
-        Minimize `objective` using `minimizer` algorithm
+        Minimize `objective` using `scipy.minimize`
 
         Parameters
         ----------
@@ -308,7 +308,7 @@ class CompoundModel(Model, ModelContainer):
         dtypes = [mdl.get_dtype() for mdl in self.values()]
         ncomponents = list(map(len, dtypes))
         has_compound = np.greater(ncomponents, 1).any()
-        # if we have nested  compound models, need to keep structured dtypes
+        # if we have nested compound models, need to keep structured dtypes
         if has_compound:
             return list(zip(self.names, dtypes))
 
