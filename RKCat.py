@@ -1,15 +1,21 @@
-import re
+
+# builtin libs
 import logging
+import re
+
+# third-party libs
+import numpy as np
+from astropy.table import Table
+from astropy.coordinates import SkyCoord
+
+# local libs
+from recipes.iter import grouper
 import functools
 import itertools as itt
 from collections import OrderedDict
 
 # 12
-import numpy as np
-from astropy.coordinates import SkyCoord
-from astropy.table import Table
 
-from recipes.iter import interleave, grouper
 
 from IPython import embed
 

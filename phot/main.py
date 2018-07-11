@@ -375,8 +375,6 @@ if __name__ == '__main__':
 
 
 
-
-
     # load SementationHelper from pickle
     # segmPath = fitspath.with_suffix('.segm.pkl')
 
@@ -388,7 +386,7 @@ if __name__ == '__main__':
     dilate = (5, 3)
 
     # models = []
-    mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
+    mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
             image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
     #

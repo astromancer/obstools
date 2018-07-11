@@ -136,6 +136,7 @@ class Model(OptionallyNamed, LoggingMixin):
             if samesame:
                 self.logger.warning('"Converged" result parameters identical to'
                                     ' initial guess %s', p0)
+            # TODO: also warn if any close ?
             else:
                 self.logger.debug('Successful fit %s', self.name)
                 return result.x
