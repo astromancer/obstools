@@ -26,7 +26,6 @@ def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
         size_each = sample_size // data.shape[axis]
         return np.apply_along_axis(
                 _sample_stat, axis, data, statistic, size_each, replace)
-
     else:
         raise ValueError('Invalid axis')
 
@@ -337,9 +336,78 @@ class SummaryStatsMixin(object):
         return super().fit(p0, y, grid, stddev, **kws)
 
 
-class NestedParameters(object):  # could be an array subclass ??
+def _assure_tuple(name, obj):
+    # turns integers to tuples, passes tuples, and borks on anything else
+    return name, assure_tuple(obj)
+
+
+def _make_dtype(name, array, base_dtype='f'):
+    # print('_from_arrays got', name, array)
+    array = np.asarray(array)
+    return name, base_dtype, array.shape
+
+
+def walk(obj, do=_assure_tuple, lvl=0, container_out=list, flat=False):
+    # iterate a nested container (usually dict). Execute the function `do` on
+    # each item
+
+    if not isinstance(obj, dict):
+        raise ValueError('dict please')
+
+    for k, v in obj.items():
+        if not isinstance(k, str):
+            raise ValueError('Not a valid name')
+
+        if isinstance(v, (dict,)):
+            # recurse
+            gen = walk(v, do, lvl + 1, container_out)
+            if flat:
+                yield from gen
+            else:
+                yield k, container_out(gen)
+        else:
+            # print('do', k, v, lvl)
+            yield do(k, v)
+
+
+class Parameters(np.ndarray):
     """
-    Helper class for going to and from structured parameter arrays
+    Array subclass that serves as a container for nested parameters
+    """
+
+    use_record = True
+
+    def __new__(cls, base_dtype='f', **kws):
+
+        # subtype, shape, dtype = float, buffer = None, offset = 0,
+        # strides = None, order = None,
+
+        # primary objective of this class is to provide the ability to
+        # initialize memory from keyword, array pairs
+        # hence only keyword args accepted for the nonce
+        print('In __new__ with class %s' % cls)
+
+        # first we have to construct the dtype.
+        dtype = list(walk(kws, _total_size))
+
+        # return super(NestedParameters, cls).__new__(cls, **kws)
+
+    def __array_finalize__(self, obj):
+        # object creation housekeeping
+        print('In array_finalize:')
+        print('   self type is %s' % type(self))
+        print('   obj type is %s' % type(obj))
+
+        if obj is None:
+            # explicit constructor eg:  NestedParameters(foo=1)
+            return
+
+        #
+
+
+class NestedParameters(np.ndarray):
+    """
+    Array subclass that serves as a container for nested parameters
     """
 
     use_record = True
@@ -352,10 +420,6 @@ class NestedParameters(object):  # could be an array subclass ??
     @classmethod
     def from_arrays(cls, base_dtype='f', **kws):  # fromkeys ???
         obj = cls(cls._make_dtype, base_dtype, **kws)
-
-    def __array_finalize__(self):
-        # object creation housekeeping
-
 
     def __init__(self, _make=None, base_dtype='f', **kws):
         """
@@ -456,10 +520,8 @@ class NestedParameters(object):  # could be an array subclass ??
                 else:
                     yield k, container_out(gen)
             else:
-                print('do', k, v, lvl)
+                # print('do', k, v, lvl)
                 yield do(k, v)
-                # k, v = do(k, v)
-                # yield k, v
 
     def empty(self, shape=()):
         out = np.empty(shape, self.dtype)

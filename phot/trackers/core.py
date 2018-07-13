@@ -285,17 +285,17 @@ class SegmentedArray(np.ndarray):
     """
 
     def __new__(cls, input_array, parent):
-        # Input array is an already formed ndarray instance
+        # Input data is array-like structure
         obj = np.array(input_array)
 
         # initialize with data
         super_ = super(SegmentedArray, cls)
         obj = super_.__new__(cls, obj.shape, int)
-        super_.__setitem__(obj, ..., input_array)
+        super_.__setitem__(obj, ..., input_array)  # populate entire array
 
         # add SegmentationHelper instance as attribute to be updated upon
         # changes to segmentation data
-        obj.parent = parent
+        obj.parent = parent  # FIXME: this will be missed for new-from-template
         return obj
 
     def __setitem__(self, key, value):
@@ -317,8 +317,10 @@ class SegmentedArray(np.ndarray):
     def __array_finalize__(self, obj):
         #
         if obj is None:
+            # explicit constructor:  `SegmentedArray(data)`
             return
 
+        # view casting or new-from-template constructor
         if hasattr(obj, 'parent'):
             self.parent = obj.parent
 
