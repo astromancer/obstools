@@ -1,3 +1,7 @@
+import functools
+import numbers
+import operator
+
 import logging
 from pathlib import Path
 
@@ -5,9 +9,24 @@ import numpy as np
 
 from recipes.string import get_module_name
 
-
 # module level logger
 logger = logging.getLogger(get_module_name(__file__, 2))
+
+
+def prod(x):
+    """Product of a list of numbers; ~40x faster vs np.prod for Python tuples"""
+    if len(x) == 0:
+        return 1
+    return functools.reduce(operator.mul, x)
+
+
+def assure_tuple(v):
+    if isinstance(v, numbers.Integral):
+        return v,
+    if isinstance(v, tuple):
+        return v
+    else:
+        raise ValueError('bad item %s of type %r' % (v, type(v)))
 
 
 def make_shared_mem(loc, shape=None, dtype=None, fill=None, clobber=False):
@@ -42,7 +61,7 @@ def make_shared_mem(loc, shape=None, dtype=None, fill=None, clobber=False):
     # create memmap
     if new:
         logger.info('Creating memmap of shape %s and dtype %s at %r',
-                     shape, dtype, filename)
+                    shape, dtype, filename)
     else:
         logger.info('Loading memmap at %r', filename)
 

@@ -378,7 +378,6 @@ if __name__ == '__main__':
     # load SementationHelper from pickle
     # segmPath = fitspath.with_suffix('.segm.pkl')
 
-    raise SystemExit
 
     # First initialize the SlotBackground model from the image
     snr = (10, 7, 5, 3)
