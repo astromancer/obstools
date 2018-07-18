@@ -26,6 +26,9 @@ import logging
 
 # from IPython import embed
 
+# TODO: watershed segmentation on the negative image
+#
+
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
 

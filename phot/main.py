@@ -335,7 +335,7 @@ if __name__ == '__main__':
     sy, sx = ishape
     orders = orders_x, orders_y = (5, 1), (3, 1, 3)
     breaks = (0, 10, sx), (0, 10, 38, sy)  # 3x3
-    smoothness = (False, False)
+    smoothness = (False, True)
 
     from slotmode.vignette import Vignette2DCross
 
@@ -388,7 +388,25 @@ if __name__ == '__main__':
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
             image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
-    #
+    # piss --------------------------------------------------------------
+
+    segm = SegmentationHelper.detect(image, bad_pixel_mask)
+
+    mimage = segm.mask_segments(image)
+    mimage.mask |= bad_pixel_mask
+
+    # media, madness, scale = vignette.get_cross_sections(mimage)
+    media = {'x': np.ma.median(mimage, 0),
+             'y': np.ma.median(mimage, 1)}
+    std = {'x': np.ma.std(mimage, 0),
+           'y': np.ma.std(mimage, 1)}
+    my, mx = vignette.models
+
+
+
+
+    # piss --------------------------------------------------------------
+
     raise SystemExit
 
     # experimental
