@@ -11,7 +11,7 @@ from scipy.optimize import minimize
 from recipes.logging import LoggingMixin
 from recipes.dict import AttrReadItem, ListLike, pformat as pformatDict
 
-from .utils import make_shared_mem, prod, assure_tuple
+from obstools.modelling.utils import make_shared_mem, prod, assure_tuple
 
 
 def _sample_stat(data, statistic, sample_size, replace=True):
@@ -21,7 +21,7 @@ def _sample_stat(data, statistic, sample_size, replace=True):
 def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
     # statistics on samples from ndarray
     if axis is None:
-        return _sample_stat(data, statistic, sample_size, replace)
+        return _sample_stat(data.ravel(), statistic, sample_size, replace)
 
     elif isinstance(axis, numbers.Integral):
         size_each = sample_size // data.shape[axis]
@@ -112,8 +112,11 @@ class OptionallyNamed(object):
 class Model(OptionallyNamed, LoggingMixin):
     """Base class for model"""
 
+    # TODO: have a classmethod here that can turn on and off active view
+    # castings so that we can work with nested parametes more easily
+
     npar = None  # sub-class should set  #todo determine intrinsically from p?
-    base_dtype = 'f'
+    base_dtype = float  # FIXME - remove this here
     objective = None
 
     # minimizer = minimize
@@ -125,7 +128,7 @@ class Model(OptionallyNamed, LoggingMixin):
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
 
-    def get_dtype(self):   # todo: use p0guess to determine the dtype ?
+    def get_dtype(self):  # todo: use p0guess to determine the dtype ?
         npar = self.npar
         if npar is None:
             raise TypeError('Subclass should set attribute `npar`')
@@ -135,7 +138,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return [(self.get_name(), self.base_dtype, npar)]
 
     def residuals(self, p, data, grid=None):
-        """Difference between data (observations) and model. A.k.a. Deviation"""
+        """Difference between data (observations) and model. a.k.a. deviation"""
         return data - self(p, grid)
 
     def rs(self, p, data, grid=None):
@@ -207,8 +210,8 @@ class Model(OptionallyNamed, LoggingMixin):
     #     #  - from:  https://en.wikipedia.org/wiki/Akaike_information_criterion
 
     def logLikelihood(self, p, data, grid=None, stddev=None):  # lnLh
-        # assuming gaussian distributed data here
-        return self.wrss(p, data, grid, stddev)
+        # assuming uncorrelated, gaussian distributed data here
+        return -self.wrss(p, data, grid, stddev)
 
     def pre_process(self, p0, data, grid=None, stddev=None, *args, **kws):
         """This will be run prior to the minimization routine"""
@@ -243,7 +246,15 @@ class Model(OptionallyNamed, LoggingMixin):
         # nested parameters: flatten prior to minimize, re-structure post-fit
         type_, dtype = type(p0), p0.dtype
         if isinstance(p0, Parameters):
-            p0 = p0.unwrapped()
+            p0 = p0.unwrapped
+
+        # check for nans
+        if np.isnan(data).any():
+            self.logger.warning('Your data contains nans.')
+
+        # check for masked data
+        if np.ma.is_masked(data):
+            self.logger.warning('Your data has masked elements.')
 
         # minimization
         p = self._fit(p0, data, grid, stddev=None, *args, **kws)
@@ -330,6 +341,8 @@ class DataTransformBase(LoggingMixin):
 
 class RescaleInternal(DataTransformBase):
     def get_scale(self, data, sample_size=100, axis=None):
+        # Grab `sample size` elements randomly from the data array and
+        # calculate the sample median.
         return nd_sampler(data, np.median, sample_size, axis)
 
     def transform(self, data):
@@ -364,23 +377,33 @@ class SummaryStatsMixin(object):
         return super().fit(p0, y, grid, stddev, **kws)
 
 
+#
+#
+def echo(*_):
+    return _
+
+
 class _PHelper(object):
     def __init__(self, base_dtype=float):
         self.npar = 0
         self.base_dtype = base_dtype
 
-    def get_npar(self, dtype):
+    @staticmethod
+    def get_npar(dtype):
         return sum(_walk_dtype_size(dtype))
 
     @staticmethod
     def get_size(data):
         return data.size
 
+    def make_dtype_shape(self, name, shape):
+        return name, self.base_dtype, shape
+
     def make_dtype(self, name, data):
         # print('_from_arrays got', name, array)
-        a = np.asarray(data)
-        self.npar += a.size
-        return name, self.base_dtype, a.shape
+        shape = get_shape(data)
+        self.npar += prod(shape)
+        return name, self.base_dtype, shape
 
     def get_data(self, _, data):
         return data
@@ -389,40 +412,219 @@ class _PHelper(object):
         # turns integers to tuples, passes tuples, and borks on anything else
         return name, assure_tuple(obj)
 
-    def walk(self, obj, do=None, lvl=0, container_out=list, flat=False,
-             with_keys=True):
-        # iterate a nested container (usually dict). Execute the function
-        # `do` on each item
-        if do is None:
-            do = self._assure_tuple
+    @staticmethod
+    def walk(obj, call=echo, flat=False, with_keys=True,
+             container_out=list, recurse_types=None):
+        """
+        recursive walker for dict-like objects. no safeguards, don't blow
+        anything up!
+        """
 
-        if isinstance(obj, Parameters):
-            # handle use case `Parameters(y=y, x=x)` where `x` and/or `y` are
-            #  themselves `Parameter` objects
-            obj = obj.to_dict()
+        if recurse_types is None:
+            recurse_types = RECURSE_TYPES
 
-        if not isinstance(obj, dict):
-            raise ValueError('dict please')
+        #  multiple dispatch item_getter for flexible obj construction
+        for key, item in item_getter(obj):
+            # print('key', key, 'item', type(item),
+            #       isinstance(item, recurse_types))
 
-        for k, v in obj.items():
-            if not isinstance(k, str):
-                raise ValueError('Not a valid name')
+            if not isinstance(key, str):
+                raise ValueError('Not a valid name: %r' % key)
 
-            if isinstance(v, (dict,)):
+            if isinstance(item, recurse_types):
                 # recurse
-                gen = self.walk(v, do, lvl + 1, container_out)
+                gen = _PHelper.walk(item, call, flat, with_keys, container_out)
                 if flat:
                     yield from gen
                 else:
                     if with_keys:
-                        yield k, container_out(gen)
+                        yield key, container_out(gen)  # map(
                     else:
                         yield container_out(gen)
             else:
-                # print('do', k, v, lvl)
-                yield do(k, v)
+                yield call(key, item)
+                # switch caller here to call(item) if with_keys is False ???
+
+    # def walk(self, obj, do=None, lvl=0, container_out=list, flat=False,
+    #          with_keys=True):
+    #     # iterate a nested container (usually dict). Execute the function
+    #     # `do` on each item
+    #     if do is None:
+    #         do = self._assure_tuple
+    #
+    #     if isinstance(obj, Parameters):
+    #         # handle use case `Parameters(y=y, x=x)` where `x` and/or `y` are
+    #         #  themselves `Parameter` objects
+    #         obj = obj.to_dict()
+    #
+    #     if not isinstance(obj, dict):
+    #         raise ValueError('dict please')
+    #
+    #     for k, v in obj.items():
+    #         if not isinstance(k, str):
+    #             raise ValueError('Not a valid name')
+    #
+    #         if isinstance(v, (dict,)):
+    #             # recurse
+    #             gen = self.walk(v, do, lvl + 1, container_out)
+    #             if flat:
+    #                 yield from gen
+    #             else:
+    #                 if with_keys:
+    #                     yield k, container_out(gen)
+    #                 else:
+    #                     yield container_out(gen)
+    #         else:
+    #             # print('do', k, v, lvl)
+    #             yield do(k, v)
 
 
+class Parameters(np.recarray):
+    """
+    Array subclass that serves as a container for (nested) parameters
+    """
+
+    def __new__(cls, data=None, base_dtype=float, **kws):
+        """
+
+        Parameters
+        ----------
+        kws:
+            (name, value) pairs for named parameters
+            >>> Parameters(each=1, parameter=2, painstakingly=3, named=4)
+
+            (name, sequence) pairs for sequences of named parameters
+             >>> Parameters(coeff=[1,2,3,4],
+                            hyper=42)
+
+            Can be nested like so:
+                >>> p = Parameters(Σ=dict(x=3,
+                                          y=[7, 5, 3]),
+                                   β=1)
+                >>> p.β     # array(1.)
+
+
+        """
+        # primary objective of this class is to provide the ability to
+        # initialize memory from (keyword, data) pairs
+        if data is not None:
+            if isinstance(data, dict):
+                return cls.__new__(cls, None, base_dtype, **data)
+            else:
+                raise NotImplementedError
+                # TODO: >>> Parameters([1, 2, 3, 4, 5])
+
+        # first we have to construct the dtype.
+        helper = _PHelper(base_dtype)
+        dtype = list(helper.walk(kws, helper.make_dtype))
+        # print(dtype)
+
+        # now we construct the array
+        obj = super(Parameters, cls).__new__(cls, (), dtype)
+        # can give `titles` which are aliases for names
+
+        # keep track of the total number of parameters so we can easily
+        # switch between structured and unstructured views
+        obj.npar = helper.npar
+        obj.base_dtype = base_dtype
+
+        # finally, populate array with data
+        obj[...] = tuple(
+                helper.walk(kws, helper.get_data, container_out=tuple,
+                            with_keys=False))
+        return obj
+
+    def __array_finalize__(self, obj):
+        # array subclass creation housekeeping
+        # print('In array_finalize:')
+        # print('   self type is %s' % type(self))
+        # print('   obj type is %s' % type(obj))
+
+        if obj is None:
+            # explicit constructor eg:  NestedParameters(foo=1)
+            return
+
+        # if we get here object constructor is view casting or
+        # new-from-template (slice)
+        # set npar here since this method sees creation of  all `Parameters`
+        # objects
+        self.npar = sum(_walk_dtype_size(obj.dtype))
+        self.base_dtype = getattr(obj, 'base_dtype', float)
+
+    def __str__(self):
+        if self.dtype.fields:
+            s = pformatDict(self.to_dict())
+            cls_name = self.__class__.__name__
+            indent = ' ' * (len(cls_name) + 1)
+            s = s.replace('\n', '\n' + indent)
+            return '%s(%s)' % (cls_name, s)
+        else:
+            return super().__str__()
+
+    def __repr__(self):
+        return str(self)
+
+    def to_dict(self):  # container=None, squeeze=False
+        """Convert to (nested) dict of arrays"""
+        return dict(_par_to_dict(self))
+
+    @property  # doesn't work as a property
+    def unwrapped(self):  # flat better ?
+        if self.npar != self.size:  # check if already unwrapped
+            return self.view((self.base_dtype, self.npar))
+        return self
+
+    @classmethod
+    def from_shapes(cls, **shapes):
+        return dict(_PHelper.walk(shapes, call=lambda k, sh: (k, np.empty(sh)),
+                                  container_out=dict))
+
+    # TODO
+    # @property
+    # def randomized(self):
+    #     random parameter vector
+
+
+
+from functools import singledispatch
+
+
+@singledispatch  # probably overkill to use single dispatch, but hey!
+def item_getter(obj):
+    """default multiple dispatch func"""
+    raise TypeError('No item getter for object of type %r' % type(obj))
+
+
+@item_getter.register(dict)
+def _(obj):
+    return obj.items()
+
+
+@item_getter.register(Parameters)
+def _(p):
+    return ((k, p[k]) for k in p.dtype.fields.keys())
+
+
+@item_getter.register(np.dtype)
+def _(obj):
+    return obj.fields.items()
+
+
+RECURSE_TYPES = tuple((set(item_getter.registry) - {object}))
+
+
+# def item_getter(obj):
+#     if isinstance(obj, Parameters):
+#         return ((k, p[k]) for k in p.dtype.fields.keys())
+#     elif isinstance(dict):
+#         return obj.items()
+
+
+def get_shape(data):
+    if isinstance(data, Parameters):
+        return data.npar
+    else:
+        return np.shape(data)
 
 
 def _walk_dtype_size(obj):
@@ -437,23 +639,55 @@ def _walk_dtype_size(obj):
         yield prod(obj.shape)
 
 
-def echo(arg):
-    return arg
+# from functools import singledispatch
 
 
-def _walk(obj, recurse_types, item_getter, call=echo):
-    """recursive walker for Parameters"""
+# @singledispatch
+# def dispatcher(_):
+#     """default dispatch func"""
+#     raise TypeError
+#
+# @dispatcher.register(dict)
+# def _(obj):
+#     for key, item in obj.items():
+#
+#
+#
+#
+# @dispatcher.register(Parameters)
+# def _(p):
+#     for k in p.dtype.fields.keys():
+#         yield k, p[k]
+#
+#
+#
 
-    if not isinstance(obj, recurse_types):
-        raise ValueError('%s please' % recurse_types)
 
-    for item in item_getter(obj):  # TODO: use singledispatch here?
-        if isinstance(item, recurse_types):
-            yield from _walk(item)
-        else:
-            yield call(item)
+# def squeeze(key, val):
+#     """convert to scalar if possible"""
+#     return key, val.squeeze()
+
+# def make_dtype(name, data):
+#     # print('_from_arrays got', name, array)
+#     a = np.asarray(data)
+#     self.npar += a.size
+#     return name, self.base_dtype, a.shape
 
 
+#
+
+
+# def _walk(obj, call=echo):
+#     """recursive walker for Parameters"""
+#     # if isinstance(obj, tuple(item_getter.registry)):
+#
+#     yield from dispatcher(obj)
+
+# for key, item in item_getter(obj):
+#     if isinstance(item, tuple(item_getter.registry)):
+#         yield from _walk(item)
+#     else:
+#         yield call(item)
 
 
 def _par_to_dict(p):
@@ -476,98 +710,6 @@ def _par_to_dict(p):
 #                 yield k, dict(_par_to_dict(subarray))
 #             else:
 #                 yield k, subarray
-
-
-class Parameters(np.recarray):
-    """
-    Array subclass that serves as a container for nested parameters
-    """
-
-    def __new__(cls, base_dtype=float, **kws):
-        """
-
-        Parameters
-        ----------
-        kws:
-            (name, value) pairs for named parameters
-            >>> Parameters(each=1, parameter=2, painstakingly=3, named=4)
-
-            (name, sequence) pairs for sets of named parameters
-             >>> Parameters(set1=[1,2,3,4],
-                            set2=42)
-
-            TODO: >>> Parameters([1, 2, 3, 4, 5])
-
-            Can be nested like so:
-                Parameters(name1=dict(sub1=3,
-                                      sub2=[7, 5, 3]),
-                           name2=1)
-        """
-        # primary objective of this class is to provide the ability to
-        # initialize memory from keyword, array pairs
-        # hence only keyword args accepted for the nonce
-        # print('In __new__ with class %s' % cls)
-
-        # first we have to construct the dtype.
-        helper = _PHelper(base_dtype)
-        dtype = list(helper.walk(kws, helper.make_dtype))
-        # if cls.use_record:
-        #     dtype = (np.record, dtype)
-
-        print(dtype)
-
-        # now we construct the array
-        obj = super(Parameters, cls).__new__(cls, (), dtype)
-        # can give `titles` which are aliases for names
-
-        # keep track of the total number of parameters so we can easily
-        # switch between structured and unstructured views
-        obj.npar = helper.npar
-        obj.base_dtype = base_dtype
-
-        # finally, populate array with data
-        obj[...] = tuple(
-                helper.walk(kws, helper.get_data, container_out=tuple,
-                            with_keys=False))
-        return obj
-
-    def __array_finalize__(self, obj):
-        # object creation housekeeping
-        # print('In array_finalize:')
-        # print('   self type is %s' % type(self))
-        # print('   obj type is %s' % type(obj))
-
-        if obj is None:
-            # explicit constructor eg:  NestedParameters(foo=1)
-            return
-
-        # if we get here object constructor is view casting or
-        # new-from-template (slice)
-        # set npar here since this method sees creation of  all `Parameters`
-        # objects
-        self.npar = sum(_walk_dtype_size(obj.dtype))
-        self.base_dtype = getattr(obj, 'base_dtype', None)
-
-    def __str__(self):
-        if self.dtype.fields:
-            s = pformatDict(self.to_dict())
-            cls_name = self.__class__.__name__
-            indent = ' ' * (len(cls_name) + 1)
-            s = s.replace('\n', '\n' + indent)
-            return '%s(%s)' % (cls_name, s)
-        else:
-            return super().__str__()
-
-    def __repr__(self):
-        return str(self)
-
-    def to_dict(self):  # container=None, squeeze=False
-        """Convert to (nested) dict of arrays"""
-        return dict(_par_to_dict(self))
-
-    # @property  # doesn't work as a property
-    def unwrapped(self):
-        return self.view((self.base_dtype, self.npar))
 
 
 class ModelContainer(AttrReadItem, ListLike):
@@ -633,7 +775,7 @@ class CompoundModel(Model, ModelContainer):
                 return True
         return False
 
-    def get_dtype(self):
+    def get_dtype(self):  # TODO: don't need this method anymore!!!!!
         dtypes = [mdl.get_dtype() for mdl in self.values()]
         ncomponents = list(map(len, dtypes))
         has_compound = np.greater(ncomponents, 1).any()
@@ -644,13 +786,15 @@ class CompoundModel(Model, ModelContainer):
         # if only simple models, can just concatenate dtypes
         return list(next(zip(*dtypes)))
 
-    def p0guess(self, data, grid=None, stddev=None):
-        p0 = np.empty((), self.get_dtype())
-        for name, mdl in self.items():
-            # p00 = mdl.p0guess(data, grid, stddev)
-            # print('cmpd p0', data.shape, grid, p0)
-            p0[name] = mdl.p0guess(data, grid, stddev)
-        return p0
+    def p0guess(self, data, grid=None, stddev=None, **kws):
+
+        if kws.get('nested'):
+            return Parameters({name: mdl.p0guess(data, grid, stddev, **kws)
+                               for name, mdl in self.items()})
+
+        else:
+            return np.r_[[mdl.p0guess(data, grid, stddev, **kws)
+                          for mdl in self.models]]
 
     def fit(self, p0=None, *args, **kws):
         if p0 is None:
@@ -659,6 +803,7 @@ class CompoundModel(Model, ModelContainer):
         p = np.empty_like(p0)
         for name, mdl in self.items():
             p[name] = mdl.fit(p0[name], *args, **kws)
+            # FIXME: not always appropriate
 
 
 # class SeqMod(CompoundModel):
@@ -707,3 +852,16 @@ class StaticGridMixin(object):
         return None
 
     # def
+
+
+if __name__ == '__main__':
+    # some tests for `Parameters`
+    # todo: once you refactor to move `Parameters` to it's own module,
+    # remove this block and make the `from .utils import` relative again
+
+    p1 = Parameters(x=[1, 2, 3], y=1)
+    p2 = Parameters(x=[1, 2, 3], y=1)
+
+    p3 = Parameters(v=p1, w=p2)
+
+    # embed()
