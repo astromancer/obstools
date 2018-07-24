@@ -31,6 +31,19 @@ def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
         raise ValueError('Invalid axis')
 
 
+class Priors():
+    'todo'
+    # p[:2].priors = Uniform(0, 1000)
+    # p[0].prior = JeffreysPrior()
+    # p.priors = ReferencePrior()
+
+
+class Bounds():
+    """layperson speak for uniform priors"""
+
+
+
+
 # def nd_sampler(data, sample_size, statistic, axis=None):
 #     # sample statistics on nd data  # can probably be sped up significantly
 #     ndim = data.ndim
@@ -587,7 +600,6 @@ class Parameters(np.recarray):
     # @property
     # def randomized(self):
     #     random parameter vector
-
 
 
 from functools import singledispatch
