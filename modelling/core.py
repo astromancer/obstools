@@ -336,21 +336,25 @@ class DataTransformBase(LoggingMixin):
 
     def post_process(self, p, **kws):
         if p is not None:
-            return self.inverse_transform(p)
+            return self.inverse_transform(p, **kws)
 
 
 class RescaleInternal(DataTransformBase):
+    _yscale = None
+
     def get_scale(self, data, sample_size=100, axis=None):
         # Grab `sample size` elements randomly from the data array and
         # calculate the sample median.
         return nd_sampler(data, np.median, sample_size, axis)
 
     def transform(self, data):
-        self._yscale = self.get_scale(data)
+        if self._yscale is None:
+            self._yscale = self.get_scale(data)
+
         self.logger.info('scale is %s', self._yscale)
         return data / self._yscale
 
-    def inverse_transform(self, p):
+    def inverse_transform(self, p, **kws):
         return p * self._yscale
 
 
