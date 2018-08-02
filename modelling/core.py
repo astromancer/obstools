@@ -496,9 +496,14 @@ class _PHelper(object):
     #             yield do(k, v)
 
 
+# TODO: add Constant parameter to do stuff like p.x[:2] = Constant
+
+
 class Parameters(np.recarray):
     """
-    Array subclass that serves as a container for (nested) parameters
+    Array subclass that serves as a container for (nested) parameters.
+    Provides natural construction routine for numpy recarray's from
+    hierarchical typed data
     """
 
     def __new__(cls, data=None, base_dtype=float, **kws):
