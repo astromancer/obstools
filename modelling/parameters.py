@@ -288,7 +288,7 @@ class Parameters(np.recarray):
 
     def to_dict(self):  # container=None, squeeze=False
         """Convert to (nested) dict of arrays"""
-        return dict(_par_to_dict(self))
+        return _par_help.walk(self, container_out=dict)
 
     @property
     def flattened(self):
