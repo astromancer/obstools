@@ -9,7 +9,7 @@ from IPython import embed
 from scipy import stats
 from scipy.stats._distn_infrastructure import rv_frozen
 
-from obstools.modelling.utils import prod, assure_tuple
+from obstools.modelling.utils import prod
 from recipes.dict import pformat as pformat_dict
 
 
@@ -38,6 +38,36 @@ def _walk_dtype_size(obj):
 
 
 # TODO: _ParamRecurse???
+
+def _par_walk(obj, call=echo, flat=False, with_keys=True,
+             container_out=list, recurse_types=None):
+    """
+    Recursive walker for converting structured array to nested objects
+    """
+    #
+    # if recurse_types is None:
+    #     recurse_types = RECURSE_TYPES
+
+    #  multiple dispatch item_getter for flexible obj construction
+    for key, item in item_getter(obj):
+        # make sure we have valid field names (keys)
+        if not isinstance(key, str):
+            raise ValueError('Not a valid name: %r' % key)
+
+        if isinstance(item, recurse_types):
+            # recurse
+            gen = _RecurseHelper.walk(item, call, flat, with_keys,
+                                      container_out)
+            if flat:
+                yield from gen
+            else:
+                if with_keys:
+                    yield key, container_out(gen)  # map(
+                else:
+                    yield container_out(gen)
+        else:
+            yield call(key, item)
+            # switch caller here to call(item) if with_keys is False ???
 
 def _par_to_dict(p):
     """recursive walker for converting structured array to nested dict"""
@@ -171,7 +201,8 @@ class Parameters(np.recarray):
     """
 
     # object type restrictions
-    _allow_types = any  # any means no type checking will be done
+    _allow_types = any  # any means no type checking will be done upon
+    # initialization
 
     def __new__(cls, data=None, base_dtype=float, **kws):
         """
@@ -437,9 +468,9 @@ def _(p):
     return ((k, p[k]) for k in p.dtype.fields.keys())
 
 
-@item_getter.register(np.dtype)
-def _(obj):
-    return obj.fields.items()
+# @item_getter.register(np.dtype)
+# def _(obj):
+#     return obj.fields.items()
 
 
 RECURSE_TYPES = tuple((set(item_getter.registry) - {object}))
