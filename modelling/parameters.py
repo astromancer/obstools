@@ -10,7 +10,7 @@ from scipy import stats
 from scipy.stats._distn_infrastructure import rv_frozen
 
 from obstools.modelling.utils import prod
-from recipes.dict import pformat as pformat_dict
+from recipes.dict import AttrReadItem, pformat as pformat_dict
 
 
 #
@@ -37,69 +37,17 @@ def _walk_dtype_size(obj):
         yield prod(obj.shape)
 
 
-# TODO: _ParamRecurse???
+def _walk_dtype_adapt(obj, new_base):
+    if not isinstance(obj, np.dtype):
+        raise ValueError('dtype please')
 
-def _par_walk(obj, call=echo, flat=False, with_keys=True,
-             container_out=list, recurse_types=None):
-    """
-    Recursive walker for converting structured array to nested objects
-    """
-    #
-    # if recurse_types is None:
-    #     recurse_types = RECURSE_TYPES
+    if obj.fields:
+        for k, v in obj.fields.items():
+            dtype, offset, *title = v
+            yield k, list(_walk_dtype_adapt(dtype, new_base))
+    else:
+        yield new_base
 
-    #  multiple dispatch item_getter for flexible obj construction
-    for key, item in item_getter(obj):
-        # make sure we have valid field names (keys)
-        if not isinstance(key, str):
-            raise ValueError('Not a valid name: %r' % key)
-
-        if isinstance(item, recurse_types):
-            # recurse
-            gen = _RecurseHelper.walk(item, call, flat, with_keys,
-                                      container_out)
-            if flat:
-                yield from gen
-            else:
-                if with_keys:
-                    yield key, container_out(gen)  # map(
-                else:
-                    yield container_out(gen)
-        else:
-            yield call(key, item)
-            # switch caller here to call(item) if with_keys is False ???
-
-def _par_to_dict(p):
-    """recursive walker for converting structured array to nested dict"""
-    if p.dtype.fields:
-        for k in p.dtype.fields.keys():
-            subarray = p[k]
-            if isinstance(subarray, np.recarray):
-                yield k, dict(_par_to_dict(subarray))
-            else:
-                if subarray.size == 1:
-                    yield k, np.asscalar(subarray)
-                else:
-                    yield k, subarray
-    #else???
-
-
-def _par_to_tup(p, flat=False):
-    """recursive walker for converting structured array to nested dict"""
-    if p.dtype.fields:
-        for k in p.dtype.fields.keys():
-            subarray = p[k]
-            if isinstance(subarray, np.recarray):
-                gen =_par_to_tup(subarray)
-                if flat:
-                    yield from gen
-                else:
-                    yield tuple(gen)
-            else:
-                if subarray.size == 1:
-                    yield np.asscalar(subarray)
-                else:
-                    yield subarray
 
 
 class _RecurseHelper(object):
@@ -125,14 +73,15 @@ class _RecurseHelper(object):
         self.obj_count += prod(shape)
         return name, base_dtype, shape
 
-    def get_data(self, kws, allow_types=any):  # to_tuple / to_dict etc...
-        # get data as nested tuple
+    def get_data(self, obj, flat=False, container=tuple, allow_types=any):  #
+        # get data as nested `container` type
         call = functools.partial(self._get_data, allow_types=allow_types)
-        return tuple(self.walk(kws, call, container_out=tuple, with_keys=False))
+        return container(self.walk(obj, call, flat, False, container))
 
-    def _get_data(self, name, data, allow_types=any):
+    def _get_data(self, data, allow_types=any):
         self.type_assertion(data, allow_types)
         return data
+        # return self.asscalar(None, data)[1]
 
     @staticmethod
     def get_npar(dtype):
@@ -147,8 +96,24 @@ class _RecurseHelper(object):
         if allow_types is any:
             return obj
 
+        print('allow types', allow_types)
         if not isinstance(obj, allow_types):
             raise TypeError('%s type objects are not supported' % type(obj))
+
+    @staticmethod
+    def asscalar(key, val):
+        if val.size == 1:
+            return key, np.asscalar(val)
+        return key, val
+
+    # def upper_walk(self, obj, container_out=list):
+    #
+    #     if
+    #
+    #
+    #     container_out(
+    #             self.walk(call, True, False)
+    #     )
 
     @staticmethod
     def walk(obj, call=echo, flat=False, with_keys=True,
@@ -179,8 +144,11 @@ class _RecurseHelper(object):
                     else:
                         yield container_out(gen)
             else:
-                yield call(key, item)
-                # switch caller here to call(item) if with_keys is False ???
+                # switch caller here to call(item) if with_keys is False
+                if with_keys:
+                    yield call(key, item)
+                else:
+                    yield call(item)
 
 
 # default helper singleton
@@ -202,6 +170,7 @@ class Parameters(np.recarray):
 
     # object type restrictions
     _allow_types = any  # any means no type checking will be done upon
+
     # initialization
 
     def __new__(cls, data=None, base_dtype=float, **kws):
@@ -240,6 +209,7 @@ class Parameters(np.recarray):
         # first we have to construct the dtype by walking the (possibly nested)
         # kws that define the data structure.
         dtype, size = _par_help.make_dtype(kws, base_dtype)
+        # print(dtype)
 
         # construct the array
         obj = super(Parameters, cls).__new__(cls, (), dtype)
@@ -251,7 +221,7 @@ class Parameters(np.recarray):
         obj.base_dtype = base_dtype
 
         # finally, populate array with data (nested tuple)
-        obj[...] = _par_help.get_data(kws, cls._allow_types)
+        obj[...] = _par_help.get_data(kws, allow_types=cls._allow_types)
         return obj
 
     def __array_finalize__(self, obj):
@@ -268,9 +238,12 @@ class Parameters(np.recarray):
 
     def __getattribute__(self, key):
         item = super().__getattribute__(key)
-        # hack so we don't end up with unsized array containing single object
-        if isinstance(item, np.ndarray) and not isinstance(item, Parameters):
-            return np.asscalar(item)
+        # hack so we don't end up with un-sized array containing single object
+        # print('get em!!')
+        if isinstance(item, np.ndarray):
+            kls = super().__getattribute__('__class__')
+            if not isinstance(item, kls) and (np.size(item) == 1):
+                return np.asscalar(item)
         return item
 
     def __str__(self):
@@ -286,9 +259,26 @@ class Parameters(np.recarray):
     def __repr__(self):
         return self.__str__()
 
-    def to_dict(self):  # container=None, squeeze=False
-        """Convert to (nested) dict of arrays"""
-        return _par_help.walk(self, container_out=dict)
+    def to_dict(self, attr=False, flat=False):
+        """
+        Convert to (nested) dict of arrays.
+
+        Parameters
+        ----------
+        attr: bool
+            If true, the resulting dict will have item access through key
+            attribute lookup enabled similar to `Parameters`
+
+        Returns
+        -------
+
+        """
+        dict_ = dict
+        if attr:
+            dict_ = AttrReadItem
+
+        return dict_(_par_help.walk(self, _par_help.asscalar, flat,
+                                    container_out=dict_))
 
     @property
     def flattened(self):
@@ -302,10 +292,9 @@ class Parameters(np.recarray):
     @classmethod
     def from_shapes(cls, **shapes):
         """Construct empty from shape"""
-        return dict(
-                _RecurseHelper.walk(shapes,
-                                    call=lambda k, sh: (k, np.empty(sh)),
-                                    container_out=dict))
+        return dict(_RecurseHelper.walk(shapes,
+                                        call=np.empty,
+                                        container_out=dict))
 
 
 class Priors(Parameters):
@@ -322,7 +311,8 @@ class Priors(Parameters):
     def __new__(cls, distrs=None, **kws):
         return super().__new__(cls, distrs, 'O', **kws)
 
-    # def denest(self):
+    def denest(self):
+        return _par_help.get_data(self, True, list)
 
     def random_sample(self, size=1):
         """
@@ -330,9 +320,12 @@ class Priors(Parameters):
         Return an instance of the `Parameters` class
         """
 
+
+
         samples = np.empty(size, self.dtype)
         for j, dist in enumerate(self.flattened):
             samples[:, j] = dist.rvs()
+        return samples
 
 
 class MCMCParams(Parameters):
