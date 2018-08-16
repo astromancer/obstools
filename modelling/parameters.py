@@ -243,14 +243,14 @@ class Parameters(np.recarray):
         return item
 
     def __str__(self):
+        cls_name = self.__class__.__name__
         if self.dtype.fields:
             s = pformat_dict(self.to_dict())
-            cls_name = self.__class__.__name__
             indent = ' ' * (len(cls_name) + 1)
             s = s.replace('\n', '\n' + indent)
             return '%s(%s)' % (cls_name, s)
         else:
-            return super().__str__()
+            return '%s(%s)' % (cls_name, super().__str__())
 
     def __repr__(self):
         return self.__str__()
