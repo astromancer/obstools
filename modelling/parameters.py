@@ -37,6 +37,8 @@ def _walk_dtype_size(obj):
         yield prod(obj.shape)
 
 
+# TODO: _ParamRecurse???
+
 def _par_to_dict(p):
     """recursive walker for converting structured array to nested dict"""
     if p.dtype.fields:
@@ -45,7 +47,29 @@ def _par_to_dict(p):
             if isinstance(subarray, np.recarray):
                 yield k, dict(_par_to_dict(subarray))
             else:
-                yield k, subarray
+                if subarray.size == 1:
+                    yield k, np.asscalar(subarray)
+                else:
+                    yield k, subarray
+    #else???
+
+
+def _par_to_tup(p, flat=False):
+    """recursive walker for converting structured array to nested dict"""
+    if p.dtype.fields:
+        for k in p.dtype.fields.keys():
+            subarray = p[k]
+            if isinstance(subarray, np.recarray):
+                gen =_par_to_tup(subarray)
+                if flat:
+                    yield from gen
+                else:
+                    yield tuple(gen)
+            else:
+                if subarray.size == 1:
+                    yield np.asscalar(subarray)
+                else:
+                    yield subarray
 
 
 class _RecurseHelper(object):
@@ -109,6 +133,7 @@ class _RecurseHelper(object):
 
         #  multiple dispatch item_getter for flexible obj construction
         for key, item in item_getter(obj):
+            # make sure we have valid field names (keys)
             if not isinstance(key, str):
                 raise ValueError('Not a valid name: %r' % key)
 
@@ -259,7 +284,8 @@ class Priors(Parameters):
     Interfaces with `Parameters` through the `priors` attribute
     """
 
-    # TODO: type checks
+    # object type restrictions
+    _allow_types = any  # TODO: only accept `Prior` objects
 
     # Record array containing functions ??!  Unusual, but effective
     def __new__(cls, distrs=None, **kws):
