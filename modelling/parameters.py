@@ -320,11 +320,10 @@ class Priors(Parameters):
         Return an instance of the `Parameters` class
         """
 
-
-
-        samples = np.empty(size, self.dtype)
+        dtype, npar = _par_help.make_dtype(self, float)
+        samples = np.empty((size, npar))
         for j, dist in enumerate(self.flattened):
-            samples[:, j] = dist.rvs()
+            samples[:, j] = dist.rvs(size)
         return samples
 
 
