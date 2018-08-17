@@ -244,7 +244,18 @@ class Parameters(np.recarray):
             kls = super().__getattribute__('__class__')
             if not isinstance(item, kls) and (np.size(item) == 1):
                 return np.asscalar(item)
+        # if not item.dtype.fields and (np.size(item) == 1):
+        #     return np.asscalar(item)
         return item
+
+    def __getitem__(self, key):
+        item = super().__getitem__(key)
+        # hack so we don't end up with un-sized array containing single object
+        # print('get em!!')
+        if not item.dtype.fields and (np.size(item) == 1):
+            return np.asscalar(item)
+        return item
+
 
     def __str__(self):
         cls_name = self.__class__.__name__
@@ -324,7 +335,7 @@ class Priors(Parameters):
         samples = np.empty((size, npar))
         for j, dist in enumerate(self.flattened):
             samples[:, j] = dist.rvs(size)
-        return samples
+        return samples.view(dtype, Parameters)
 
 
 class MCMCParams(Parameters):
