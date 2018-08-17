@@ -161,6 +161,8 @@ _par_help = _RecurseHelper()
 # can you achieve this with masked arrays ??
 
 
+# TODO: show_graph to plot graph structure between models
+
 class Parameters(np.recarray):
     """
     Array subclass that serves as a base container for (nested) parameters.
