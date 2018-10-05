@@ -61,5 +61,5 @@ phot/main.dev.py
 phot/slotmain.py
 phot/phot_setup.py
 phot/trackers/test_mp.py 
-
+phot/modelling.py
 

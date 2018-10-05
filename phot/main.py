@@ -123,12 +123,15 @@ if __name__ == '__main__':
     ncpus = os.cpu_count()
 
     # parse command line args
-    parser = argparse.ArgumentParser('phot',  # fromfile_prefix_chars='@',
-                                     description='Parallelized generic time-series photometry routines')
+    parser = argparse.ArgumentParser(
+            'phot',  # fromfile_prefix_chars='@',
+            description='Parallelized generic time-series photometry routines')
+
     parser.add_argument('fitsfile', type=str,  # type=FitsCube,
                         help='filename of fits data cube to process.')
     parser.add_argument('-ch', '--channel', type=int,  # type=FitsCube,
-                        help='amplifier channel')
+                        help='amplifier channel',
+                        required=True)  # TODO: if not given, do all channels!!
     # TODO: process many files at once
     parser.add_argument(
             '-n', '--subset', nargs='*', type=int,
@@ -143,8 +146,8 @@ if __name__ == '__main__':
                  % ncpus)
     parser.add_argument(
             '-k', '--clobber', action='store_true',
-            help='Whether to resume computation, or start afresh. Note that the '
-                 'frames specified by the `-n` argument will be recomputed if '
+            help='Whether to resume computation, or start afresh. Note that the'
+                 ' frames specified by the `-n` argument will be recomputed if '
                  'overlapping with previous computation irrespective of the '
                  'value of `--clobber`.')
 
@@ -335,13 +338,12 @@ if __name__ == '__main__':
     sy, sx = ishape
     orders = orders_x, orders_y = (5, 1), (3, 1, 3)
     breaks = (0, 10, sx), (0, 10, 38, sy)  # 3x3
-    smoothness = (False, True)
+    # smoothness = (False, True)
 
-    from slotmode.vignette import Vignette2DCross
+    from slotmode.vignette import Vignette  # 2DCross
 
-    vignette = Vignette2DCross(orders, breaks, smoothness)
+    vignette = Vignette(*orders, *breaks, (1, 1))
     vignette.set_grid(image)
-
 
     # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
     # bpy = (0, 10, 37.5, sy)
@@ -350,34 +352,8 @@ if __name__ == '__main__':
     # breaks = (0, 162, sx), (0, 3.5, 17.5, sy)
     # breaks = bpx, bpy
 
-    # TODO: hyperparameter search
-    def hyperparameter_search(breaks):
-        import itertools as itt
-        # given the breakpoints, search polynomial orders
-        npy, npx = np.add(map(len, breaks), 1)
-        npy0 = np.ones_like(npy)
-        npx0 = np.ones_like(npx)
-
-        #
-        yrngs, xrngs = (5, 3), (7, 3, 7)
-        z = itt.repeat(0)
-        ybounds = zip(z, yrngs)
-        xbounds = zip(z, xrngs)
-        smbounds = (0, 1)
-
-        p0 = np.r_[npy0, npx0, 0, 0]  # last too zeros for smoothness
-        # minimize(hyper_objective, p0, (data, ))
-
-
-    def hyper_objective(p0, data):
-        # init the model and get best fit residuals
-        'todo'
-
-
-
     # load SementationHelper from pickle
     # segmPath = fitspath.with_suffix('.segm.pkl')
-
 
     # First initialize the SlotBackground model from the image
     snr = (10, 7, 5, 3)
@@ -390,20 +366,17 @@ if __name__ == '__main__':
 
     # piss --------------------------------------------------------------
 
-    segm = SegmentationHelper.detect(image, bad_pixel_mask)
-
-    mimage = segm.mask_segments(image)
-    mimage.mask |= bad_pixel_mask
-
-    # media, madness, scale = vignette.get_cross_sections(mimage)
-    media = {'x': np.ma.median(mimage, 0),
-             'y': np.ma.median(mimage, 1)}
-    std = {'x': np.ma.std(mimage, 0),
-           'y': np.ma.std(mimage, 1)}
-    my, mx = vignette.models
-
-
-
+    # segm = SegmentationHelper.detect(image, bad_pixel_mask)
+    #
+    # mimage = segm.mask_segments(image)
+    # mimage.mask |= bad_pixel_mask
+    #
+    # # media, madness, scale = vignette.get_cross_sections(mimage)
+    # media = {'x': np.ma.median(mimage, 0),
+    #          'y': np.ma.median(mimage, 1)}
+    # std = {'x': np.ma.std(mimage, 0),
+    #        'y': np.ma.std(mimage, 1)}
+    # my, mx = vignette.models
 
     # piss --------------------------------------------------------------
 

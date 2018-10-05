@@ -856,3 +856,58 @@ class ImageModeller(ImageSegmentsModeller, ModellingResultsMixin):
         ImageSegmentsModeller.__init__(self, segm, psf, bg, self._metrics,
                                        use_labels)
         ModellingResultsMixin.__init__(self, save_residual)
+
+
+
+
+import time
+from graphical.imagine import VideoDisplay
+
+
+class ImageModelAnimation(VideoDisplay):
+    """
+    Visualise an image model by stepping through random parameter choices and
+    display the resulting images as video.
+
+
+    """
+
+    def __init__(self, model, ishape, pscale=1, **kws):
+        shape = (1,) + ishape
+        super().__init__(np.zeros(shape), **kws)
+        self.model = model
+        self.pscale = float(pscale)
+
+    def _scroll(self, event):
+        pass  # scroll disabled
+
+    def get_image_data(self, i):
+        p = np.random.randn(self.model.dof)  # * scale
+        return self.model(p)
+
+    def set_frame(self, i):
+        self._frame = i  # store current frame
+
+    def run(self, n=np.inf, pause=50):
+        """
+        Show a video of images in the model space
+
+        Parameters
+        ----------
+        n: int
+            number of frames in the animation
+        pause: int
+            interval between frames in miliseconds
+
+        Returns
+        -------
+
+        """
+        # n: number of iterations
+        # pause: inter-frame pause (milisecond)
+        seconds = pause / 1000
+        i = 0
+        while i <= n:
+            self.update(i)
+            i += 1
+            time.sleep(seconds)

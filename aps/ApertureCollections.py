@@ -12,10 +12,10 @@ from matplotlib.collections import EllipseCollection  # as  _EllipseCollection
 from matplotlib.transforms import IdentityTransform
 from matplotlib.colors import colorConverter
 
-from recipes.iter import as_sequence, cycleN
+from recipes.iter import as_sequence, cyclic
 from recipes.io import warn as Warn
 from recipes.dict import TransDict, Many2OneMap
-from recipes.meta import altflaggerFactory
+from recipes.oo.meta import altflaggerFactory
 # from motley import banner
 
 # from decor import expose, profile

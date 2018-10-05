@@ -49,7 +49,6 @@ def _walk_dtype_adapt(obj, new_base):
         yield new_base
 
 
-
 class _RecurseHelper(object):
     """
     Helper class for initializing array subclasses by walking arbitrarily nested
@@ -258,7 +257,6 @@ class Parameters(np.recarray):
             return np.asscalar(item)
         return item
 
-
     def __str__(self):
         cls_name = self.__class__.__name__
         if self.dtype.fields:
@@ -298,9 +296,11 @@ class Parameters(np.recarray):
         return self.denest()
 
     def denest(self):  # OR overwrite flatten ???????
-        # if self.npar != self.size:  # check if already flattened
-        return self.view((self.base_dtype, self.npar))
-        # return self
+        if self.npar != self.size:  # check if already flattened
+            return self.view((self.base_dtype, self.npar))
+        return self
+        # TODO somehow, the view above does not seem to work if npar == size
+        # TODO IS THIS A BUG??
 
     @classmethod
     def from_shapes(cls, **shapes):

@@ -10,16 +10,18 @@ from scipy.optimize import minimize
 # from recipes.oop import ClassProperty
 from recipes.logging import LoggingMixin
 from recipes.dict import AttrReadItem, ListLike
+from recipes.list import tally
 
 from .utils import make_shared_mem
 from .parameters import Parameters
+
 
 def _sample_stat(data, statistic, sample_size, replace=True):
     return statistic(np.random.choice(data, sample_size, replace))
 
 
 def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
-    # statistics on samples from ndarray
+    # statistics on random samples from an ndarray
     if axis is None:
         return _sample_stat(data.ravel(), statistic, sample_size, replace)
 
@@ -115,9 +117,9 @@ class Model(OptionallyNamed, LoggingMixin):
     # TODO: have a classmethod here that can turn on and off active view
     # castings so that we can work with nested parametes more easily
 
-    # TODO: think of a way to easily fit for variance parameter
+    # TODO: think of a way to easily fit for variance parameter(s)
 
-    npar = None  # sub-class should set  #todo determine intrinsically from p?
+    npar = None  # sub-class should set  # todo determine intrinsically from p?
     base_dtype = float  # FIXME - remove this here
     objective = None
 
@@ -358,6 +360,8 @@ class Model(OptionallyNamed, LoggingMixin):
     def post_process(self, p, *args, **kws):
         return p
 
+    # TODO def run_mcmc(self):
+
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
         npar = self.npar
@@ -438,9 +442,6 @@ class SummaryStatsMixin(object):
         return super().fit(p0, y, grid, stddev, **kws)
 
 
-
-
-
 class ModelContainer(AttrReadItem, ListLike):
 
     def __init__(self, models=(), **kws):
@@ -454,6 +455,16 @@ class ModelContainer(AttrReadItem, ListLike):
                                  'named. You can name them implicitly by '
                                  'initializing %s via keyword arguments' %
                                  self.__class__.__name__)
+            # check for duplicate names
+            unames = set(names)
+            if len(unames) != len(names):
+                # warning: models have duplicate names
+                new_names = []
+                for name, indices in tally(names).items():
+                    for i in range(len(indices)):
+                        new_names.append('%s_%i' % (name, i))
+                names = new_names
+            #
             mapping = zip(names, models)
 
         # load models into dict
@@ -551,33 +562,47 @@ class CompoundModel(Model, ModelContainer):
 
 class StaticGridMixin(object):
     """
-    class for convenience when fitting the same model
-    repeatedly on the same grid for different data.
-    `set_grid` method will be run on first call to `residuals`.
+    Mixin class that eliminated the need to pass a coordinate grid to every
+    model evaluation call. This is convenience when fitting the same model
+    repeatedly on the same grid for various data (of the same shape).
+    Subclasses must implement the `set_grid` method will be used to construct
+    an evaluation grid based on the shape of the data upon the first call to
+    `residuals`.
     """
 
     # default value for static grid. Having this as a class variable avoids
     # having to initialize this class explicitly in inheritors
     static_grid = None
 
+    def __call__(self, p, grid=None):
+        grid = self._check_grid(grid)
+        return super().__call__(p, grid)
+
+    def residuals(self, p, data, grid=None):
+        if grid is None and self.static_grid is None:
+            self.set_grid(data)
+            grid = self.static_grid
+
+        grid = self._check_grid(grid)
+        # can you set the method as super method here dynamically for speed?
+        return super().residuals(p, data, grid)
+
+    def _check_grid(self, grid):
+        if grid is None:
+            grid = self.static_grid
+        if grid is None:
+            raise ValueError(
+                    'Please specify the coordinate grid for evaluation, '
+                    'or use the `set_grid` method prior to the first call to '
+                    'assign a static coordinate grid.')
+        return grid
+
     def set_grid(self, data):
         raise NotImplementedError(
                 'Derived class should implement this method, or assign the '
                 '`static_grid` attribute directly.')
 
-    # not sure if this is really useful
-    def residuals(self, p, data, grid=None):
-        # grid argument ignored
-        if grid is None and self.static_grid is None:
-            self.set_grid(data)
-
-        if grid is None:
-            grid = self.static_grid
-
-        # can you set the method as super method here dynamically for speed?
-        return super().residuals(p, data, grid)
-
-    def adapt_grid(self, grid):  # adapt_grid_segment
-        return None
+    # def adapt_grid(self, grid):  # adapt_grid_segment
+    #     return None
 
     # def
