@@ -265,6 +265,7 @@ if __name__ == '__main__':
 
     # plot quick-look image for all 4 amplifier channels
     from slotmode.imaging import image_full_slot
+
     idisplay(image_full_slot(cube4[10], ch))
 
     # FIXME: any Exception that happens below will stall the log listner indefinitely
@@ -370,8 +371,8 @@ if __name__ == '__main__':
     dilate = (5, 3)
 
     # models = []
-    mdlr, mim, segm = SlotBackground.from_image(
-            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+    # mdlr, mim, segm = SlotBackground.from_image(
+    #         image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
     # raise SystemExit
 
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
@@ -399,25 +400,32 @@ if __name__ == '__main__':
     # ..........................................................................
     # loop sample median images across cube to get relative star positions
 
+    from obstools.modelling import nd_sampler
+
     ui = MplMultiTab()
     snr = 3.0
     npix = 3
     ncomb = 25
-    bg = vignette(p0bg.Vignette)
+    bg = vignette(p0bg.vignette.squeeze())
     coms = []
     nproc_init = 10
     for interval in mit.pairwise(range(0, len(cube), len(cube) // nproc_init)):
         image = sampler.median(ncomb, interval)
+        scale = nd_sampler(image, np.median, 100)
+        image_NORM = image / scale
 
-        mdlr, p0bg, seg_data, mask, groups = SlotBackground.from_image(
-                image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+        mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
+                image_NORM, bad_pixel_mask, vignette, snr, npixels,
+                dilate=dilate)
 
-        segm = SegmentationHelper.detect(image, bad_pixel_mask, bg, snr, npix)
-        com = segm.com_bg(image)
+        # detect (again)
+        segm = SegmentationHelper.detect(image_NORM, bad_pixel_mask, bg, snr,
+                                         npix)
+        com = segm.com_bg(image_NORM)
         coms.append(com)
 
-        im = segm.display()
-
+        # show image
+        #im = segm.display()
         ui.add_tab(im.figure)
     ui.show()
 
