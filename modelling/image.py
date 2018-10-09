@@ -405,12 +405,27 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
             # print('JJ', rr.shape)
 
             if r is not None:
-                # print('results', model.name, r)
-                results[i] = r
-                slice = slices[i]
-                resi[slice] = model.residuals(r, data[slice], grid)
-                # foo.append(rr)
-                # resi[slice] = rr
+                try:
+                    # print('results', model.name, r)
+                    results[i] = r
+                    slice = slices[i]
+                    resi[slice] = model.residuals(r, data[slice], grid)
+                    # foo.append(rr)
+                    # resi[slice] = rr
+                except Exception as err:
+                    from IPython import embed
+                    import traceback, textwrap
+                    header = textwrap.dedent(
+                        """\
+                        Caught the following %s:
+                        ------ Traceback ------
+                        %s
+                        -----------------------
+                        Exception will be re-raised upon exiting this embedded interpreter.
+                        """) % (err.__class__.__name__, traceback.format_exc())
+                    embed(header=header)
+                    raise
+
             else:
                 'what to do with parameters here? Keep as nans? mask?'
             #     warnings.warn('Model fit for %r failed.' % model.name)
