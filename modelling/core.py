@@ -486,10 +486,20 @@ class SummaryStatsMixin(object):
         return super().fit(y, grid, stddev, p0, **kws)
 
 
-class ModelContainer(AttrReadItem, ListLike):
+class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
+    # dict-like container for models
+    def __init__(self, models=(), **kws):       #
+        """
+        Create model container from sequence of models and or keyword,
+        model pairs. Model names will be made a unique set by appending
+        integers.
 
-    def __init__(self, models=(), **kws):
 
+        Parameters
+        ----------
+        models
+        kws
+        """
         mapping = ()
         if len(models):
             models = tuple(filter(None, models))
@@ -497,12 +507,14 @@ class ModelContainer(AttrReadItem, ListLike):
             if None in names:
                 raise ValueError('All models passed to container must be '
                                  'named. You can name them implicitly by '
-                                 'initializing %s via keyword arguments' %
+                                 'initializing %s via keyword arguments: '
+                                 '`%s(bg=`' %
                                  self.__class__.__name__)
             # check for duplicate names
             unames = set(names)
             if len(unames) != len(names):
-                # warning: models have duplicate names
+                # models have duplicate names
+                self.logger.info('Renaming %i models', len(unames))
                 new_names = []
                 for name, indices in tally(names).items():
                     for i in range(len(indices)):
@@ -539,11 +551,6 @@ class ModelContainer(AttrReadItem, ListLike):
 
 class CompoundModel(Model, ModelContainer):
 
-    # def __call__(self, p, grid=None):
-    #     pass
-
-    # dof = ()  # compound model
-
     # use_record = True
     # def __init__(self, models=(), names=None, **kws):
     #     ModelContainer.__init__(self, models, names, **kws)
@@ -551,7 +558,6 @@ class CompoundModel(Model, ModelContainer):
     # def __repr__(self):
     #     return object.__repr__(self)
 
-    # FIXME: REDESIGN. methods here operate on parameters
 
     @property
     def models(self):
