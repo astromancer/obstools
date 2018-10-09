@@ -202,7 +202,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         """
         self[model.name] = model
         self.groups[model.name] = labels
-        # change the dtype to include additional model
+        # overwrite the full-model-hierarchy dtype to include additional model
         self.dtype = self.get_dtype()
 
     @property
@@ -220,7 +220,10 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     else:
     #         return self._dtype
 
+
     def get_dtype(self, models=None, groups=None, ):
+        # build the structured np.dtype object for a particular model or
+        # group of models. default is to use the full set of models an
         if models is None:
             models = self.models
 
@@ -251,7 +254,8 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
             return model.name, dt, shape
 
     def _get_output(self, shape=(), models=None, groups=None, fill=np.nan):
-        #
+        # create the container `np.recarray` for the result of an
+        # optimization run on `models` in `groups`
         if (models, groups) == (None, None):
             dtype = self.dtype
         else:

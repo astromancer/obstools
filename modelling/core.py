@@ -132,6 +132,10 @@ class Model(OptionallyNamed, LoggingMixin):
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
 
+    def get_name(self):
+        # ensure lower case names
+        return super().get_name().lower()
+
     def get_dtype(self):
         # todo: use p0guess to determine the dtype ?
         # todo: eliminate this method

@@ -370,8 +370,8 @@ if __name__ == '__main__':
     dilate = (5, 3)
 
     # models = []
-    # mdlr, mim, segm = SlotBackground.from_image(
-    #         image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+    mdlr, mim, segm = SlotBackground.from_image(
+            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
     # raise SystemExit
 
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
@@ -399,11 +399,11 @@ if __name__ == '__main__':
     # ..........................................................................
     # loop sample median images across cube to get relative star positions
 
-    # ui = MplMultiTab()
+    ui = MplMultiTab()
     snr = 3.0
     npix = 3
     ncomb = 25
-    bg = vignette(p0bg.vignette)
+    bg = vignette(p0bg.Vignette)
     coms = []
     nproc_init = 10
     for interval in mit.pairwise(range(0, len(cube), len(cube) // nproc_init)):
@@ -418,8 +418,8 @@ if __name__ == '__main__':
 
         im = segm.display()
 
-    #     ui.add_tab(im.figure)
-    # ui.show()
+        ui.add_tab(im.figure)
+    ui.show()
 
     ndetected = list(map(len, coms))
     max_nstars = max(ndetected)
