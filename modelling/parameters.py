@@ -49,6 +49,22 @@ def _walk_dtype_adapt(obj, new_base):
         yield new_base
 
 
+from recipes.pprint import numeric_repr
+
+
+def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
+                  times='x', compact=True, unicode=True, latex=False,
+                  engineering=False):
+    assert len(params) == len(names)
+    s = np.vectorize(numeric_repr, ['U10'])(params, precision, switch, sign,
+                                            times, compact, unicode, latex,
+                                            engineering)
+    if uncert is not None:
+        raise NotImplementedError  # TODO
+
+    return list(map('%s = %s'.__mod__, zip(names, s)))
+
+
 class _RecurseHelper(object):
     """
     Helper class for initializing array subclasses by walking arbitrarily nested
@@ -238,9 +254,9 @@ class Parameters(np.recarray):
         self.base_dtype = getattr(obj, 'base_dtype', float)
 
     def __getattribute__(self, key):
-        item = super().__getattribute__(key)
         # hack so we don't end up with un-sized array containing single object
-        # print('get em!!')
+        item = super().__getattribute__(key)
+        #
         if isinstance(item, np.ndarray):
             kls = super().__getattribute__('__class__')
             if not isinstance(item, kls) and (np.size(item) == 1):

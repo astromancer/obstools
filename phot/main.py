@@ -45,7 +45,7 @@ from recipes.interactive import is_interactive
 from recipes.parallel.synced import SyncedCounter
 
 import slotmode
-from slotmode.image import SlotBackground
+from slotmode.modelling.image import SlotBackground
 
 # from slotmode import get_bad_pixel_mask
 # * #StarTracker, SegmentationHelper, GraphicalStarTracker
@@ -127,6 +127,7 @@ if __name__ == '__main__':
             'phot',  # fromfile_prefix_chars='@',
             description='Parallelized generic time-series photometry routines')
 
+    # FIXME: you aren't loading fits files anymore!!
     parser.add_argument('fitsfile', type=str,  # type=FitsCube,
                         help='filename of fits data cube to process.')
     parser.add_argument('-ch', '--channel', type=int,  # type=FitsCube,
@@ -173,10 +174,10 @@ if __name__ == '__main__':
     # add some args manually
     args.live = is_interactive()
 
-    # data
-    cube = np.lib.format.open_memmap(args.fitsfile)  # TODO: paths.input
+    # load image data (memmap shape (n, 4, r, c))
+    cube4 = np.lib.format.open_memmap(args.fitsfile)  # TODO: paths.input
     ch = args.channel
-    cube = cube[:, ch]
+    cube = cube4[:, ch]
 
     # check / resolve options
     clobber = args.clobber
@@ -262,6 +263,10 @@ if __name__ == '__main__':
     # ===============================================================================
     # Image Processing setup
 
+    # plot quick-look image for all 4 amplifier channels
+    from slotmode.imaging import image_full_slot
+    idisplay(image_full_slot(cube4[10], ch))
+
     # FIXME: any Exception that happens below will stall the log listner indefinitely
 
     n = len(cube)
@@ -303,6 +308,8 @@ if __name__ == '__main__':
     # create sample image
     sampler = ImageSampler(cube)
     image = sampler.median(10, 100)
+    scale = np.median(image)
+    image_NORM = image / scale
     # randimage = rand_median(cube, 10, 100)  # / flat
 
     # extract flat field from sky
@@ -336,13 +343,15 @@ if __name__ == '__main__':
 
     # This for Amp3 (channel 2) binning 3x3
     sy, sx = ishape
-    orders = orders_x, orders_y = (5, 1), (3, 1, 3)
-    breaks = (0, 10, sx), (0, 10, 38, sy)  # 3x3
+    orders = orders_x, orders_y = (5, 1), (5, 1, 5)
+    breaks = (0, 10, sx), (0, 11, 38, sy)  # 3x3
     # smoothness = (False, True)
 
     from slotmode.vignette import Vignette  # 2DCross
 
     vignette = Vignette(*orders, *breaks, (1, 1))
+    # vignette.no_mixed_terms()
+    vignette.full_freedom()
     vignette.set_grid(image)
 
     # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
@@ -356,13 +365,17 @@ if __name__ == '__main__':
     # segmPath = fitspath.with_suffix('.segm.pkl')
 
     # First initialize the SlotBackground model from the image
-    snr = (10, 7, 5, 3)
+    snr = (7, 5, 3)
     npixels = (7, 5, 3)
     dilate = (5, 3)
 
     # models = []
+    # mdlr, mim, segm = SlotBackground.from_image(
+    #         image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+    # raise SystemExit
+
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
-            image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
+            image_NORM, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
     # piss --------------------------------------------------------------
 

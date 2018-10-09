@@ -119,7 +119,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
     # TODO: think of a way to easily fit for variance parameter(s)
 
-    npar = None  # sub-class should set  # todo determine intrinsically from p?
+    dof = None  # sub-class should set  # todo determine intrinsically from p?
     base_dtype = float  # FIXME - remove this here
     objective = None
 
@@ -135,13 +135,13 @@ class Model(OptionallyNamed, LoggingMixin):
     def get_dtype(self):
         # todo: use p0guess to determine the dtype ?
         # todo: eliminate this method
-        npar = self.npar
-        if npar is None:
-            raise TypeError('Subclass should set attribute `npar`')
+        dof = self.dof
+        if dof is None:
+            raise TypeError('Subclass should set attribute `dof`')
 
-        # if isinstance(self.npar, int):
-        #     npar = self.npar,
-        return [(self.get_name(), self.base_dtype, npar)]
+        # if isinstance(self.dof, int):
+        #     dof = self.dof,
+        return [(self.get_name(), self.base_dtype, dof)]
 
     def residuals(self, p, data, grid=None):
         """Difference between data (observations) and model. a.k.a. deviation"""
@@ -240,7 +240,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return -n / 2 * np.log(2 * np.pi) - sigma_term \
                - 0.5 * self.wrss(p, data, grid, stddev)
 
-    def objective_mle(self, p, data, grid, stddev):
+    def objective_mle(self, p, data, grid=None, stddev=None):
         return -self.logLikelihood(p, data, grid, stddev)
 
     def logProb(self, p, data, grid=None, stddev=None, logPrior=None,
@@ -276,8 +276,7 @@ class Model(OptionallyNamed, LoggingMixin):
         """This will be run prior to the minimization routine"""
         return p0, data, grid, stddev
 
-    def fit(self, p0, data, grid=None, stddev=None, *args, **kws):
-        # FIXME: since p0 is optional here, move down parameter list
+    def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         """
         Minimize `objective` using `scipy.minimize`
 
@@ -303,6 +302,7 @@ class Model(OptionallyNamed, LoggingMixin):
             self.logger.debug('p0 guess: %s', p0)
 
         # nested parameters: flatten prior to minimize, re-structure post-fit
+        # TODO: move to HandleParameters Mixin??
         type_, dtype = type(p0), p0.dtype
         if isinstance(p0, Parameters):
             p0 = p0.flattened
@@ -360,17 +360,57 @@ class Model(OptionallyNamed, LoggingMixin):
     def post_process(self, p, *args, **kws):
         return p
 
-    # TODO def run_mcmc(self):
+    def run_mcmc(self, data, nsamples, nburn, nwalkers=None, threads=None,
+                 p0=None):
+        """
+        Draw posterior samples
+        """
 
+        # TODO: would be nice to have some kind of progress indicator here
+
+        import emcee
+
+        dof = self.dof
+        if nwalkers is None:
+            nwalkers_per_dof = 4
+            nwalkers = dof * nwalkers_per_dof
+        nwalkers = int(nwalkers)
+
+        if threads is None:
+            import multiprocessing as mp
+            threads = mp.cpu_count()
+        threads = int(threads)
+
+        # create sampler
+        sampler = emcee.EnsembleSampler(nwalkers, dof, self.logLikelihood,
+                                        args=(data,), threads=threads)
+
+        # randomized initial guesses for parameters
+        if p0 is None:
+            p0 = np.random.rand(nwalkers, dof)
+            # FIXME: this should consider Priors
+        else:
+            raise NotImplementedError  # TODO
+
+        # burn in
+        if nburn:
+            pos, prob, state = sampler.run_mcmc(p0, nburn)
+            sampler.reset()
+
+        # sample posterior
+        pos, prob, state = sampler.run_mcmc(p0, nsamples)  # should
+        return sampler
+
+    # TODO: Mixin class here??
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
-        npar = self.npar
-        # final array shape is external `shape` + parameter shape `npar`
+        dof = self.dof
+        # final array shape is external `shape` + parameter shape `dof`
         if isinstance(shape, int):
             shape = shape,
 
-        if isinstance(self.npar, int):
-            shape += (npar,)
+        if isinstance(self.dof, int):
+            shape += (dof,)
 
         # locPar = '%s.par' % self.name  # locStd = '%s.std' % self.name
         dtype = self.get_dtype()
@@ -435,11 +475,11 @@ class SummaryStatsMixin(object):
         axes.pop(axis)
         self.other_axes = tuple(axes)
 
-    def fit(self, p0, data, grid, stddev=None, **kws):
+    def fit(self, data, grid, stddev=None, p0=None, **kws):
         y = self.center_func(data, self.other_axes)
         if self.disp_func:
             stddev = self.disp_func(data, self.other_axes)
-        return super().fit(p0, y, grid, stddev, **kws)
+        return super().fit(y, grid, stddev, p0, **kws)
 
 
 class ModelContainer(AttrReadItem, ListLike):
@@ -494,7 +534,7 @@ class ModelContainer(AttrReadItem, ListLike):
 
 
 class CompoundModel(Model, ModelContainer):
-    # npar = ()  # compound model
+    # dof = ()  # compound model
 
     # use_record = True
     # def __init__(self, models=(), names=None, **kws):
@@ -536,10 +576,12 @@ class CompoundModel(Model, ModelContainer):
             return np.r_[tuple(mdl.p0guess(data, grid, stddev, **kws)
                                for mdl in self.models)]
 
-    def fit(self, p0=None, *args, **kws):
+    def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
+        #
         if p0 is None:
             p0 = self.p0guess(*args)
 
+        # loop through models to fit
         p = np.empty_like(p0)
         for name, mdl in self.items():
             p[name] = mdl.fit(p0[name], *args, **kws)

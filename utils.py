@@ -1,3 +1,7 @@
+"""
+Miscellaneous utility functions
+"""
+
 from recipes.pprint import decimal_repr
 
 
@@ -8,7 +12,7 @@ def hms(t):
     return h, m, s              # TODO: use named tuple ??
 
 
-def fmt_hms(t, precision=None, sep='hms', short=None):
+def fmt_hms(t, precision=None, sep='hms', short=None, unicode=False):
     """
     Convert time in seconds to sexagesimal representation
 
@@ -24,6 +28,8 @@ def fmt_hms(t, precision=None, sep='hms', short=None):
     short: bool or None
         will strip unnecessary parts from the repr if True.
         eg: '0h00m15.4s' becomes '15.4s'
+    unicode: bool
+        Unicode superscripts
 
     Returns
     -------
@@ -40,12 +46,18 @@ def fmt_hms(t, precision=None, sep='hms', short=None):
     >>> fmt_hms(1.333121112e2, 5, short=False)
     '0h02m13.31211s'
     """
+
     if len(sep) == 1:
         sep = (sep, sep, '')
-    if short is None:
-        short = (sep == 'hms')
-        # short representation only really useful if units given
 
+    if short is None:
+        # short representation only meaningful if time expressed in hms units
+        short = (sep == 'hms')
+
+    if unicode and (sep == 'hms'):
+        sep = 'ʰᵐˢ'
+
+    #
     sexa = hms(t)
     precision = (0, 0, precision)
 
@@ -59,9 +71,10 @@ def fmt_hms(t, precision=None, sep='hms', short=None):
             len(part) - len(str(int(n)))
             part = part.zfill(zfill)
 
+        # special treatment for last (meaningful) sexagesimal part
         last = (i == 2)
-
         if short and not (last or float(part) or len(tstr)):
+            # if short format requested and final part has 0s only, omit
             continue
         tstr = (part + s)
 

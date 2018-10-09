@@ -13,7 +13,7 @@ from recipes.logging import LoggingMixin
 from recipes.string import seq_repr_trunc
 
 from .core import Model, CompoundModel
-from .utils import make_shared_mem
+from .utils import make_shared_mem, int2tup
 from ..phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 
 
@@ -29,6 +29,8 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
     """
+
+    # TODO: this is a heirarchical model.  make it so!
 
     # TODO: mask_policy.  filter / set error to inf
     # TODO: option to fit centres or use Centroids
@@ -133,7 +135,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     # TODO: log what you found
     #     return model, results, data, mask, groups
 
-
     def __init__(self, segm, models, label_groups=None):
         """
 
@@ -177,7 +178,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         # helper method for unpickling.
         return self.__class__, \
                (self.segm, list(self.models), self.groups)
-
 
     def model_to_labels(self):
         """
@@ -235,20 +235,23 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         return dtype
 
     def _adapt_dtype(self, model, shape):
-        # make sure size in a tuple
-        if isinstance(shape, int):
-            shape = shape,
-        else:
-            shape = tuple(shape)
+        # adapt the dtype of a component model so that it can be used with
+        # other dtypes in a structured dtype
 
+        # make sure size in a tuple
+        shape = int2tup(shape)
         dt = model.get_dtype()
-        if len(dt) == 1:  #
-            name, base, npar = dt[0]
-            return (model.name, base, shape + npar)
-        else:
-            return (model.name, dt, shape)
+        if len(dt) == 1:                            # simple model
+            name, base, dof = dt[0]
+            dof = int2tup(dof)
+            # extend shape of dtype
+            return model.name, base, shape + dof
+        else:                                       # compound model
+            # structured dtype - nest!
+            return model.name, dt, shape
 
     def _get_output(self, shape=(), models=None, groups=None, fill=np.nan):
+        #
         if (models, groups) == (None, None):
             dtype = self.dtype
         else:
@@ -369,11 +372,12 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         return results, resi
 
     def _fit_model_reduce(self, model, data, std, labels, results, **kws):
+        # maximum_likelihood_residual # ml_res
         """
         Fit this model for all segments
         """
         resi = data
-        extra = kws.pop('extrapolate', 0)
+        extra = kws.pop('extrapolate', 0)  # todo better name?# grow_segments
         mask_bg = kws.pop('mask_bg', True)
         flatten = kws.pop('flatten', False)
         # labels = self.segm.groups[group]
@@ -387,7 +391,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
         for lbl, (sub, substd) in segmented:
             grid = model.adapt_grid(self.segm.subgrids[lbl])
-            r = model.fit(None, sub, grid, substd, **kws)
+            r = model.fit(sub, grid, substd, **kws)
 
             # resi[self.segm.slices[labels[i]]] -= model.residuals(r, sub, grid)
 
@@ -400,7 +404,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
                 # print('results', model.name, r)
                 results[i] = r
                 slice = slices[i]
-
                 resi[slice] = model.residuals(r, data[slice], grid)
                 # foo.append(rr)
                 # resi[slice] = rr
@@ -856,8 +859,6 @@ class ImageModeller(ImageSegmentsModeller, ModellingResultsMixin):
         ImageSegmentsModeller.__init__(self, segm, psf, bg, self._metrics,
                                        use_labels)
         ModellingResultsMixin.__init__(self, save_residual)
-
-
 
 
 import time

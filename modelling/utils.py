@@ -1,3 +1,7 @@
+"""
+Utility functions for statistical modelling
+"""
+
 import functools
 import numbers
 import operator
@@ -20,13 +24,13 @@ def prod(x):
     return functools.reduce(operator.mul, x)
 
 
-def assure_tuple(v):
+def int2tup(v):
     if isinstance(v, numbers.Integral):
         return v,
-    if isinstance(v, tuple):
-        return v
     else:
-        raise ValueError('bad item %s of type %r' % (v, type(v)))
+        return tuple(v)
+    # else:
+    #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
 
 def make_shared_mem(loc, shape=None, dtype=None, fill=None, clobber=False):
