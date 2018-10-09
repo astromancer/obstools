@@ -538,6 +538,10 @@ class ModelContainer(AttrReadItem, ListLike):
 
 
 class CompoundModel(Model, ModelContainer):
+
+    # def __call__(self, p, grid=None):
+    #     pass
+
     # dof = ()  # compound model
 
     # use_record = True
@@ -547,38 +551,20 @@ class CompoundModel(Model, ModelContainer):
     # def __repr__(self):
     #     return object.__repr__(self)
 
-    # FIXME: methods here operate on parameters
+    # FIXME: REDESIGN. methods here operate on parameters
 
     @property
     def models(self):
         return self.values()
 
-    def has_compound(self):
-        for mdl in self.values():
-            if len(mdl.get_dtype()) > 1:
-                return True
-        return False
-
-    def get_dtype(self):  # TODO: don't need this method anymore!!!!!
-        dtypes = [mdl.get_dtype() for mdl in self.values()]
-        ncomponents = list(map(len, dtypes))
-        has_compound = np.greater(ncomponents, 1).any()
-        # if we have nested compound models, need to keep structured dtypes
-        if has_compound:
-            return list(zip(self.names, dtypes))
-
-        # if only simple models, can just concatenate dtypes
-        return list(next(zip(*dtypes)))
-
     def p0guess(self, data, grid=None, stddev=None, **kws):
-
+        #
         if kws.get('nested'):
             return Parameters({name: mdl.p0guess(data, grid, stddev, **kws)
                                for name, mdl in self.items()})
-
         else:
-            return np.r_[tuple(mdl.p0guess(data, grid, stddev, **kws)
-                               for mdl in self.models)]
+            return np.hstack([mdl.p0guess(data, grid, stddev, **kws)
+                               for mdl in self.models])
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         #
@@ -589,8 +575,29 @@ class CompoundModel(Model, ModelContainer):
         p = np.empty_like(p0)
         for name, mdl in self.items():
             p[name] = mdl.fit(p0[name], *args, **kws)
-            # FIXME: not always appropriate
 
+        return p
+
+    # def has_compound(self):
+    #     for mdl in self.values():
+    #         if len(mdl.get_dtype()) > 1:
+    #             return True
+    #     return False
+    #
+    # def get_dtype(self):    # TODO: don't need this method anymore!!!!!
+    #     dtypes = [mdl.get_dtype() for mdl in self.values()]
+    #     ncomponents = list(map(len, dtypes))
+    #     has_compound = np.greater(ncomponents, 1).any()
+    #     # if we have nested compound models, need to keep structured dtypes
+    #     if has_compound:
+    #         return list(zip(self.names, dtypes))
+    #
+    #     # if only simple models, can just concatenate dtypes
+    #     return list(next(zip(*dtypes)))
+
+
+# class CompoundSequentialFitter(CompoundModel):
+# FIXME: not always appropriate
 
 # class SeqMod(CompoundModel):
 #     def get_dtype(self):
