@@ -488,7 +488,7 @@ class SummaryStatsMixin(object):
 
 class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
     # dict-like container for models
-    def __init__(self, models=(), **kws):       #
+    def __init__(self, models=(), **kws):  #
         """
         Create model container from sequence of models and or keyword,
         model pairs. Model names will be made a unique set by appending
@@ -558,7 +558,6 @@ class CompoundModel(Model, ModelContainer):
     # def __repr__(self):
     #     return object.__repr__(self)
 
-
     @property
     def models(self):
         return self.values()
@@ -570,7 +569,7 @@ class CompoundModel(Model, ModelContainer):
                                for name, mdl in self.items()})
         else:
             return np.hstack([mdl.p0guess(data, grid, stddev, **kws)
-                               for mdl in self.models])
+                              for mdl in self.models])
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         #
@@ -617,6 +616,9 @@ class CompoundModel(Model, ModelContainer):
 
 
 # TODO: SimultaneousCompound, SequentialCompound ??
+
+# class _2dIndexEmulator():
+#     def __getitem__(self, key):
 
 
 class StaticGridMixin(object):
