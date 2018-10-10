@@ -500,6 +500,9 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
         models
         kws
         """
+
+        # TODO: check if models is mapping!!!
+
         mapping = ()
         if len(models):
             models = tuple(filter(None, models))
