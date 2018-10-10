@@ -25,39 +25,6 @@ from ..phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 # idea: detect stars that share windows and fit simultaneously
 
 
-def analyze_image_fit(mdl, image, p0=None):
-    # original
-    fig, axes = plt.subplots(3, 1, )
-
-    im = ImageDisplay(image, ax= axes[0])
-
-
-    # fit
-    t0 = time.time()
-    r = mdl.fit(image, p0=p0, method='nelder-mead')
-    δt = time.time() - t0
-    if r is None:
-        raise Exception('Fail')
-
-    # model
-    im = ImageDisplay(mdl(r))
-    display(im.figure)
-
-    # residual
-    im = ImageDisplay(mdl.residuals(r, image))
-    display(im.figure)
-
-    print(mdl)
-    print('Parameters (%i)' % len(r))
-    print('Optimization took: %3.2f s' % δt)
-    print(
-        r)  # '\n'.join(map(numeric_repr, r))  # mdl.format_params(r, precision=3))
-    print()
-    print('chi2', mdl.redchi(r, mim))
-
-    return r  # , figs
-
-
 class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
@@ -253,7 +220,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     else:
     #         return self._dtype
 
-
     def get_dtype(self, models=None, groups=None, ):
         # build the structured np.dtype object for a particular model or
         # group of models. default is to use the full set of models an
@@ -277,12 +243,12 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         # make sure size in a tuple
         shape = int2tup(shape)
         dt = model.get_dtype()
-        if len(dt) == 1:                            # simple model
+        if len(dt) == 1:  # simple model
             name, base, dof = dt[0]
             dof = int2tup(dof)
             # extend shape of dtype
             return model.name, base, shape + dof
-        else:                                       # compound model
+        else:  # compound model
             # structured dtype - nest!
             return model.name, dt, shape
 
@@ -449,13 +415,13 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
                     from IPython import embed
                     import traceback, textwrap
                     header = textwrap.dedent(
-                        """\
-                        Caught the following %s:
-                        ------ Traceback ------
-                        %s
-                        -----------------------
-                        Exception will be re-raised upon exiting this embedded interpreter.
-                        """) % (err.__class__.__name__, traceback.format_exc())
+                            """\
+                            Caught the following %s:
+                            ------ Traceback ------
+                            %s
+                            -----------------------
+                            Exception will be re-raised upon exiting this embedded interpreter.
+                            """) % (err.__class__.__name__, traceback.format_exc())
                     embed(header=header)
                     raise
 

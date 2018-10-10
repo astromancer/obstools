@@ -382,21 +382,10 @@ if __name__ == '__main__':
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
             image_NORM, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
-    # piss --------------------------------------------------------------
+    from obstools.modelling.viz import plot_modelled_image  #
+    # modelling.image.diagnostics import plot_modelled_image
 
-    # segm = SegmentationHelper.detect(image, bad_pixel_mask)
-    #
-    # mimage = segm.mask_segments(image)
-    # mimage.mask |= bad_pixel_mask
-    #
-    # # media, madness, scale = vignette.get_cross_sections(mimage)
-    # media = {'x': np.ma.median(mimage, 0),
-    #          'y': np.ma.median(mimage, 1)}
-    # std = {'x': np.ma.std(mimage, 0),
-    #        'y': np.ma.std(mimage, 1)}
-    # my, mx = vignette.models
-
-    # piss --------------------------------------------------------------
+    plot_modelled_image(vignette, image_NORM, p0bg.vignette.squeeze())
 
     raise SystemExit
 
@@ -429,6 +418,9 @@ if __name__ == '__main__':
         coms.append(com)
 
         # show image
+        r = p0bg.vignette.squeeze()
+        plot_modelled_image(vignette, image_NORM, r)
+
         # im = segm.display()
         ui.add_tab(im.figure)
     ui.show()
