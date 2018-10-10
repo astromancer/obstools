@@ -6,8 +6,11 @@ from graphical.imagine import ImageDisplay
 
 
 def plot_modelled_image(model, image, params):
+
+    # TODO: method of Model???
+
     # Plot!!
-    fig, axes = plt.subplots(3, 1, figsize=(18, 8),
+    fig, axes = plt.subplots(3, 1, figsize=(13, 6),
                              sharex='all', sharey='all',
                              # THESE VALUES FOR SALTICAM
                              gridspec_kw=dict(top=0.97,
@@ -28,7 +31,7 @@ def plot_modelled_image(model, image, params):
     return fig
 
 
-def image_fit_report(mdl, image, p0):
+def image_fit_report(mdl, image, p0=None):
     # fit
     t0 = time.time()
     r = mdl.fit(image, p0=p0, method='nelder-mead')

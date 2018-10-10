@@ -383,9 +383,10 @@ if __name__ == '__main__':
             image_NORM, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
     #
-    from modelling.image.diagnostics import plot_modelled_image
+    from obstools.modelling.image.diagnostics import plot_modelled_image
 
-    plot_modelled_image(vignette, image_NORM, p0bg.vignette.squeeze())
+    fig = plot_modelled_image(vignette, image_NORM, p0bg.vignette.squeeze())
+    idisplay(fig)
 
     raise SystemExit
 
@@ -419,10 +420,10 @@ if __name__ == '__main__':
 
         # show image
         r = p0bg.vignette.squeeze()
-        plot_modelled_image(vignette, image_NORM, r)
+        fig = plot_modelled_image(vignette, image_NORM, r)
 
         # im = segm.display()
-        ui.add_tab(im.figure)
+        ui.add_tab(fig)
     ui.show()
 
     ndetected = list(map(len, coms))
