@@ -523,8 +523,10 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
             #
             mapping = zip(names, models)
 
+        # embed()
+
         # load models into dict
-        odict.__init__(self, mapping, **kws)
+        super().__init__(mapping, **kws)
         # note init with kws can mean we loose order in python < 3.6
 
     def __setitem__(self, key, value):
@@ -549,11 +551,11 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
         return tuple(mdl.name for mdl in self.values())
 
 
-class CompoundModel(Model, ModelContainer):
+class CompoundModel(ModelContainer, Model):
 
     # use_record = True
-    # def __init__(self, models=(), names=None, **kws):
-    #     ModelContainer.__init__(self, models, names, **kws)
+    def __init__(self, models=(), **kws):
+        ModelContainer.__init__(self, models, **kws)
 
     # def __repr__(self):
     #     return object.__repr__(self)
