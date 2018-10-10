@@ -1,6 +1,7 @@
 # from pathlib import Path
 import numbers
 # import json
+import operator
 from collections import OrderedDict as odict
 
 import numpy as np
@@ -486,8 +487,9 @@ class SummaryStatsMixin(object):
         return super().fit(y, grid, stddev, p0, **kws)
 
 
-class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
+class CompoundModel(AttrReadItem, ListLike, LoggingMixin):
     # dict-like container for models
+
     def __init__(self, models=(), **kws):  #
         """
         Create model container from sequence of models and or keyword,
@@ -526,11 +528,14 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
             #
             mapping = zip(names, models)
 
-        # embed()
-
         # load models into dict
-        super().__init__(mapping, **kws)
+        super().__init__(mapping)
+        self.update(**kws)
+
         # note init with kws can mean we loose order in python < 3.6
+
+    # def __repr__(self):
+    #     return object.__repr__(self)
 
     def __setitem__(self, key, value):
         # make sure the model has the same name that it is keyed on in the dict
@@ -541,9 +546,9 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
 
         return super().__setitem__(key, value)
 
-    # @property
-    # def models(self):
-    #     return tuple(self.values())
+    @property
+    def models(self):
+        return self.values()
 
     @property
     def nmodels(self):
@@ -551,21 +556,20 @@ class ModelContainer(AttrReadItem, ListLike, LoggingMixin):
 
     @property
     def names(self):
-        return tuple(mdl.name for mdl in self.values())
-
-
-class CompoundModel(ModelContainer, Model):
-
-    # use_record = True
-    def __init__(self, models=(), **kws):
-        ModelContainer.__init__(self, models, **kws)
-
-    # def __repr__(self):
-    #     return object.__repr__(self)
+        return tuple(self.attrgetter('name'))
 
     @property
-    def models(self):
-        return self.values()
+    def dofs(self):
+        return self.attrgetter('dof')
+
+    @property
+    def dof(self):
+        """Total number of free parameters considering all constituent models"""
+        return sum(self.dofs)
+
+    def attrgetter(self, *attrs):
+        getter = operator.attrgetter(*attrs)
+        return list(map(getter, self.values()))
 
     def p0guess(self, data, grid=None, stddev=None, **kws):
         #
