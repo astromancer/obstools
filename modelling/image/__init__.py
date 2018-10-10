@@ -12,9 +12,9 @@ from recipes.dict import AttrDict
 from recipes.logging import LoggingMixin
 from recipes.string import seq_repr_trunc
 
-from .core import Model, CompoundModel
-from .utils import make_shared_mem, int2tup
-from ..phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
+from ..core import Model, CompoundModel
+from ..utils import make_shared_mem, int2tup
+from ...phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 
 
 # from IPython import embed

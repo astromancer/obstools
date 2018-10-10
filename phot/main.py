@@ -382,8 +382,8 @@ if __name__ == '__main__':
     mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
             image_NORM, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
 
-    from obstools.modelling.viz import plot_modelled_image  #
-    # modelling.image.diagnostics import plot_modelled_image
+    #
+    from modelling.image.diagnostics import plot_modelled_image
 
     plot_modelled_image(vignette, image_NORM, p0bg.vignette.squeeze())
 
