@@ -487,8 +487,8 @@ class SummaryStatsMixin(object):
         return super().fit(y, grid, stddev, p0, **kws)
 
 
-class CompoundModel(AttrReadItem, ListLike, LoggingMixin):
-    # dict-like container for models
+class CompoundModel(AttrReadItem, ListLike, Model):
+    # base dict-like container for models
 
     def __init__(self, models=(), **kws):  #
         """
