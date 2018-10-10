@@ -116,11 +116,16 @@ def task(size, maxfail=None):
 
 if __name__ == '__main__':
     #
-    header =
     chrono.mark('Main start')
-
+    from motley import banner
     import argparse
 
+    # say hello
+    header = banner('⚡ ObsTools Photometry ⚡', align='^')
+    header = header + '\nv1.2\n'
+    print(header)
+
+    # many cores?!?
     ncpus = os.cpu_count()
 
     # parse command line args
@@ -196,7 +201,6 @@ if __name__ == '__main__':
 
     # ===============================================================================
     # Decide how to log based on where we're running
-
     if socket.gethostname().startswith('mensa'):
         plot_lightcurves = plot_diagnostics = False
         print_progress = False
@@ -263,10 +267,9 @@ if __name__ == '__main__':
 
     # ===============================================================================
     # Image Processing setup
-
-    # plot quick-look image for all 4 amplifier channels
     from slotmode.imaging import image_full_slot
 
+    # plot quick-look image for all 4 amplifier channels
     idisplay(image_full_slot(cube4[10], ch))
 
     # FIXME: any Exception that happens below will stall the log listner indefinitely
@@ -308,7 +311,7 @@ if __name__ == '__main__':
     calib = (None, None)
 
     # create sample image
-    sampler = ImageSampler(cube)
+    sampler = ImageSampler(cube)            # prefer nd_sampler??
     image = sampler.median(10, 100)
     scale = np.median(image)
     image_NORM = image / scale
@@ -353,7 +356,7 @@ if __name__ == '__main__':
 
     vignette = Vignette(*orders, *breaks, (1, 1))
     # vignette.no_mixed_terms()
-    vignette.full_freedom()
+    vignette.diagonal_freedom()
     vignette.set_grid(image)
 
     # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
