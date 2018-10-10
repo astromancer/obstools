@@ -115,7 +115,8 @@ def task(size, maxfail=None):
 
 
 if __name__ == '__main__':
-    # def main():
+    #
+    header =
     chrono.mark('Main start')
 
     import argparse
@@ -425,7 +426,7 @@ if __name__ == '__main__':
         coms.append(com)
 
         # show image
-        #im = segm.display()
+        # im = segm.display()
         ui.add_tab(im.figure)
     ui.show()
 
