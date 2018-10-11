@@ -657,7 +657,7 @@ class StaticGridMixin(object):
         # can you set the method as super method here dynamically for speed?
         return super().residuals(p, data, grid)
 
-    def _check_grid(self, grid):
+    def _check_grid(self, grid):        #todo rename get_static_grid
         if grid is None:
             grid = self.static_grid
         if grid is None:
