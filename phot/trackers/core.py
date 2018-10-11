@@ -453,8 +453,10 @@ class Slices(np.recarray):
 
 class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
+    This class is a domain mapping layer that lives on top of images
+
     Additions to the SegmentationImage class.
-        * classmethod for initializing from an image
+        * classmethod for initializing from an image of stars
         * support for iterating over segments / slices
         * support for masked arrays
         * methods for calculating counts / flux in segments of image
@@ -871,9 +873,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """Return segmentation data keeping only requested labels"""
         return self._extract(self.data, labels, mask0, self.to_bool_3d)
 
-    def clone(self, keep=None, remove=None):
+    def clone(self, keep=all, remove=None):
         """Return a modified copy keeping only labels in `keep`"""
-        if keep is None:
+        if keep is all:
             keep = self.labels
         else:
             keep = np.atleast_1d(keep)
@@ -1400,8 +1402,8 @@ class LabelGroupsMixin(object):
     # def remove_group()
 
 
-class GriddedSegments(SegmentationHelper):  # SegmentedGrid
-    """Mixin class for gridded models"""
+class GriddedSegments(SegmentationHelper):  # GridSegmentation
+    """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None):
         SegmentationHelper.__init__(self, data)

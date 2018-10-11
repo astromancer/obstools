@@ -30,7 +30,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     Model fitting and comparison on segmented image frame
     """
 
-    # TODO: this is a heirarchical model.  make it so!
+    # TODO: this is a hierarchical model.  make it so!
 
     # TODO: mask_policy.  filter / set error to inf
     # TODO: option to fit centres or use Centroids
