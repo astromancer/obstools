@@ -1388,7 +1388,7 @@ class LabelGroupsMixin(object):
 
     def __init__(self, groups=None):
         if groups is None:
-            groups = zip(('bg', 'group0'),
+            groups = zip(('bg', 'group0'),  # FIXME: seems bad
                          ([0], [self.segm.labels_nonzero]))
 
         self._groups = LabelGroups(groups)

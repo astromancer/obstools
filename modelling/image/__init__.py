@@ -13,8 +13,8 @@ from recipes.logging import LoggingMixin
 from recipes.string import seq_repr_trunc
 
 from ..core import Model, CompoundModel
-from ..utils import make_shared_mem, int2tup
-from ...phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
+from ..utils import make_shared_mem
+from ...phot.trackers import LabelGroupsMixin, GriddedSegments #LabelUser
 
 
 # from IPython import embed
@@ -239,22 +239,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
             dtype.append(dt)
         return dtype
 
-    def _adapt_dtype(self, model, shape):
-        # adapt the dtype of a component model so that it can be used with
-        # other dtypes in a structured dtype
-
-        # make sure size in a tuple
-        shape = int2tup(shape)
-        dt = model.get_dtype()
-        if len(dt) == 1:  # simple model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, shape + dof
-        else:  # compound model
-            # structured dtype - nest!
-            return model.name, dt, shape
-
     def _get_output(self, shape=(), models=None, groups=None, fill=np.nan):
         # create the container `np.recarray` for the result of an
         # optimization run on `models` in `groups`
@@ -424,7 +408,8 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
                             %s
                             -----------------------
                             Exception will be re-raised upon exiting this embedded interpreter.
-                            """) % (err.__class__.__name__, traceback.format_exc())
+                            """) % (
+                             err.__class__.__name__, traceback.format_exc())
                     embed(header=header)
                     raise
 

@@ -13,7 +13,7 @@ from recipes.logging import LoggingMixin
 from recipes.dict import AttrReadItem, ListLike
 from recipes.list import tally
 
-from .utils import make_shared_mem
+from .utils import make_shared_mem, int2tup
 from .parameters import Parameters
 
 
@@ -149,8 +149,6 @@ class Model(OptionallyNamed, LoggingMixin):
         if self.dof is None:
             raise TypeError('Subclass should set attribute `dof`')
 
-        # if isinstance(self.dof, numbers.Integral):
-        #     dof = self.dof,
         return [(self.get_name(), self.base_dtype, self.dof)]
 
     def residuals(self, p, data, grid=None):
@@ -597,22 +595,34 @@ class CompoundModel(AttrReadItem, ListLike, Model):
 
         return p
 
-    # def has_compound(self):
-    #     for mdl in self.values():
-    #         if len(mdl.get_dtype()) > 1:
-    #             return True
-    #     return False
-    #
-    # def get_dtype(self):    # TODO: don't need this method anymore!!!!!
-    #     dtypes = [mdl.get_dtype() for mdl in self.values()]
-    #     ncomponents = list(map(len, dtypes))
-    #     has_compound = np.greater(ncomponents, 1).any()
-    #     # if we have nested compound models, need to keep structured dtypes
-    #     if has_compound:
-    #         return list(zip(self.names, dtypes))
-    #
-    #     # if only simple models, can just concatenate dtypes
-    #     return list(next(zip(*dtypes)))
+    def get_dtype(self, models=None):
+        # build the structured np.dtype object for a particular model or
+        # group of models. default is to use the full set of models and all
+        # groups
+        if models is None:
+            models = self.models
+
+        dtype = []
+        for i, mdl in enumerate(models):
+            dt = self._adapt_dtype(mdl, 1)
+            dtype.append(dt)
+        return dtype
+
+    def _adapt_dtype(self, model, out_shape):
+        # adapt the dtype of a component model so that it can be used with
+        # other dtypes in a structured dtype
+        # make sure size in a tuple
+        out_shape = int2tup(out_shape)
+        dt = model.get_dtype()
+        if len(dt) == 1:  # simple model
+            name, base, dof = dt[0]
+            dof = int2tup(dof)
+            # extend shape of dtype
+            return model.name, base, out_shape + dof
+        else:  # compound model
+            # structured dtype - nest!
+            return model.name, dt, out_shape
+
 
 
 # class CompoundSequentialFitter(CompoundModel):
