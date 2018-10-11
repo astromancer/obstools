@@ -25,7 +25,10 @@ from ...phot.trackers import LabelUser, LabelGroupsMixin, GriddedSegments
 # idea: detect stars that share windows and fit simultaneously
 
 
+# SegmentedImageModel
+
 class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
+    # SegmentedImageModel better name
     """
     Model fitting and comparison on segmented image frame
     """
