@@ -223,7 +223,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     else:
     #         return self._dtype
 
-    def get_dtype(self, models=None, groups=None, ):
+    def get_dtype(self, models=None, groups=None):
         # build the structured np.dtype object for a particular model or
         # group of models. default is to use the full set of models an
         if models is None:
@@ -234,10 +234,12 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
         dtype = []
         for i, mdl in enumerate(models):
-            nlabels = len(groups[i])
+            g = groups.get(i, None)
+            nlabels = len(g) if g else 1
             dt = self._adapt_dtype(mdl, nlabels)
             dtype.append(dt)
         return dtype
+
 
     def _get_output(self, shape=(), models=None, groups=None, fill=np.nan):
         # create the container `np.recarray` for the result of an

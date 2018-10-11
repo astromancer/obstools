@@ -490,6 +490,10 @@ class SummaryStatsMixin(object):
         return super().fit(y, grid, stddev, p0, **kws)
 
 
+# class Record(AttrReadItem, ListLike):
+#     pass
+
+
 class CompoundModel(AttrReadItem, ListLike, Model):
     # base dict-like container for models
 

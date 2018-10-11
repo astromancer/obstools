@@ -1387,9 +1387,9 @@ class LabelGroupsMixin(object):
     """Mixin class for grouping and labelling image segments"""
 
     def __init__(self, groups=None):
-        if groups is None:
-            groups = zip(('bg', 'group0'),  # FIXME: seems bad
-                         ([0], [self.segm.labels_nonzero]))
+        # if groups is None:
+        #     groups = zip(('bg', 'group0'),  # FIXME: seems bad
+        #                  ([0], [self.segm.labels_nonzero]))
 
         self._groups = LabelGroups(groups)
 
