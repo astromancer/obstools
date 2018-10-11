@@ -130,6 +130,8 @@ class Model(OptionallyNamed, LoggingMixin):
     def __call__(self, p, grid=None):
         raise NotImplementedError
 
+    def _check_
+
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
 
@@ -406,7 +408,7 @@ class Model(OptionallyNamed, LoggingMixin):
         pos, prob, state = sampler.run_mcmc(p0, nsamples)  # should
         return sampler
 
-    # TODO: Mixin class here??
+    # TODO: Mixin class here??  ConcurrentComputeResultsContainer
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
         dof = self.dof
@@ -651,13 +653,13 @@ class StaticGridMixin(object):
     def residuals(self, p, data, grid=None):
         if grid is None and self.static_grid is None:
             self.set_grid(data)
-            grid = self.static_grid
+            grid = self.static_grid     # TODO: emit an info message!!
 
         grid = self._check_grid(grid)
         # can you set the method as super method here dynamically for speed?
         return super().residuals(p, data, grid)
 
-    def _check_grid(self, grid):        #todo rename get_static_grid
+    def _check_grid(self, grid):        # todo rename get_static_grid
         if grid is None:
             grid = self.static_grid
         if grid is None:
