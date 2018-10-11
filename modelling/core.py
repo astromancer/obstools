@@ -113,24 +113,27 @@ class OptionallyNamed(object):
 
 
 class Model(OptionallyNamed, LoggingMixin):
-    """Base class for model"""
+    """Base class for fittable model"""
 
     # TODO: have a classmethod here that can turn on and off active view
-    # castings so that we can work with nested parametes more easily
+    # castings so that we can work with nested parameters more easily
 
     # TODO: think of a way to easily fit for variance parameter(s)
 
     dof = None  # sub-class should set  # todo determine intrinsically from p?
-    base_dtype = float  # FIXME - remove this here
+    base_dtype = float              # FIXME - remove this here
     objective = None
 
     # minimizer = minimize
-    # _unconverged_None = True
 
     def __call__(self, p, grid=None):
         raise NotImplementedError
 
-    def _check_
+    def _check_params(self, p):
+        if len(p) != self.dof:
+            raise ValueError('Parameter vector size (%i) does not match '
+                             'degrees of freedom (%i) for model %r' %
+                             (len(p), self.dof, self))
 
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
@@ -140,15 +143,15 @@ class Model(OptionallyNamed, LoggingMixin):
         return super().get_name().lower()
 
     def get_dtype(self):
-        # todo: use p0guess to determine the dtype ?
+        # todo: use p0guess to determine the dtype in pre_process?? / pre_fit
         # todo: eliminate this method
-        dof = self.dof
-        if dof is None:
+
+        if self.dof is None:
             raise TypeError('Subclass should set attribute `dof`')
 
-        # if isinstance(self.dof, int):
+        # if isinstance(self.dof, numbers.Integral):
         #     dof = self.dof,
-        return [(self.get_name(), self.base_dtype, dof)]
+        return [(self.get_name(), self.base_dtype, self.dof)]
 
     def residuals(self, p, data, grid=None):
         """Difference between data (observations) and model. a.k.a. deviation"""
@@ -408,7 +411,7 @@ class Model(OptionallyNamed, LoggingMixin):
         pos, prob, state = sampler.run_mcmc(p0, nsamples)  # should
         return sampler
 
-    # TODO: Mixin class here??  ConcurrentComputeResultsContainer
+    # TODO: Mixin class here??  ConcurrentResultsContainer / SharedMemory
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
         dof = self.dof
