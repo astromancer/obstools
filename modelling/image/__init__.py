@@ -14,7 +14,8 @@ from recipes.string import seq_repr_trunc
 
 from ..core import Model, CompoundModel
 from ..utils import make_shared_mem
-from ...phot.trackers import LabelGroupsMixin, GriddedSegments  # LabelUser
+from ...phot.trackers import LabelGroupsMixin  # LabelUser
+from ...phot.segmentation import GriddedSegments
 
 
 # from IPython import embed

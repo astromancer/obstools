@@ -1,18 +1,197 @@
 import itertools as itt
 import warnings
+from collections import UserList
 from operator import attrgetter
 
 import numpy as np
-from astropy.utils import lazyproperty
-from dataclasses import dataclass
+
 from obstools.phot.utils import duplicate_if_scalar
 from recipes.logging import LoggingMixin
 from scipy import ndimage
 
-from obstools.phot.trackers import detect
 from photutils import SegmentationImage
 
 # from collections import namedtuple
+
+from astropy.stats.sigma_clipping import sigma_clip
+from astropy.utils import lazyproperty
+
+from photutils.detection.core import detect_threshold
+from photutils.segmentation import detect_sources
+
+import logging
+import more_itertools as mit
+from recipes.string import get_module_name
+
+# module level logger
+logger = logging.getLogger(get_module_name(__file__))
+
+
+def detect(image, mask=False, background=None, snr=3., npixels=7,
+           edge_cutoff=None, deblend=False):
+    """
+    Image detection that returns a SegmentationHelper instance
+
+    Parameters
+    ----------
+    image
+    mask
+    background
+    snr
+    npixels
+    edge_cutoff
+    deblend
+    dilate
+
+    Returns
+    -------
+
+    """
+
+    logger.info('Running detect(snr=%.1f, npixels=%i)', snr, npixels)
+
+    # calculate threshold without edges so that std accurately measured for
+    # region of interest
+    if edge_cutoff:
+        border = make_border_mask(image, edge_cutoff)
+        mask = mask | border
+
+    # separate pixel mask for threshold calculation (else the mask gets
+    # duplicated to threshold array, which will skew the detection stats)
+    if np.ma.isMA(image):
+        mask = mask | image.mask
+        image = image.data
+
+    # detection
+    threshold = detect_threshold(image, snr, background, mask=mask)
+    if mask is False:
+        mask = None  # annoying photutils #HACK
+    obj = detect_sources(image, threshold, npixels, mask=mask)
+
+    #
+    if np.all(obj.data == 0):
+        logger.info('No objects detected')
+        return obj
+
+    # if border is not False:
+    #     obj.remove_masked_labels(border, partial_overlap=False)
+
+    if deblend:
+        from photutils import deblend_sources
+        obj = deblend_sources(image, obj, npixels)
+        # returns altered copy of instance
+
+    logger.info('Detected %i objects across %i pixels.', obj.nlabels,
+                obj.data.astype(bool).sum())
+    return obj
+
+
+def detect_loop(image, mask=None, bgmodel=None, snr=3., npixels=7,
+                edge_cutoff=None, deblend=False, dilate=1):
+    """
+    Multi-threshold image blob detection, segmentation and grouping.
+
+    `snr`, `npixels`, `dilate` can be sequences in which case the next value
+    from each will be used in the next detection loop. If scalar, same value
+    during each iteration while mask in updated
+
+    Parameters
+    ----------
+    image
+    mask
+    bgmodel
+    snr
+    npixels
+    dilate
+    edge_cutoff
+    deblend
+
+    Returns
+    -------
+
+    """
+
+    # TODO: can you do better with GMM ???
+
+    # make iterables
+    _snr, _npix, _dil = (iter_repeat_last(o) for o in (snr, npixels, dilate))
+
+    data = np.zeros(image.shape, int)
+    if mask is None:
+        mask = np.zeros(image.shape, bool)
+
+    background = results = None  # first round detection without bgmodel
+    groups = []
+    counter = itt.count(0)
+    j = 0
+    go = True
+    while go:
+        # keep track of iteration number
+        count = next(counter)
+
+        # detect
+        sh = SegmentationHelper.detect(image, mask, background, next(_snr),
+                                       next(_npix), edge_cutoff, deblend,
+                                       next(_dil))
+
+        # update mask, get labels
+        labelled = sh.data
+        new_mask = labelled.astype(bool)
+        new_data = new_mask & np.logical_not(mask)
+        new_labels = np.unique(labelled[new_data])
+
+        # since we dilated the detection masks, we may now be overlapping with
+        # previous detections. Remove overlapping pixels here
+        # if dilate:
+        #     overlap = mask & new_data
+        #     new_data[overlap] = 0
+
+        if not new_data.any():
+            # done
+            # final group of detections are determined by sigma clipping
+            if bgmodel:
+                resi = bgmodel.residuals(results, image)
+            else:
+                resi = image
+            resi_masked = np.ma.MaskedArray(resi, mask)
+            resi_clip = sigma_clip(resi_masked)  # TODO: make this optional
+            new_data = resi_clip.mask & ~resi_masked.mask
+            new_data = ndimage.binary_dilation(new_data) & ~resi_masked.mask
+            labelled, nlabels = ndimage.label(new_data)
+            new_labels = np.unique(labelled[labelled != 0])
+            go = False
+
+        # aggregate
+        data[new_data] += labelled[new_data] + j
+        mask = mask | new_mask
+        groups.append(new_labels + j)
+        j += new_labels.max()
+
+        logger.info('detect_loop: round nr %i: %i new detections: %s',
+                    count, len(new_labels), tuple(new_labels))
+        # print('detect_loop: round nr %i: %i new detections: %s' %
+        #       (count, len(new_labels), tuple(new_labels)))
+
+        # slotmode HACK
+        if count == 0:
+            # BackgroundModel(sh, None, )
+            # init bg model here
+            segmbg = sh.copy()
+
+        if bgmodel:
+            # fit background
+            imm = np.ma.MaskedArray(image, mask)
+            results, residu = bgmodel.minimized_residual(imm)
+
+            # background model
+            background = bgmodel(results)
+
+        break
+
+    # TODO: log what you found
+
+    return data, groups, results
+
 
 def inside_segment(coords, sub, grid):
     b = []
@@ -28,6 +207,37 @@ def inside_segment(coords, sub, grid):
         inside = not mask[b[0], b[1]]
 
     return inside
+
+
+def iter_repeat_last(it):
+    it, it1 = itt.tee(mit.always_iterable(it))
+    return mit.padded(it, next(mit.tail(1, it1)))
+
+
+def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
+    """Edge mask"""
+    mask = np.zeros(data.shape, bool)
+
+    mask[:ylow] = True
+    if yhi is not None:
+        mask[yhi:] = True
+
+    mask[:, :xlow] = True
+    if xhi is not None:
+        mask[:, xhi:] = True
+    return mask
+
+
+def make_border_mask(data, edge_cutoffs):
+    if isinstance(edge_cutoffs, int):
+        return _make_border_mask(data,
+                                 edge_cutoffs, -edge_cutoffs,
+                                 edge_cutoffs, -edge_cutoffs)
+    edge_cutoffs = tuple(edge_cutoffs)
+    if len(edge_cutoffs) == 4:
+        return _make_border_mask(data, *edge_cutoffs)
+
+    raise ValueError('Invalid edge_cutoffs %s' % edge_cutoffs)
 
 
 class SegmentedArray(np.ndarray):
@@ -123,32 +333,41 @@ class SegmentedArray(np.ndarray):
 # yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
-class Slices(object):
+class Slices(UserList):
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
-    def __init__(self, segm):
-        # parent is SegmentationHelper instance
-        # get list of slices from super class SegmentationImage
-        slices = SegmentationImage.slices.fget(segm)
-        if segm.allow_zero:
-            slices = [(slice(None), slice(None))] + slices
+    def __init__(self, obj):
 
-        self.slices = np.array(slices, 'O')
+        if isinstance(obj, Slices):
+            obj = obj.segm
+
+        if isinstance(obj, SegmentationHelper):
+            # parent is SegmentationHelper instance
+            # get list of slices from super class SegmentationImage
+            slices = SegmentationImage.slices.fget(obj)
+            if obj.allow_zero:
+                slices = [(slice(None), slice(None))] + slices
+        else:
+            raise TypeError('Fuck you %s' % obj)
+        #
+        UserList.__init__(self, slices)
+
+        # dtype = np.dtype(list(zip('yx', 'OO')))
+        # np.rec.array(slices, dtype)
 
         # add SegmentationHelper instance as attribute
-        self.segm = segm
+        self.segm = obj
 
     @property
     def x(self):
-        return self.slices[:, 1]
+        _, x = zip(*self)
+        return x
 
     @property
     def y(self):
-        return self.slices[:, 0]
-
-    def __getitem__(self, item):
-        return self.slices[item]
+        y, _ = zip(*self)
+        return y
 
     def from_labels(self, labels=None):
         return self.segm.get_slices(labels)
@@ -182,6 +401,9 @@ class Slices(object):
     def widths(self):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.x)))
 
+    def height(self):
+        return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.y)))
+
     def extents(self, labels=None):
 
         slices = self.segm.get_slices(labels)
@@ -195,8 +417,8 @@ class Slices(object):
     def grow(self, labels, inc=1):
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), 1).clip(None, self.segm.shape)
-        llc = np.add(self.llc(labels), -1).clip(0)
+        urc = np.add(self.urc(labels), inc).clip(None, self.segm.shape)
+        llc = np.add(self.llc(labels), -inc).clip(0)
         slices = [tuple(slice(*i) for i in yxix)
                   for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
         return slices
@@ -464,8 +686,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             self.labels = self.labels[1:]
         else:
             slices = [(slice(None), slice(None))]
-            slices.extend(self.slices.slices)
-            self.slices.slices = slices
+            slices.extend(self.slices)
+            self.slices.data = slices
             self.labels = np.hstack([0, self.labels])
         self._allow_zero = b
 
@@ -489,8 +711,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if labels is None:
             return self.slices
         labels = self.check_labels(labels) - (not self.allow_zero)
-        return self.slices[labels]
-        # since self.slices is np.ndarray we can get items with array of labels
+        return [self.slices[_] for _ in labels]
 
     @lazyproperty
     def labels(self):
