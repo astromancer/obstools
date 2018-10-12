@@ -14,7 +14,7 @@ from recipes.string import seq_repr_trunc
 
 from ..core import Model, CompoundModel
 from ..utils import make_shared_mem
-from ...phot.trackers import LabelGroupsMixin, GriddedSegments #LabelUser
+from ...phot.trackers import LabelGroupsMixin, GriddedSegments  # LabelUser
 
 
 # from IPython import embed
@@ -25,10 +25,7 @@ from ...phot.trackers import LabelGroupsMixin, GriddedSegments #LabelUser
 # idea: detect stars that share windows and fit simultaneously
 
 
-# SegmentedImageModel
-
-class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
-    # SegmentedImageModel better name
+class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
     """
@@ -133,7 +130,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #
     #         # fit background
     #         mimage = np.ma.MaskedArray(image, original_mask)
-    #         results, residual = model._fit_reduce(mimage)
+    #         results, residual = model.minimized_residual(mimage)
     #
     #     # TODO: log what you found
     #     return model, results, data, mask, groups
@@ -177,7 +174,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         # assert len(models) == len(self.groups)
         CompoundModel.__init__(self, models)
 
-        self.dtype = self.get_dtype()
+        self.dtype = self.get_dtype()  # todo property?
         # self.group_sizes = self.groups.sizes  # not dynamic
 
     def __reduce__(self):
@@ -209,7 +206,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         self[model.name] = model
         self.groups[model.name] = labels
         # overwrite the full-model-hierarchy dtype to include additional model
-        self.dtype = self.get_dtype()
+        self.dtype = self.get_dtype()       # todo property?
 
     @property
     def ngroups(self):
@@ -242,7 +239,6 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
             dt = self._adapt_dtype(mdl, nlabels)
             dtype.append(dt)
         return dtype
-
 
     def _get_output(self, shape=(), models=None, groups=None, fill=np.nan):
         # create the container `np.recarray` for the result of an
@@ -308,16 +304,13 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         """
         # this method is for production
         mask = kws.pop('mask', True)
-        extract = kws.pop('extract', False)
+        flatten = kws.pop('flatten', False)
         # labels = self.segm.groups[group]
         segmented = self.segm.coslice(data, std, labels=labels, mask_bg=mask,
-                                      flatten=extract)
+                                      flatten=flatten)
         for i, (sub, substd) in enumerate(segmented):
-            grid = model.adapt_grid(self.segm.subgrids[labels[i]])
-            # print(sub)
-            # p0 = model.p0guess(sub, grid, substd)
-            # print('p0', p0)
-            r = model.fit(None, sub, grid, substd, **kws)
+            grid = self.segm.subgrids[labels[i]]
+            r = model.fit(sub, grid, substd, **kws)
 
             if r is not None:
                 print('results', r.shape, results[i].shape)
@@ -325,7 +318,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
         return results
 
-    # def fit_model_simul(self, model, data, std, labels, results, **kws):
+    # def _fit_model_simul(self, model, data, std, labels, results, **kws):
 
     # def fit_model(self, *args, **kws):
     #     """
@@ -355,8 +348,8 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #
     #     return results[model.name].squeeze()
 
-    def _fit_reduce(self, data, stddev=None, **kws):
-        # loop over models and fit
+    def minimized_residual(self, data, stddev=None, **kws):
+        # loop over all models and all segments
         results = self._get_output()
         resi = data.copy()
         for i, model in enumerate(self.models):
@@ -367,12 +360,14 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         return results, resi
 
     def _fit_model_reduce(self, model, data, std, labels, results, **kws):
-        # maximum_likelihood_residual # ml_res
         """
+        Get the minimized residual for model on labels, given data (and
+        uncertainties.
+
         Fit this model for all segments
         """
         resi = data
-        extra = kws.pop('extrapolate', 0)  # todo better name?# grow_segments
+        extra = kws.pop('grow_segments', 0)
         mask_bg = kws.pop('mask_bg', True)
         flatten = kws.pop('flatten', False)
         # labels = self.segm.groups[group]
@@ -380,7 +375,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
                                       flatten=flatten, enum=True)
         i = 0
         if extra:
-            slices = self.segm.slices.enlarge(labels, extra)
+            slices = self.segm.slices.grow(labels, extra)
         else:
             slices = self.segm.get_slices(labels)
 
@@ -414,12 +409,12 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
                             -----------------------
                             Exception will be re-raised upon exiting this embedded interpreter.
                             """) % (
-                             err.__class__.__name__, traceback.format_exc())
+                                 err.__class__.__name__, traceback.format_exc())
                     embed(header=header)
                     raise
 
             else:
-                'what to do with parameters here? Keep as nans? mask?'
+                'what to do with parameters here? Keep as nans? mask? bork!!?'
             #     warnings.warn('Model fit for %r failed.' % model.name)
             i += 1
 
@@ -497,7 +492,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     return ix_bf, best_model, msg
 
 
-class PSFModeller(ImageSegmentsModeller):
+class PSFModeller(SegmentedImageModel):
 
     # def
 
@@ -534,12 +529,12 @@ class PSFModeller(ImageSegmentsModeller):
         return stat
 
 
-class BackgroundModeller(ImageSegmentsModeller):
+class BackgroundModeller(SegmentedImageModel):
 
     def __init__(self, segmentation, models, use_labels=(0,)):
         segm = segmentation.copy()
         segm.allow_zero = True
-        ImageSegmentsModeller.__init__(self, segm, models, use_labels)
+        SegmentedImageModel.__init__(self, segm, models, use_labels)
 
     # def
 
@@ -864,11 +859,11 @@ class AperturesFromModel(LoggingMixin):
             self.logger.warning('Large sky apertures: ' + info, i, *rsky)
 
 
-class ImageModeller(ImageSegmentsModeller, ModellingResultsMixin):
+class ImageModeller(SegmentedImageModel, ModellingResultsMixin):
     def __init__(self, segm, psf, bg, metrics=None, use_labels=None,
                  fit_positions=True, save_residual=True):
-        ImageSegmentsModeller.__init__(self, segm, psf, bg, self._metrics,
-                                       use_labels)
+        SegmentedImageModel.__init__(self, segm, psf, bg, self._metrics,
+                                     use_labels)
         ModellingResultsMixin.__init__(self, save_residual)
 
 

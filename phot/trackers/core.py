@@ -1,5 +1,5 @@
 """
-Methods for tracking camera movements in CCD photometry
+Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
 # import inspect
@@ -26,8 +26,10 @@ import logging
 
 # from IPython import embed
 
-# TODO: watershed segmentation on the negative image
+# TODO: watershed segmentation on the negative image ?
 #
+
+# TODO: split off segmentation stuff?
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
@@ -127,8 +129,8 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
         border = make_border_mask(image, edge_cutoff)
         mask = mask | border
 
-    # separate mask for threshold calculation (else mask gets duplicated
-    # to threshold array)
+    # separate pixel mask for threshold calculation (else the mask gets
+    # duplicated to threshold array, which will skew the detection stats)
     if np.ma.isMA(image):
         mask = mask | image.mask
         image = image.data
@@ -252,7 +254,7 @@ def detect_loop(image, mask=None, bgmodel=None, snr=3., npixels=7,
         if bgmodel:
             # fit background
             imm = np.ma.MaskedArray(image, mask)
-            results, residu = bgmodel._fit_reduce(imm)
+            results, residu = bgmodel.minimized_residual(imm)
 
             # background model
             background = bgmodel(results)
@@ -396,7 +398,6 @@ class Slices(np.recarray):
     def widths(self):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.x)))
 
-
     def extents(self, labels=None):
 
         slices = self.parent.get_slices(labels)
@@ -407,10 +408,9 @@ class Slices(np.recarray):
                             for s, sz in zip(sl, self.parent.shape)]
         return sizes
 
-    def enlarge(self, labels, inc=1):
+    def grow(self, labels, inc=1):
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-
         urc = np.add(self.urc(labels), 1).clip(None, self.parent.shape)
         llc = np.add(self.llc(labels), -1).clip(0)
         slices = [tuple(slice(*i) for i in yxix)
@@ -1304,7 +1304,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
 class LabelUser(object):
     """
-    Mixin class for inherited classes that use the `SegmentationHelper`.
+    Mixin class for inheritors that use `SegmentationHelper`.
     Adds the `use_label` and `ignore_label` properties.  Whenever a function
     that takes the `label` parameter is called with the default value `None`,
     the labels in `use_labels` will be used instead. Helps with dynamically
@@ -1402,7 +1402,7 @@ class LabelGroupsMixin(object):
     # def remove_group()
 
 
-class GriddedSegments(SegmentationHelper):  # GridSegmentation
+class GriddedSegments(SegmentationHelper):
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None):
@@ -1415,11 +1415,17 @@ class GriddedSegments(SegmentationHelper):  # GridSegmentation
             assert grid.ndim >= 2  # else the `grids` property will fail
 
         self.grid = grid
+        self._sub_grids = None
 
     @lazyproperty
     def subgrids(self):
+        if self._sub_grids is None:
+            self._sub_grids = self.get_subgrids()
+        return self._sub_grids
+
+    def get_subgrids(self, labels=None):
         grids = []
-        for sy, sx in self.iter_slices(self.labels):
+        for sy, sx in self.iter_slices(labels):
             grids.append(self.grid[..., sy, sx])
         return grids
 

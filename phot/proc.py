@@ -488,7 +488,7 @@ class FrameProcessor(LoggingMixin):
         # imbg = tracker.mask_segments(image)
 
         # fit and subtract background
-        p_bg, resi = mdlr._fit_reduce(image)
+        p_bg, resi = mdlr.minimized_residual(image)
 
         # p, pu = lm_extract_values_stderr(p_bg)
         # mdlr.data[-1].params[i] = np.hstack(p_bg)
