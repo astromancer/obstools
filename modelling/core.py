@@ -601,14 +601,13 @@ class CompoundModel(AttrReadItem, ListLike, Model):
 
     def get_dtype(self, models=None):
         # build the structured np.dtype object for a particular model or
-        # group of models. default is to use the full set of models and all
-        # groups
+        # set of models. default is to use the full set of models
         if models is None:
             models = self.models
 
         dtype = []
         for i, mdl in enumerate(models):
-            dt = self._adapt_dtype(mdl, 1)
+            dt = self._adapt_dtype(mdl, ())
             dtype.append(dt)
         return dtype
 

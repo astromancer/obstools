@@ -235,7 +235,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         dtype = []
         for i, mdl in enumerate(models):
             g = groups.get(i, None)
-            nlabels = len(g) if g else 1
+            nlabels = len(g) if g else ()
             dt = self._adapt_dtype(mdl, nlabels)
             dtype.append(dt)
         return dtype
