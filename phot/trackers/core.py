@@ -81,20 +81,7 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
     return mxshift, maxImage, segImx
 
 
-def inside_segment(coords, sub, grid):
-    b = []
-    ogrid = grid[0, :, 0], grid[1, 0, :]
-    for j, (g, f) in enumerate(zip(ogrid, coords)):
-        bi = np.digitize(f, g - 0.5)
-        b.append(bi)
 
-    mask = (sub == 0)
-    if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
-        inside = False
-    else:
-        inside = not mask[b[0], b[1]]
-
-    return inside
 
 
 def iter_repeat_last(it):

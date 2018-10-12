@@ -9,11 +9,25 @@ from obstools.phot.utils import duplicate_if_scalar
 from recipes.logging import LoggingMixin
 from scipy import ndimage
 
-from phot.trackers import detect, inside_segment
+from obstools.phot.trackers import detect
 from photutils import SegmentationImage
 
-from collections import namedtuple
+# from collections import namedtuple
 
+def inside_segment(coords, sub, grid):
+    b = []
+    ogrid = grid[0, :, 0], grid[1, 0, :]
+    for j, (g, f) in enumerate(zip(ogrid, coords)):
+        bi = np.digitize(f, g - 0.5)
+        b.append(bi)
+
+    mask = (sub == 0)
+    if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
+        inside = False
+    else:
+        inside = not mask[b[0], b[1]]
+
+    return inside
 
 
 class SegmentedArray(np.ndarray):
@@ -106,10 +120,10 @@ class SegmentedArray(np.ndarray):
 #         return NotImplemented
 
 # simple container for 2-component objects
-yxTuple = namedtuple('yxTuple', ['y', 'x'])
+# yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
-class Slices(yxTuple):
+class Slices(object):
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
@@ -120,8 +134,21 @@ class Slices(yxTuple):
         if segm.allow_zero:
             slices = [(slice(None), slice(None))] + slices
 
+        self.slices = np.array(slices, 'O')
+
         # add SegmentationHelper instance as attribute
         self.segm = segm
+
+    @property
+    def x(self):
+        return self.slices[:, 1]
+
+    @property
+    def y(self):
+        return self.slices[:, 0]
+
+    def __getitem__(self, item):
+        return self.slices[item]
 
     def from_labels(self, labels=None):
         return self.segm.get_slices(labels)
@@ -224,7 +251,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     # This class is essentially a mapping layer that lives on top of images
 
     _allow_zero = False  # TODO: maybe use_zero more appropriate
-    _slice_dtype = np.dtype(list(zip('yx', 'OO')))
 
     # def cmap(self):
     #   fixme: fails for all zero segments
@@ -438,8 +464,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             self.labels = self.labels[1:]
         else:
             slices = [(slice(None), slice(None))]
-            slices.extend(self.slices)
-            self.slices = np.array(slices, self._slice_dtype)
+            slices.extend(self.slices.slices)
+            self.slices.slices = slices
             self.labels = np.hstack([0, self.labels])
         self._allow_zero = b
 
@@ -452,12 +478,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         self.logger.debug('computing slices!')
 
-        slices = SegmentationImage.slices.fget(self)
-        if self.allow_zero:
-            slices = [(slice(None), slice(None))] + slices
+        # slices = SegmentationImage.slices.fget(self)
+        # if self.allow_zero:
+        #     slices = [(slice(None), slice(None))] + slices
 
-        return np.array(slices, self._slice_dtype)  # array of slices :))
-        # return Slices(self)
+        # return np.array(slices, self._slice_dtype)
+        return Slices(self)
 
     def get_slices(self, labels=None):
         if labels is None:
