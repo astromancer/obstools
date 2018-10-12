@@ -4,12 +4,16 @@ from operator import attrgetter
 
 import numpy as np
 from astropy.utils import lazyproperty
+from dataclasses import dataclass
 from obstools.phot.utils import duplicate_if_scalar
 from recipes.logging import LoggingMixin
 from scipy import ndimage
 
 from phot.trackers import detect, inside_segment
 from photutils import SegmentationImage
+
+from collections import namedtuple
+
 
 
 class SegmentedArray(np.ndarray):
@@ -77,32 +81,50 @@ class SegmentedArray(np.ndarray):
     #     return np.array(result)
 
 
-class Slices(np.recarray):
+# class Slices(np.recarray):
+#     # maps semantic corner positions to slice attributes
+#     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
+#
+#     def __new__(cls, parent):
+#         # parent in SegmentationHelper instance
+#         # get list of slices from super class SegmentationImage
+#         slices = SegmentationImage.slices.fget(parent)
+#         if parent.allow_zero:
+#             slices = [(slice(None), slice(None))] + slices
+#
+#         # initialize np.ndarray with data
+#         super_ = super(np.recarray, cls)
+#         dtype = np.dtype(list(zip('yx', 'OO')))
+#         obj = super_.__new__(cls, len(slices), dtype)
+#         super_.__setitem__(obj, ..., slices)
+#
+#         # add SegmentationHelper instance as attribute
+#         obj.parent = parent
+#         return obj
+#
+#     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+#         return NotImplemented
+
+# simple container for 2-component objects
+yxTuple = namedtuple('yxTuple', ['y', 'x'])
+
+
+class Slices(yxTuple):
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
-    def __new__(cls, parent):
-        # parent in SegmentationHelper instance
+    def __init__(self, segm):
+        # parent is SegmentationHelper instance
         # get list of slices from super class SegmentationImage
-        slices = SegmentationImage.slices.fget(parent)
-        if parent.allow_zero:
+        slices = SegmentationImage.slices.fget(segm)
+        if segm.allow_zero:
             slices = [(slice(None), slice(None))] + slices
 
-        # initialize np.ndarray with data
-        super_ = super(np.recarray, cls)
-        dtype = np.dtype(list(zip('yx', 'OO')))
-        obj = super_.__new__(cls, len(slices), dtype)
-        super_.__setitem__(obj, ..., slices)
-
         # add SegmentationHelper instance as attribute
-        obj.parent = parent
-        return obj
-
-    def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
-        return NotImplemented
+        self.segm = segm
 
     def from_labels(self, labels=None):
-        return self.parent.get_slices(labels)
+        return self.segm.get_slices(labels)
 
     def _get_corners(self, vh, slices):
         # vh - vertical horizontal positions as two character string
@@ -111,19 +133,19 @@ class Slices(np.recarray):
 
     def lower_left_corners(self, labels=None):
         """lower left corners of segment slices"""
-        return self._get_corners('ll', self.parent.get_slices(labels))
+        return self._get_corners('ll', self.segm.get_slices(labels))
 
     def lower_right_corners(self, labels=None):
         """lower right corners of segment slices"""
-        return self._get_corners('lr', self.parent.get_slices(labels))
+        return self._get_corners('lr', self.segm.get_slices(labels))
 
     def upper_right_corners(self, labels=None):
         """upper right corners of segment slices"""
-        return self._get_corners('ur', self.parent.get_slices(labels))
+        return self._get_corners('ur', self.segm.get_slices(labels))
 
     def upper_left_corners(self, labels=None):
         """upper left corners of segment slices"""
-        return self._get_corners('ul', self.parent.get_slices(labels))
+        return self._get_corners('ul', self.segm.get_slices(labels))
 
     llc = lower_left_corners
     lrc = lower_right_corners
@@ -135,25 +157,25 @@ class Slices(np.recarray):
 
     def extents(self, labels=None):
 
-        slices = self.parent.get_slices(labels)
+        slices = self.segm.get_slices(labels)
         sizes = np.zeros((len(slices), 2))
         for i, sl in enumerate(slices):
             if sl is not None:
                 sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
-                            for s, sz in zip(sl, self.parent.shape)]
+                            for s, sz in zip(sl, self.segm.shape)]
         return sizes
 
     def grow(self, labels, inc=1):
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), 1).clip(None, self.parent.shape)
+        urc = np.add(self.urc(labels), 1).clip(None, self.segm.shape)
         llc = np.add(self.llc(labels), -1).clip(0)
         slices = [tuple(slice(*i) for i in yxix)
                   for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
         return slices
 
     def around_centroids(self, image, size, labels=None):
-        com = self.parent.centroid(image, labels)
+        com = self.segm.centroid(image, labels)
         slices = self.around_points(com, size)
         return com, slices
 
@@ -165,7 +187,7 @@ class Slices(np.recarray):
         yxss = np.round(yxp[..., None] + yxdelta).astype(int)
         # clip negative slice indices since they yield empty slices
         return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
-                          for sz, ss in zip(self.parent.shape, yxss))))
+                          for sz, ss in zip(self.segm.shape, yxss))))
 
     def plot(self, ax, **kws):
         from matplotlib.patches import Rectangle
@@ -814,7 +836,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         labels = self.resolve_labels(labels)
         counts = self.counts(image, labels)
-        areas = self.areas[labels-1] # self.area(labels)
+        areas = self.areas[labels - 1]  # self.area(labels)
 
         # bg = bgfunc(image[self.data == 0])
         return (counts / areas)  # - bg
@@ -925,7 +947,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             com[next(counter)] = (sub * g).sum((1, 2)) / sum_  # may be nan
         return com
 
-    centroid = centroids = com_bg
+    centroids = com_bg
 
     def shift(self, offset):
         self.data = ndimage.shift(self.data, offset)
@@ -1044,7 +1066,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             # segment label (number) text central on each segment
             for i in self.labels:
                 im.ax.text(str(i))
-
 
 
 class GriddedSegments(SegmentationHelper):
