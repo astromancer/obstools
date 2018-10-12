@@ -138,7 +138,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     # TODO: log what you found
     #     return model, results, data, mask, groups
 
-    def __init__(self, segm, models, label_groups=None):
+    def __init__(self, segm, models=(), label_groups=()):
         """
 
         Parameters
@@ -147,7 +147,9 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
         models: {array-like, dict}
             The sequence of models. If an array-like, assume the mapping from
             models to image sections is one to one. warn if model index has
-            no corresponding label.
+            no corresponding label. Can be an empty sequence, in which case
+            object will not contain any models initially. Use the `add_model`
+            method to add models retro-actively before compute.
             If dict, and label_groups is None:
                 ?
             if label_groups given, match labels
@@ -165,6 +167,7 @@ class ImageSegmentsModeller(CompoundModel, LabelGroupsMixin, LoggingMixin):
             models = [models]
 
         # if isinstance(models, dict) and isinstance(label_groups, dict):
+        # check that keywords overlap
 
         # default group contains all segment labels
         # print('label_groups', label_groups)
