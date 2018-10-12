@@ -333,9 +333,22 @@ class SegmentedArray(np.ndarray):
 # yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
-class Slices(UserList):
+class Slices(list):
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
+
+    def __new__(self, *args, **kwargs):
+        return super().__new__(self, args, kwargs)
+
+    def __init__(self, *args, **kwargs):
+        # if len(args) == 0:
+        #     kwargs['segm']
+
+        if len(args) == 1 and hasattr(args[0], '__iter__'):
+            list.__init__(self, args[0])
+        else:
+            list.__init__(self, args)
+        self.__dict__.update(kwargs)
 
     def __init__(self, obj):
 
