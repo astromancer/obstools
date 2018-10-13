@@ -700,6 +700,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if b is self._allow_zero:
             return
 
+        # change state
         if self._allow_zero:
             self.slices = self.slices[1:]
             self.labels = self.labels[1:]
@@ -719,12 +720,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         self.logger.debug('computing slices!')
 
-        # slices = SegmentationImage.slices.fget(self)
+        slices = SegmentationImage.slices.fget(self)
         # if self.allow_zero:
         #     slices = [(slice(None), slice(None))] + slices
 
-        # return np.array(slices, self._slice_dtype)
-        return Slices(self)
+        return slices #np.array(slices, self._slice_dtype)
+        # return #Slices(self)
 
     def get_slices(self, labels=None):
         if labels is None:
