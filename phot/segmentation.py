@@ -341,8 +341,8 @@ class Slices(list):
         return super().__new__(self, args, kwargs)
 
     def __init__(self, *args, **kwargs):
-        # if len(args) == 0:
-        #     kwargs['segm']
+        if len(args) == 0:
+            kwargs'segm']
 
         if len(args) == 1 and hasattr(args[0], '__iter__'):
             list.__init__(self, args[0])
