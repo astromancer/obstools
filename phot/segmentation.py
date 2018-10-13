@@ -338,17 +338,23 @@ class Slices(list):
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
     def __new__(self, *args, **kwargs):
+        print('new!')
         return super().__new__(self, args, kwargs)
 
-    def __init__(self, *args, **kwargs):
-        if len(args) == 0:
-            kwargs'segm']
-
-        if len(args) == 1 and hasattr(args[0], '__iter__'):
-            list.__init__(self, args[0])
-        else:
-            list.__init__(self, args)
-        self.__dict__.update(kwargs)
+    # def __new__(self, *args, **kwargs):
+    #     segm = kwargs.pop('segm', None)
+    #     if len(args) == 0 and segm is None:
+    #         raise ValueError
+    #
+    #     if len(args) == 1 and hasattr(args[0], '__iter__'):
+    #         # a sequence
+    #
+    #         list.__init__(self, args[0])
+    #     else:
+    #         list.__init__(self, args)
+    #
+    #     # add attributes
+    #     self.__dict__.update(kwargs)
 
     def __init__(self, obj):
 
