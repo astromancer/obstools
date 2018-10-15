@@ -14,7 +14,7 @@ from recipes.string import seq_repr_trunc
 
 from ..core import Model, CompoundModel
 from ..utils import make_shared_mem
-from ...phot.trackers import LabelGroupsMixin  # LabelUser
+from ...phot.tracking import LabelGroupsMixin  # LabelUser
 from ...phot.segmentation import GriddedSegments
 
 
@@ -47,7 +47,7 @@ class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
     #     """Multi-threshold blob detection"""
     #
     #
-    #     from obstools.phot.trackers import SegmentationHelper, LabelGroups, \
+    #     from obstools.phot.tracking import SegmentationHelper, LabelGroups, \
     #         Record, iter_repeat_last
     #
     #     cls.logger.info('Running detection loop')
@@ -159,7 +159,7 @@ class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
         self.segm = GriddedSegments(segm)
         # fixme: no need to recompute slices. happening implicitly in line above
         # allow zero => we allow label 0 (bg) slice region
-        self.segm.allow_zero = True
+        self.segm.use_label0 = True
 
         if isinstance(models, Model):
             models = [models]
@@ -534,7 +534,7 @@ class BackgroundModeller(SegmentedImageModel):
 
     def __init__(self, segmentation, models, use_labels=(0,)):
         segm = segmentation.copy()
-        segm.allow_zero = True
+        segm.use_label0 = True
         SegmentedImageModel.__init__(self, segm, models, use_labels)
 
     # def

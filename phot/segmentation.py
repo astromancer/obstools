@@ -313,7 +313,7 @@ class SegmentedArray(np.ndarray):
 #         # parent in SegmentationHelper instance
 #         # get list of slices from super class SegmentationImage
 #         slices = SegmentationImage.slices.fget(parent)
-#         if parent.allow_zero:
+#         if parent.use_label0:
 #             slices = [(slice(None), slice(None))] + slices
 #
 #         # initialize np.ndarray with data
@@ -338,64 +338,27 @@ class Slices(list):
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
     def __init__(self, slices=(), segm=None):
-        # print('init', slices, segm)
 
         if len(slices) == 0:
             if segm is None:
                 raise ValueError
             else:
-                # add SegmentationHelper instance as attribute
-                slices = SegmentationImage.slices.fget(segm)
+                # get slices from parent
+                slices = segm.__class__.slices.fget(segm)
 
         if isinstance(slices, Slices) and segm is None:
             segm = slices.segm
 
+        # init parent class
         list.__init__(self, slices)
+
+        # add SegmentationHelper instance as attribute
         self.segm = segm
 
     def __repr__(self):
         return ''.join((self.__class__.__name__, super().__repr__()))
 
-    # def __new__(self, *args, **kwargs):
-    #     print('new!')
-    #     return super().__new__(self, args, kwargs)
-
-    # def __new__(self, *args, **kwargs):
-    #     segm = kwargs.pop('segm', None)
-    #     if len(args) == 0 and segm is None:
-    #         raise ValueError
-    #
-    #     if len(args) == 1 and hasattr(args[0], '__iter__'):
-    #         # a sequence
-    #
-    #         list.__init__(self, args[0])
-    #     else:
-    #         list.__init__(self, args)
-    #
-    #     # add attributes
-    #     self.__dict__.update(kwargs)
-
-    # def __init__(self, obj):
-    #
-    #     if isinstance(obj, Slices):
-    #         obj = obj.segm
-    #
-    #     if isinstance(obj, SegmentationHelper):
-    #         # parent is SegmentationHelper instance
-    #         # get list of slices from super class SegmentationImage
-    #         slices = SegmentationImage.slices.fget(obj)
-    #         if obj.allow_zero:
-    #             slices = [(slice(None), slice(None))] + slices
-    #     else:
-    #         raise TypeError('Fuck you %s' % obj)
-    #     #
-    #     UserList.__init__(self, slices)
-    #
-    #     # dtype = np.dtype(list(zip('yx', 'OO')))
-    #     # np.rec.array(slices, dtype)
-    #
-    #     # add SegmentationHelper instance as attribute
-    #     self.segm = obj
+    # def __getitem__(self, key):
 
     @property
     def x(self):
@@ -511,7 +474,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
     # This class is essentially a mapping layer that lives on top of images
 
-    _allow_zero = False  # TODO: maybe use_zero more appropriate
+    _use_label0 = False
+    _all_slice = (slice(None), slice(None))
 
     # def cmap(self):
     #   fixme: fails for all zero segments
@@ -694,9 +658,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         #     raise ValueError('The segmentation image cannot contain '
         #                      'negative integers.')
         self._data = data
-        # be sure to delete any lazy properties to reset their values.
+        # delete lazy properties to reset them. re-compute at next attr access
         del (self.data_masked, self.shape, self.labels, self.nlabels,
-             self.max, self.slices, self.areas, self.is_sequential, self.masks)
+             self.max, self.slices, self.areas, self.is_sequential, self.masks,
+             self.has_zero)     # todo get these by inspection in construction??
 
     def __array__(self, *args):
         """
@@ -710,26 +675,35 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return self._data
 
-    @property
-    def allow_zero(self):
-        return self._allow_zero
+    @lazyproperty
+    def has_zero(self):
+        return (0 in self.labels)
 
-    @allow_zero.setter
-    def allow_zero(self, b):
+    @property
+    def use_label0(self):
+        return self._use_label0
+
+    @use_label0.setter
+    def use_label0(self, b):
         b = bool(b)
-        if b is self._allow_zero:
+        if b is self._use_label0:
+            return
+
+        if not self.has_zero:
             return
 
         # change state
-        if self._allow_zero:
+        if self._use_label0:
             slices = self.slices[1:]
             self.labels = self.labels[1:]
         else:
-            slices = [(slice(None), slice(None))]
+            slices = [self._all_slice]
             slices.extend(self.slices)
-            self.slices = Slices(slices, self)
             self.labels = np.hstack([0, self.labels])
-        self._allow_zero = b
+
+        # set
+        self.slices = Slices(slices, self)
+        self._use_label0 = b
 
     @lazyproperty
     def slices(self):
@@ -738,25 +712,27 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         object array.
         """
 
-        self.logger.debug('computing slices!')
+        # self.logger.debug('computing slices!')
 
-        # slices = SegmentationImage.slices.fget(self)
-        # if self.allow_zero:
-        #     slices = [(slice(None), slice(None))] + slices
+        # get slices from parent
+        slices = SegmentationImage.slices.fget(self)
+        # only non-zero labels here
+        if self.has_zero and self.use_label0:
+            slices = [self._all_slice] + slices
 
         # return slices #np.array(slices, self._slice_dtype)
-        return Slices(segm=self)
+        return Slices(slices, self)
 
     def get_slices(self, labels=None):
         if labels is None:
             return self.slices
-        labels = self.check_labels(labels) - (not self.allow_zero)
+        labels = self.check_labels(labels) - (not self.use_label0)
         return [self.slices[_] for _ in labels]
 
     @lazyproperty
     def labels(self):
         labels = np.array(np.unique(self.data))
-        if not self.allow_zero:
+        if not self.use_label0:
             return labels[1:]
         return labels
 
@@ -783,7 +759,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     def index(self, labels):
         labels = self.resolve_labels(labels)
         if self.is_sequential:
-            return labels - (not self.allow_zero)
+            return labels - (not self.use_label0)
         else:
             return np.digitize(labels, self.labels)
 
@@ -800,7 +776,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         list of arrays
         """
 
-        if not self.allow_zero:
+        if not self.use_label0:
             masks = {0: (self.data != 0)}
         else:
             masks = {}  # mask for label 0 will be computed below
@@ -936,7 +912,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         Parameters
         ----------
-        labels
+        labels: sequence of int
+            Segment labels to be iterated over
+        filter_: bool
+            whether to filter empty labels (no pixels)
 
         Returns
         -------
