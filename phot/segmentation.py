@@ -1338,7 +1338,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                 im.ax.text(str(i))
 
 
-class GriddedSegments(SegmentationHelper):      # SegmentationGridsMixin
+class GriddedSegments(SegmentationHelper):
+    # SegmentationGridsMixin
+    # ModelledSegments
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None, domains=None):
@@ -1352,7 +1354,7 @@ class GriddedSegments(SegmentationHelper):      # SegmentationGridsMixin
 
         self.grid = grid
         self._sub_grids = None
-        self.domains = None
+        self.domains = domains
 
     @lazyproperty
     def subgrids(self):
@@ -1363,11 +1365,19 @@ class GriddedSegments(SegmentationHelper):      # SegmentationGridsMixin
     def get_subgrids(self, labels=None):
         grids = []
         if self.domains is None:
-            for i, (sy, sx) in enumerate(self.iter_slices(labels)):
-                grids.append(self.grid[..., sy, sx])
-            return grids
+            domains = itt.repeat(((0, 1), (0, 1)))
         else:
-            
+            domains = self.domains
+
+        slices = self.iter_slices(labels)
+        for i, (sy, sx) in enumerate(zip(slices, domains)):
+                h = sy.stop - sy.start
+                w = sx.stop - sx.start
+                (ylo, yhi), (xlo, xhi) = self.domains[i]
+                grids.append(np.mgrid[ylo:yhi:h * 1j,
+                                      xlo:xhi:w * 1j])
+
+        return grids
 
 
     def set_data(self, data):
