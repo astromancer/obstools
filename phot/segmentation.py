@@ -337,9 +337,28 @@ class Slices(list):
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
-    def __new__(self, *args, **kwargs):
-        print('new!')
-        return super().__new__(self, args, kwargs)
+    def __init__(self, slices=(), segm=None):
+        # print('init', slices, segm)
+
+        if len(slices) == 0:
+            if segm is None:
+                raise ValueError
+            else:
+                # add SegmentationHelper instance as attribute
+                slices = SegmentationImage.slices.fget(segm)
+
+        if isinstance(slices, Slices) and segm is None:
+            segm = slices.segm
+
+        list.__init__(self, slices)
+        self.segm = segm
+
+    def __repr__(self):
+        return ''.join((self.__class__.__name__, super().__repr__()))
+
+    # def __new__(self, *args, **kwargs):
+    #     print('new!')
+    #     return super().__new__(self, args, kwargs)
 
     # def __new__(self, *args, **kwargs):
     #     segm = kwargs.pop('segm', None)
@@ -356,27 +375,27 @@ class Slices(list):
     #     # add attributes
     #     self.__dict__.update(kwargs)
 
-    def __init__(self, obj):
-
-        if isinstance(obj, Slices):
-            obj = obj.segm
-
-        if isinstance(obj, SegmentationHelper):
-            # parent is SegmentationHelper instance
-            # get list of slices from super class SegmentationImage
-            slices = SegmentationImage.slices.fget(obj)
-            if obj.allow_zero:
-                slices = [(slice(None), slice(None))] + slices
-        else:
-            raise TypeError('Fuck you %s' % obj)
-        #
-        UserList.__init__(self, slices)
-
-        # dtype = np.dtype(list(zip('yx', 'OO')))
-        # np.rec.array(slices, dtype)
-
-        # add SegmentationHelper instance as attribute
-        self.segm = obj
+    # def __init__(self, obj):
+    #
+    #     if isinstance(obj, Slices):
+    #         obj = obj.segm
+    #
+    #     if isinstance(obj, SegmentationHelper):
+    #         # parent is SegmentationHelper instance
+    #         # get list of slices from super class SegmentationImage
+    #         slices = SegmentationImage.slices.fget(obj)
+    #         if obj.allow_zero:
+    #             slices = [(slice(None), slice(None))] + slices
+    #     else:
+    #         raise TypeError('Fuck you %s' % obj)
+    #     #
+    #     UserList.__init__(self, slices)
+    #
+    #     # dtype = np.dtype(list(zip('yx', 'OO')))
+    #     # np.rec.array(slices, dtype)
+    #
+    #     # add SegmentationHelper instance as attribute
+    #     self.segm = obj
 
     @property
     def x(self):
@@ -424,7 +443,7 @@ class Slices(list):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.y)))
 
     def extents(self, labels=None):
-
+        """xy sizes"""
         slices = self.segm.get_slices(labels)
         sizes = np.zeros((len(slices), 2))
         for i, sl in enumerate(slices):
@@ -434,6 +453,7 @@ class Slices(list):
         return sizes
 
     def grow(self, labels, inc=1):
+        """Increase the size of each slice in all directions by an increment"""
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
         urc = np.add(self.urc(labels), inc).clip(None, self.segm.shape)
@@ -702,12 +722,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # change state
         if self._allow_zero:
-            self.slices = self.slices[1:]
+            slices = self.slices[1:]
             self.labels = self.labels[1:]
         else:
             slices = [(slice(None), slice(None))]
             slices.extend(self.slices)
-            self.slices.data = slices
+            self.slices = Slices(slices, self)
             self.labels = np.hstack([0, self.labels])
         self._allow_zero = b
 
@@ -720,12 +740,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         self.logger.debug('computing slices!')
 
-        slices = SegmentationImage.slices.fget(self)
+        # slices = SegmentationImage.slices.fget(self)
         # if self.allow_zero:
         #     slices = [(slice(None), slice(None))] + slices
 
-        return slices #np.array(slices, self._slice_dtype)
-        # return #Slices(self)
+        # return slices #np.array(slices, self._slice_dtype)
+        return Slices(segm=self)
 
     def get_slices(self, labels=None):
         if labels is None:
