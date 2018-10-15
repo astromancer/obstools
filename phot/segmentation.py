@@ -1334,7 +1334,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                 im.ax.text(str(i))
 
 
-class GriddedSegments(SegmentationHelper):
+class GriddedSegments(SegmentationHelper):      # SubGridsMixin
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None):
@@ -1386,7 +1386,7 @@ class GriddedSegments(SegmentationHelper):
         counter = itt.count()
         com = np.empty((len(labels), 2))
         for lbl, (seg, sub, m) in self.coslice(self.data, image, mask,
-                                               labels=labels, enum=1):
+                                               labels=labels, enum=True):
             sub = sub - bg_func(sub)
             # ignore whatever is in this slice and is not same label
             sub[seg != lbl] = 0
