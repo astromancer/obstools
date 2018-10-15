@@ -108,7 +108,7 @@ class LabelUser(object):
     def resolve_labels(self, labels=None):
         if labels is None:
             return self.use_labels
-        return self.segm.check_labels(labels)
+        return self.segm.has_labels(labels)
 
     @property
     def nlabels(self):

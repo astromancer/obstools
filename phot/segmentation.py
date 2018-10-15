@@ -735,12 +735,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # return slices #np.array(slices, self._slice_dtype)
         return slices #Slices(slices, self)
 
-
-
     def get_slices(self, labels=None):
         if labels is None:
             return self.slices
-        labels = self.check_labels(labels) - (not self.use_zero)
+        labels = self.has_labels(labels) - (not self.use_zero)
         return [self.slices[_] for _ in labels]
 
     @lazyproperty
@@ -758,22 +756,19 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     def resolve_labels(self, labels=None):
         if labels is None:
             return self.labels
-        return self.check_labels(labels)
+        return self.has_labels(labels)
 
-    def check_labels(self, labels):
-        if not self._allow_zero:
-            return super().check_labels(labels)
+    def has_labels(self, labels):
+        # if not self._allow_zero:
+        #     return super().has_labels(labels)
+        """Make sure we have valid labels"""
+        labels = np.atleast_1d(labels)
+        valid = list(self.labels)
+        invalid = np.setdiff1d(labels, valid)
+        if len(invalid):
+            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
 
-
-
-        # """Make sure we have valid labels"""
-        # labels = np.atleast_1d(labels)
-        # valid = list(self.labels)
-        # invalid = np.setdiff1d(labels, valid)
-        # if len(invalid):
-        #     raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
-        #
-        # return labels
+        return labels
 
     def index(self, labels):
         labels = self.resolve_labels(labels)
