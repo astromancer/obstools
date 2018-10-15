@@ -333,7 +333,9 @@ class SegmentedArray(np.ndarray):
 # yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
-class Slices(list):
+
+
+class Slices(list):     # TODO: Segments ..
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
@@ -355,8 +357,8 @@ class Slices(list):
         # add SegmentationHelper instance as attribute
         self.segm = segm
 
-    def compute(self):
-        self.segm.__class__.slices.fget(self.segm)
+    # def compute(self):
+    #     self.segm.__class__.slices.fget(self.segm)
 
     def __repr__(self):
         return ''.join((self.__class__.__name__, super().__repr__()))
@@ -475,10 +477,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         *
         *
     """
-    # This class is essentially a mapping layer that lives on top of images
 
-    _use_zero = False
-    _all_slice = (slice(None), slice(None))
+    def __init__(self, data):
+        super().__init__(data)
+
+    # This class is essentially a mapping layer that lives on top of images
+    _allow_zero = False
 
     # def cmap(self):
     #   fixme: fails for all zero segments
@@ -649,22 +653,23 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # Note however that the array which this property points to
         # is mutable, so explicitly changing it's contents
-        # (via eg: `segm.data[:] = np.pi`) will not delete the lazyproperties!
-        # This class should become an array subclass to handle those kind of
-        # things
+        # (via eg: ``segm.data[:] = 1``) will not delete the lazyproperties!
+        # There should be an array interface subclass for this
         # SegmentationImage.data.fset(self, data)
         #
         # del self.masks
 
-        # TODO: manage through class method use_negative / allow_negative
-        # if np.min(data) < 0:
-        #     raise ValueError('The segmentation image cannot contain '
-        #                      'negative integers.')
+        # TODO: manage through class method allow_negative
+        if np.min(data) <= 0 and not self._allow_zero:
+            raise ValueError('The segmentation image cannot contain '
+                             'negative integers.')
+
+        if '_data' in self.__dict__:
+            # needed only when data is reassigned, not on init
+            self._reset_lazy_properties()
+
         self._data = data
-        # delete lazy properties to reset them. re-compute at next attr access
-        del (self.data_masked, self.shape, self.labels, self.nlabels,
-             self.max, self.slices, self.areas, self.is_sequential, self.masks,
-             )  # todo get these by inspection in construction??
+
 
     def __array__(self, *args):
         """
@@ -674,13 +679,13 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # add *args for case np.asanyarray(self, dtype=int)
         # this allows Segmentation class to be initialized from another
-        # object of the same (or inherited) class
+        # object of the same (or inherited) class more easily
 
         return self._data
 
-    # @lazyproperty
-    # def has_zero(self):
-    #     return (0 in self.labels)
+    @lazyproperty
+    def has_zero(self):
+        return (0 in self.labels)
 
     @property
     def use_zero(self):
@@ -698,15 +703,18 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # change state
         if self._use_zero:
             slices = self.slices[1:]
-            self.labels = self.labels[1:]
+            # self.labels = self.labels[1:]
         else:
-            slices = [self._all_slice]
+            slices = [(slice(None), slice(None))]
             slices.extend(self.slices)
-            self.labels = np.hstack([0, self.labels])
+            # self.labels = np.hstack([0, self.labels])
 
         # set
         self.slices = Slices(slices, self)
         self._use_zero = b
+
+    # def segments(self):
+    #     return super().segments()
 
     @lazyproperty
     def slices(self):
@@ -721,11 +729,13 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # `scipy.ndimage.find_objects`)
         slices = SegmentationImage.slices.fget(self)
         # only non-zero labels here
-        if self.has_zero and self.use_zero:
-            slices = [self._all_slice] + slices
+        if self.use_zero:
+            slices = [(slice(None), slice(None))] + slices
 
         # return slices #np.array(slices, self._slice_dtype)
-        return Slices(slices, self)
+        return slices #Slices(slices, self)
+
+
 
     def get_slices(self, labels=None):
         if labels is None:
@@ -736,7 +746,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     @lazyproperty
     def labels(self):
         labels = np.array(np.unique(self.data))
-        if not self.use_zero:
+        if 0 in labels and not self.use_zero:
             return labels[1:]
         return labels
 
@@ -751,14 +761,19 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return self.check_labels(labels)
 
     def check_labels(self, labels):
-        """Make sure we have valid labels"""
-        labels = np.atleast_1d(labels)
-        valid = list(self.labels)
-        invalid = np.setdiff1d(labels, valid)
-        if len(invalid):
-            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
+        if not self._allow_zero:
+            return super().check_labels(labels)
 
-        return labels
+
+
+        # """Make sure we have valid labels"""
+        # labels = np.atleast_1d(labels)
+        # valid = list(self.labels)
+        # invalid = np.setdiff1d(labels, valid)
+        # if len(invalid):
+        #     raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
+        #
+        # return labels
 
     def index(self, labels):
         labels = self.resolve_labels(labels)
@@ -959,7 +974,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
         yield from self.coslice(image, labels=labels, flatten=True)
 
-    def coslice(self, *arrays, labels=None, mask_bg=False, flatten=False,
+    def coslice(self, *arrays, labels=None, masked_arrays=False, flatten=False,
                 enum=False, mask_which_arrays=(0,)):
         """
         Yields labelled sub-regions of multiple arrays sequentially as tuple of
@@ -972,7 +987,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             sliced sub-array
         labels: array-like
             Sequence of integer labels
-        mask_bg: bool          # FIXME: mask_bg or mask_background better!!
+        masked_arrays: bool
             if True:
                 for each array; mask all data in each slice not equal to 0 or
                 `label`
@@ -998,10 +1013,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             raise ValueError('Need at least one array to slice')
 
         # TODO: check if a boolean array was passed?
-        if not isinstance(mask_bg, bool):
-            raise ValueError('mask_bg should be bool')
+        if not isinstance(masked_arrays, bool):
+            raise ValueError('`masked_array should be bool')
 
-        if mask_bg and flatten:
+        if masked_arrays and flatten:
             raise ValueError("Use either mask or flatten. Can't do both.")
 
         # function that yields the result
@@ -1011,7 +1026,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # print('*', labels, '*'*88)
 
         mask_flags = np.zeros(len(arrays), bool)
-        if mask_bg:
+        if masked_arrays:
             # mask_which_arrays = np.array(mask_which_arrays, ndmin=1)
             mask_flags[mask_which_arrays] = True
         if flatten:
@@ -1338,9 +1353,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                 im.ax.text(str(i))
 
 
-class GriddedSegments(SegmentationHelper):
+class ModelledSegments(SegmentationHelper):
     # SegmentationGridsMixin
-    # ModelledSegments
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None, domains=None):

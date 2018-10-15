@@ -15,7 +15,7 @@ from recipes.string import seq_repr_trunc
 from ..core import Model, CompoundModel
 from ..utils import make_shared_mem
 from ...phot.tracking import LabelGroupsMixin  # LabelUser
-from ...phot.segmentation import GriddedSegments
+from ...phot.segmentation import ModelledSegments
 
 
 # from IPython import embed
@@ -156,10 +156,10 @@ class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
             same model will be used for multiple segments.
         """
 
-        self.segm = GriddedSegments(segm)
+        self.segm = ModelledSegments(segm)
         # fixme: no need to recompute slices. happening implicitly in line above
         # allow zero => we allow label 0 (bg) slice region
-        self.segm.use_label0 = True
+        # self.segm.use_zero = True
 
         if isinstance(models, Model):
             models = [models]
@@ -534,7 +534,7 @@ class BackgroundModeller(SegmentedImageModel):
 
     def __init__(self, segmentation, models, use_labels=(0,)):
         segm = segmentation.copy()
-        segm.use_label0 = True
+        segm.use_zero = True
         SegmentedImageModel.__init__(self, segm, models, use_labels)
 
     # def
