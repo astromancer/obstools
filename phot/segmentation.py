@@ -689,14 +689,14 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     @use_label0.setter
     def use_label0(self, b):
         b = bool(b)
-        if b is self._use_label0:
+        if b is self.__use_zero:
             return
 
         if not self.has_zero:
             return
 
         # change state
-        if self._use_label0:
+        if self.__use_zero:
             slices = self.slices[1:]
             self.labels = self.labels[1:]
         else:
@@ -1370,10 +1370,10 @@ class GriddedSegments(SegmentationHelper):
             domains = self.domains
 
         slices = self.iter_slices(labels)
-        for i, (sy, sx) in enumerate(zip(slices, domains)):
+        for i, ((sy, sx), dom) in enumerate(zip(slices, domains)):
                 h = sy.stop - sy.start
                 w = sx.stop - sx.start
-                (ylo, yhi), (xlo, xhi) = self.domains[i]
+                (ylo, yhi), (xlo, xhi) = dom
                 grids.append(np.mgrid[ylo:yhi:h * 1j,
                                       xlo:xhi:w * 1j])
 
