@@ -313,7 +313,7 @@ class SegmentedArray(np.ndarray):
 #         # parent in SegmentationHelper instance
 #         # get list of slices from super class SegmentationImage
 #         slices = SegmentationImage.slices.fget(parent)
-#         if parent.use_label0:
+#         if parent.use_zero:
 #             slices = [(slice(None), slice(None))] + slices
 #
 #         # initialize np.ndarray with data
@@ -477,7 +477,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
     # This class is essentially a mapping layer that lives on top of images
 
-    _use_label0 = False
+    _use_zero = False
     _all_slice = (slice(None), slice(None))
 
     # def cmap(self):
@@ -664,7 +664,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # delete lazy properties to reset them. re-compute at next attr access
         del (self.data_masked, self.shape, self.labels, self.nlabels,
              self.max, self.slices, self.areas, self.is_sequential, self.masks,
-             self.has_zero)     # todo get these by inspection in construction??
+             )  # todo get these by inspection in construction??
 
     def __array__(self, *args):
         """
@@ -678,25 +678,25 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return self._data
 
-    @lazyproperty
-    def has_zero(self):
-        return (0 in self.labels)
+    # @lazyproperty
+    # def has_zero(self):
+    #     return (0 in self.labels)
 
     @property
-    def use_label0(self):
-        return self._use_label0
+    def use_zero(self):
+        return self._use_zero
 
-    @use_label0.setter
-    def use_label0(self, b):
+    @use_zero.setter
+    def use_zero(self, b):
         b = bool(b)
-        if b is self.__use_zero:
+        if b is self._use_zero:
             return
 
-        if not self.has_zero:
-            return
+        # if not self.has_zero:
+        #     return
 
         # change state
-        if self.__use_zero:
+        if self._use_zero:
             slices = self.slices[1:]
             self.labels = self.labels[1:]
         else:
@@ -706,7 +706,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # set
         self.slices = Slices(slices, self)
-        self._use_label0 = b
+        self._use_zero = b
 
     @lazyproperty
     def slices(self):
@@ -721,7 +721,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # `scipy.ndimage.find_objects`)
         slices = SegmentationImage.slices.fget(self)
         # only non-zero labels here
-        if self.has_zero and self.use_label0:
+        if self.has_zero and self.use_zero:
             slices = [self._all_slice] + slices
 
         # return slices #np.array(slices, self._slice_dtype)
@@ -730,13 +730,13 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     def get_slices(self, labels=None):
         if labels is None:
             return self.slices
-        labels = self.check_labels(labels) - (not self.use_label0)
+        labels = self.check_labels(labels) - (not self.use_zero)
         return [self.slices[_] for _ in labels]
 
     @lazyproperty
     def labels(self):
         labels = np.array(np.unique(self.data))
-        if not self.use_label0:
+        if not self.use_zero:
             return labels[1:]
         return labels
 
@@ -763,7 +763,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     def index(self, labels):
         labels = self.resolve_labels(labels)
         if self.is_sequential:
-            return labels - (not self.use_label0)
+            return labels - (not self.use_zero)
         else:
             return np.digitize(labels, self.labels)
 
@@ -780,7 +780,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         list of arrays
         """
 
-        if not self.use_label0:
+        if not self.use_zero:
             masks = {0: (self.data != 0)}
         else:
             masks = {}  # mask for label 0 will be computed below
@@ -1371,14 +1371,13 @@ class GriddedSegments(SegmentationHelper):
 
         slices = self.iter_slices(labels)
         for i, ((sy, sx), dom) in enumerate(zip(slices, domains)):
-                h = sy.stop - sy.start
-                w = sx.stop - sx.start
-                (ylo, yhi), (xlo, xhi) = dom
-                grids.append(np.mgrid[ylo:yhi:h * 1j,
-                                      xlo:xhi:w * 1j])
+            h = sy.stop - sy.start
+            w = sx.stop - sx.start
+            (ylo, yhi), (xlo, xhi) = dom
+            grids.append(np.mgrid[ylo:yhi:h * 1j,
+                         xlo:xhi:w * 1j])
 
         return grids
-
 
     def set_data(self, data):
         SegmentationHelper.set_data(self, data)
@@ -1425,5 +1424,3 @@ class GriddedSegments(SegmentationHelper):
         return com
 
     # def radial_grids(self, labels=None, rmax=10):
-
-
