@@ -355,6 +355,9 @@ class Slices(list):
         # add SegmentationHelper instance as attribute
         self.segm = segm
 
+    def compute(self):
+        self.segm.__class__.slices.fget(self.segm)
+
     def __repr__(self):
         return ''.join((self.__class__.__name__, super().__repr__()))
 
@@ -370,8 +373,8 @@ class Slices(list):
         y, _ = zip(*self)
         return y
 
-    def from_labels(self, labels=None):
-        return self.segm.get_slices(labels)
+    # def of_labels(self, labels=None):
+    #     return self.segm.get_slices(labels)
 
     def _get_corners(self, vh, slices):
         # vh - vertical horizontal positions as two character string
@@ -714,7 +717,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # self.logger.debug('computing slices!')
 
-        # get slices from parent
+        # get slices from parent (possibly compute via
+        # `scipy.ndimage.find_objects`)
         slices = SegmentationImage.slices.fget(self)
         # only non-zero labels here
         if self.has_zero and self.use_label0:
@@ -1334,7 +1338,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                 im.ax.text(str(i))
 
 
-class GriddedSegments(SegmentationHelper):      # SubGridsMixin
+class GriddedSegments(SegmentationHelper):      # SegmentationGridsMixin
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None):
@@ -1406,3 +1410,5 @@ class GriddedSegments(SegmentationHelper):      # SubGridsMixin
         return com
 
     # def radial_grids(self, labels=None, rmax=10):
+
+
