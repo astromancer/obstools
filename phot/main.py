@@ -455,37 +455,15 @@ if __name__ == '__main__':
         return mdl, results, residuals
 
 
-    def proc_(interval, data, calib, residu, coords, opt_stat, tracker, mdlr,
-              p0bg, p0ap, sky_width, sky_buf):
+    def proc_(interval, data, calib,
+              model, residu,
+              tracker, offset, coords,
+              opt_stat, p0bg, p0ap, sky_width, sky_buf):
+        # main routine for image processing for frames from data in interval
 
-        # logger.info('Model names: %s', tuple(mdl.name for mdl in mdlr.models))
-        # logger.info(tuple(mdlr.values()))
+        logger.info('Starting frame processing for interval %s', interval)
 
-        # wait for all init processes to finish
-
-        # use detections from median image to compute CoM and offset from
-        # initial reference image
         i0, i1 = interval
-        # labels in tracker.segm corresponding to those in segImx
-        lbl = np.sort(ndimage.median(tracker.segm.data, segImx.data,
-                                     segImx.labels)).astype(int)
-        coo = segImx.com_bg(data[i0])
-
-        # check bad CoM
-        lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
-        lbad2 = ~segImx.inside_segment(coo)
-        ignix = lbl[lbad | lbad2] - 1
-        #
-        weights = np.zeros(len(tracker.use_labels))
-        weights[lbl - 1] = 1
-        weights[ignix] = 0
-
-        coo_tr = np.zeros_like(tracker.rcoo)
-        coo_tr[lbl - 1] = coo
-        off = tracker.update_offset(coo_tr, weights)
-
-        logger.info('Init tracker at offset (%.3f, %.3f) for frame %i',
-                    *off, i0)
 
         for i in range(*interval):
             worker(i, data, calib, residu, coords, opt_stat, tracker, mdlr,
@@ -530,7 +508,6 @@ if __name__ == '__main__':
         # aggregate results
         logger.info('Identifying stars')
         cx, ccom, shifts = id_stars_kmeans(sample_images, segmentations)
-        nstars = len(ccom)
         ishifts = shifts.round()
 
         # global image segmentation
@@ -538,6 +515,7 @@ if __name__ == '__main__':
         segm_a = merge_segmentations(segmentations, ishifts)
         sh = SegmentationHelper(segm_a)
         sh.dilate(4, 2)
+        tracking_labels = sh.labels
 
         # update segmentation for models
         for i, (mdl, shift) in enumerate(zip(models, ishifts)):
@@ -570,6 +548,7 @@ if __name__ == '__main__':
         sh2.dilate(4, 2)
         # update global segmentation
         sh.add_segments(sh2)
+
         # update coordinates
         rcoo = sh.com(mean_residuals)
 
@@ -598,6 +577,15 @@ if __name__ == '__main__':
 
             ui.show()
 
+        # global background subtraction
+        
+
+
+
+
+
+        # setup camera tracker
+        tracker = StarTracker(rcoo, sh, None, tracking_labels, BAD_PIXEL_MASK)
 
         # THIS IS FOR DEBUGGING PICKLING ERRORS
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

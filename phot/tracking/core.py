@@ -308,6 +308,7 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
         # init groups
         LabelGroupsMixin.__init__(self, label_groups)
+        # FIXME: do you really need this
 
         # TODO: once you figure out how to use negative labels, these things can
         # live inside the segmentation image.  also adapt_segments??
@@ -377,8 +378,8 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
     @property
     def rcoo(self):
         """
-        Reference coordinates (yx). Computed as initial coordinates + relative coordinates to
-        allow updating the relative positions upon call
+        Reference coordinates (yx). Computed as initial coordinates + relative
+        coordinates to allow updating the relative positions upon call
         """
         return self.yx0 + self.rvec
 
@@ -390,7 +391,10 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
     def pprint(self):
         from motley.table import Table
 
+        # FIXME: not working
+
         # TODO: say what is being ignored
+
 
         # coo = [:, ::-1]  # , dtype='O')
         tbl = Table(self.rcoo_xy,
@@ -595,9 +599,9 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
             if len(too_faint):
                 self.logger.debug(msg, str(too_faint), 'faint')
 
-        ignore = functools.reduce(np.union1d,
-                                  (too_bright, too_close, too_faint))
-        ix = np.setdiff1d(np.arange(len(self.coords)), ignore)
+        ignore = functools.reduce(
+                np.union1d, (too_bright, too_close, too_faint))
+        ix = np.setdiff1d(np.arange(len(self.yx0)), ignore)
         if len(ix) == 0:
             self.logger.warning('No suitable stars found for tracking!')
         return ix
@@ -610,14 +614,17 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         return np.where(crude_snr < threshold)[0]
 
     def too_close(self, threshold=_distance_cut):
-        # Check for potential interference problems from stars that are close together
-        return np.unique(np.ma.where(self.sdist < threshold))
+        # Check for potential interference problems from stars that are close
+        #  together
+        return np.unique(np.ma.where(self.sdist() < threshold))
 
     def too_bright(self, data, saturation, threshold=_saturation_cut):
-        # Check for saturated stars by flagging pixels withing 1% of saturation level
+        # Check for saturated stars by flagging pixels withing 1% of saturation
+        # level
         # TODO: make exact
         lower, upper = saturation * (threshold + np.array([-1, 1]) / 100)
-        # TODO check if you can improve speed here - dont have to check entire array?
+        # TODO check if you can improve speed here - dont have to check entire
+        # array?
 
         satpix = np.where((lower < data) & (data < upper))
         b = np.any(np.abs(np.array(satpix)[:, None].T - self.coords) < 3, 0)

@@ -505,7 +505,7 @@ class FrameProcessor(LoggingMixin):
                                          opt_stat, p0aps,
                                          sky_width, sky_buf)
 
-    def proc0(self, i, data, calib, residu, coords, tracker, mdlr, p0):
+    def proc0(self, i, data, calib, residu, coords, tracker, model, p0):
         image = data[i]
 
         bias, flat = calib
@@ -518,14 +518,16 @@ class FrameProcessor(LoggingMixin):
         # imbg = tracker.mask_segments(image)
 
         # fit and subtract background
-        p_bg, resi = mdlr.minimized_residual(image)
+        p_bg, resi = model.fit(image)
+        model.data[i] = p_bg
+        residu[i] = resi
 
         # p, pu = lm_extract_values_stderr(p_bg)
         # mdlr.data[-1].params[i] = np.hstack(p_bg)
         # mdlr.data[-1].params_std[i] = pu
         # mdlr._save_params(mdlr.bg, i, 0, (p, pu, None))
-        mdlr.data[i] = p_bg
-        residu[i] = resi
+
+
 
         # track stars
         com = tracker(resi)

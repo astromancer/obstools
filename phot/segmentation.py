@@ -1607,7 +1607,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         if isinstance(data, SegmentationImage):
             new_labels = data.labels
-            data = data.data
+            data = data.data.copy()  # copy to avoid altering original below
             # TODO: extend slices instead to avoid recompute + performance gain
         else:
             new_labels = np.unique(data)
