@@ -544,7 +544,7 @@ if __name__ == '__main__':
             # add global segmentation to model
             segm_stars = ndimage.shift(sh.data, shift)
             _, star_labels0 = mdl.segm.add_segments(segm_stars)
-            mdl.groups.stars0 = star_labels0
+            mdl.groups['stars0'] = star_labels0
 
         # fit
         logger.info('Fitting sample images')
@@ -578,9 +578,9 @@ if __name__ == '__main__':
             # add global segmentation to model
             segm_stars = ndimage.shift(sh2.data, shift)
             _, star_labels1 = mdl.segm.add_segments(segm_stars)
-            mdl.groups.stars1 = star_labels1
-
-
+            mdl.groups['stars1'] = star_labels1
+        #
+        star_labels = np.r_[star_labels0, star_labels1]
 
         # plot results of sample fits
         if args.plot:
@@ -592,7 +592,7 @@ if __name__ == '__main__':
             for i, (image, mdl, params) in enumerate(
                     zip(sample_images, models, results)):
                 #
-                mimage = mdl.segm.mask_segments(image, mdl.groups.stars0)
+                mimage = mdl.segm.mask_segments(image, star_labels)
                 fig = mdl.plot_fit_results(mimage, params)
                 ui.add_tab(fig, '%i:%s' % (i, pairs[i]))
 

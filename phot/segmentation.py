@@ -1132,11 +1132,16 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     to_boolean = to_bool
     to_boolean_3d = to_bool_3d
 
-    def mask_segments(self, image, labels=None):
+    def mask_segments(self, image, labels=None, ignore_labels=()):
         """
         Mask all segments having label in `labels`. default labels are all
         non-zero labels.
         """
+        if labels is None:
+            labels = self.labels_nonzero
+        if len(ignore_labels):
+            labels = np.setdiff1d(labels, ignore_labels)
+
         return np.ma.array(image, mask=self.to_bool(labels))
 
     # alias
@@ -1722,7 +1727,7 @@ class SegmentationGridHelper(SegmentationHelper):
 
     def __init__(self, data, grid=None, domains=None):
         # initialize parent
-        super().__init__(self, data)
+        super().__init__(data)
 
         if grid is None:
             grid = np.indices(data.shape)
