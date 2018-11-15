@@ -19,19 +19,16 @@ from scipy.spatial.distance import cdist
 
 import logging
 
-from obstools.phot.segmentation import SegmentationHelper
+from obstools.phot.segmentation import SegmentationHelper, \
+    SegmentationGridHelper, make_border_mask, detect_loop
 
 # from IPython import embed
 
-# TODO: watershed segmentation on the negative image ?
-#
 
-# TODO: split off segmentation stuff?
+#
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
-
-
 
 
 def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
@@ -50,8 +47,6 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
     mxshift = np.max([(xs.stop - xs.start, ys.stop - ys.start)
                       for (xs, ys) in segImx.slices], 0)
     return mxshift, maxImage, segImx
-
-
 
 
 # class NullSlice():
@@ -135,7 +130,7 @@ class LabelGroups(Record):
         return bool(len(item))
 
     def _convert_item(self, item):
-        return np.array(item, int)
+        return np.atleast_1d(item).astype(int)
 
     @property
     def sizes(self):
@@ -150,12 +145,7 @@ class LabelGroupsMixin(object):
     """Mixin class for grouping and labelling image segments"""
 
     def __init__(self, groups=None):
-        # if groups is None:
-        #     groups = zip(('bg', 'group0'),  # FIXME: seems bad
-        #                  ([0], [self.segm.labels_nonzero]))
-
         self._groups = LabelGroups(groups)
-
 
     @property
     def groups(self):
@@ -163,8 +153,6 @@ class LabelGroupsMixin(object):
 
     # todo
     # def remove_group()
-
-
 
 
 # TODO:
@@ -175,15 +163,18 @@ class LabelGroupsMixin(object):
 
 class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
     """
-    A class to track stars in a CCD image frame to aid in doing time series photometry.
+    A class to track stars in a CCD image frame to aid in doing time series
+    photometry.
 
-    Stellar positions in each new frame are calculated as the background subtracted centroids
-    of the chosen image segments. Centroid positions of chosen stars are filtered for bad
-    values (or outliers) and then combined by a weighted average. The weights are taken
-    as the SNR of the star brightness. Also handles arbitrary pixel masks.
+    Stellar positions in each new frame are calculated as the background
+    subtracted centroids of the chosen image segments. Centroid positions of
+    chosen stars are filtered for bad values (or outliers) and then combined
+    by a weighted average. The weights are taken as the SNR of the star
+    brightness. Also handles arbitrary pixel masks.
 
-    Constellation of stars in image assumed unchanging. The coordinate positions of the stars
-    with respect to the brightest star are updated upon each iteration.
+    Constellation of stars in image assumed unchanging. The coordinate positions
+    of the stars with respect to the brightest star are updated upon each
+    iteration.
 
 
     """
@@ -265,34 +256,44 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         return tracker, image, p0bg
 
     def __init__(self, coords, segm, label_groups=None, use_labels=None,
-                 bad_pixel_mask=None, edge_cutoffs=None):
+                 bad_pixel_mask=None, edge_cutoffs=None, reference_index=0):
         """
-        Use to track the location of stars on CCD frame
+
+        Object for tracking CCD camera movement by combining centroid positions
+        of all stars with good signal-to-noise.  Relative position of stars are
+        updated on each call based on new input data.
+
 
         Parameters
         ----------
-        coords : array-like
+        coords: array-like
             reference coordinates of the stars
-        segm : SegmentationHelper instance
-            (or inherited from)
+        segm: array or SegmentationHelper (or subclass thereof) instance
+            segmentation image. Centroids for each star are computed within
+            the corresponding labelled region
+        label_groups:
 
+        use_labels: array-like of int
+            only stars corresponding to these labels will be used to
+            calculate frame shift
+        bad_pixel_mask: array-like
+            ignore these pixels in centroid computation
+        edge_cutoffs: int or list of int
+            Ignore labels that are too close to the edges of the image
+        reference_index: int
 
-        ignore_labels : array-like
-            indices of stars to ignore when calculating frame shift. These stars
-            will still be tracked by their relative position wrt the others.
-            Their relative positions will also be updated upon each call.
         """
         # counter for incremental update
         self.counter = itt.count(1)  # TODO: multiprocess!!!
         # store zero and relative positions separately so we can update them
         # independently
-        self.ir = 0  # TODO: optionally pass in
+        self.ir = int(reference_index)
 
         # pixel coordinates of reference position from which the shift will
         # be measured
         self.yx0 = coords[self.ir]
         self.rvec = coords - coords[self.ir]
-        self.segm = GriddedSegments(segm)
+        self.segm = SegmentationGridHelper(segm)
         self._original_data = self.segm.data
 
         # init groups
@@ -311,7 +312,6 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         # label logic
         # if use_labels is None:
         #     # we want only to use the stars with high snr fro CoM tracking
-
 
         LabelUser.__init__(self, use_labels)
 

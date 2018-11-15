@@ -1,13 +1,26 @@
+"""
+Miscellaneous utility functions
+"""
+
+# builtin libs
 import logging
 import numbers
+import itertools as itt
+
+# third-party libs
+import numpy as np
+import more_itertools as mit
+from scipy import ndimage
+from scipy.cluster.vq import kmeans
+from scipy.spatial.distance import cdist
+from scipy.stats import binned_statistic_2d
+
+# local libs
 import motley
-import numpy
-from motley.progress import ProgressBar
 from motley.table import Table
+from motley.progress import ProgressBar
 from recipes.logging import LoggingMixin
 from recipes.string import get_module_name
-
-import numpy as np
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
@@ -15,6 +28,30 @@ logger = logging.getLogger(get_module_name(__file__))
 
 def null_func(*args):
     pass
+
+
+def iter_repeat_last(it):
+    """
+    Yield items from the input iterable and repeat the last item indefinitely
+    """
+    it, it1 = itt.tee(mit.always_iterable(it))
+    return mit.padded(it, next(mit.tail(1, it1)))
+
+
+# class ContainerAttrGetterMixin(object):
+#     """"""
+#     # def __init__(self, data):
+#     #     self.data = data
+#     #     # types = set(map(type, data.flat))
+#     #     # assert len(types) == 1
+#
+#     def __getattr__(self, key):
+#         if hasattr(self, key):
+#             return super().__getattr__(key)
+#
+#         # if hasattr(self.data[0, 0], key)
+#         getter = operator.attrgetter(key)
+#         return np.vectorize(getter, 'O')(self)
 
 
 class ProgressLogger(ProgressBar, LoggingMixin):
@@ -100,11 +137,12 @@ def table_cdist(sdist, window, _print=False):
     n = len(sdist)
     # check for stars that are close together
     # sdist = cdist(coo, coo)  # pixel distance between stars
-    # sdist[np.tril_indices(n)] = np.inf # since the distance matrix is symmetric, ignore lower half
+    # sdist[np.tril_indices(n)] = np.inf
+    #  since the distance matrix is symmetric, ignore lower half
     # mask = (sdist == np.inf)
 
-    # create distance matrix as table, highlighting stars that are potentially too close together
-    #  and may cause problems
+    # create distance matrix as table, highlighting stars that are potentially
+    # too close together and may cause problems
     bg = 'light green'
     # tbldat = np.ma.array(sdist, mask=mask, copy=True)
     tbl = Table(sdist,  # tbldat,
@@ -116,29 +154,6 @@ def table_cdist(sdist, window, _print=False):
                 align='>')
 
     if sdist.size > 1:
-        # FIXME: MaskError: Cannot convert masked element to a Python int.
-        # /home/hannes/work/motley/table.py in colourise(self, states, *colours, **kws)
-        #     651         #
-        #     652
-        # --> 653         propList = motley.get_state_dicts(states, *colours, **kws)
-        #     654
-        #     655         # propIter = motley._prop_dict_gen(*colours, **kws)
-        #
-        # /home/hannes/work/motley/ansi.py in get_state_dicts(states, *effects, **kws)
-        #     132     nprops = len(propList)
-        #     133     nstates = states.max() #ptp??
-        # --> 134     istart = int(nstates - nprops + 1)
-        #     135     return ([{}] * istart) + propList
-        #     136
-        #
-        # /usr/local/lib/python3.5/dist-packages/numpy-1.14.0.dev0+39117c5-py3.5-linux-x86_64.egg/numpy/ma/core.py in __int__(self)
-        #    4304                             "to Python scalars")
-        #    4305         elif self._mask:
-        # -> 4306             raise MaskError('Cannot convert masked element to a Python int.')
-        #    4307         return int(self.item())
-        #    4308
-        #
-
         # Add colour as distance warnings
         c = np.zeros_like(sdist)
         c += (sdist < window / 2)
@@ -254,3 +269,80 @@ def duplicate_if_scalar(seq):
     if np.size(seq) != 2:
         raise ValueError('Input should be of size 1 or 2')
     return seq
+
+
+def id_stars_kmeans(images, segmentations):
+    # combine segmentation for sample images into global segmentation
+    # this gives better overall detection probability and yields more accurate
+    # optimization results
+
+    # this function also uses kmeans clustering to id stars within the overall
+    # constellation of stars across sample images.  This is fast but will
+    # mis-identify stars if the size of camera dither between frames is on the
+    # order of the distance between stars in the image.
+
+    coms = []
+    snr = []
+    for image, segm in zip(images, segmentations):
+        coms.append(segm.com_bg(image))
+        snr.append(segm.snr(image))
+
+    ni = len(images)
+    nstars = list(map(len, coms))
+    k = np.max(nstars)
+    features = np.concatenate(coms)
+    # rescale each feature dimension of the observation set by stddev across
+    # all observations
+    # whitened = whiten(features)
+
+    codebook, distortion = kmeans(features, k)
+    l = cdist(codebook, features).argmin(0)
+
+    iframe = []
+    for i, m in enumerate(nstars):
+        iframe.extend([i] * m)
+
+    cx = np.ma.empty((ni, k, 2))
+    cx.mask = True
+    w = np.ma.empty((ni, k))
+    w.mask = True
+    indices = np.split(l, np.cumsum(nstars[:-1]))
+    for ifr, ist in enumerate(indices):
+        cx[ifr, ist] = coms[ifr]
+        w[ifr, ist] = snr[ifr]
+
+    # shifts calculated as snr-weighted average
+    shifts = np.ma.average(cx - codebook, 1, np.dstack([w, w]))
+
+    return cx, codebook, np.asarray(shifts)
+
+
+def merge_segmentations(segmentations, shifts):
+    # shift each segmentation to the cluster centroid positions and
+    # merge masks (logical and)
+
+    ishape = segmentations[0].shape
+    counts = np.zeros(ishape, int)
+    for seg, off in zip(segmentations, shifts):
+        counts += ndimage.shift(seg.data, -off).astype(bool).astype(int)
+
+    mask = counts >= len(segmentations) / 2
+    seg, nl = ndimage.label(mask)
+    return seg
+
+
+def shift_combine(grid, images, shifts):
+    # shifted average
+    sy, sx = images.shape[1:]
+    gg = grid[:, None] - shifts[None, None].T
+    if np.ma.is_masked(images):
+        y, x = gg[:, ~images.mask]
+        sample = images.compressed()
+    else:
+        y, x = gg.reshape(2, -1)
+        sample = images.ravel()
+
+    yb, xb = np.ogrid[:sy + 1, :sx + 1]
+    bin_edges = (yb.ravel() - 0.5, xb.ravel() - 0.5)
+
+    return binned_statistic_2d(y, x, sample, 'mean', bin_edges).statistic

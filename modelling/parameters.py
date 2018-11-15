@@ -241,11 +241,18 @@ class Parameters(np.recarray):
         obj[...] = _par_help.get_data(kws, allow_types=cls._allow_types)
         return obj
 
+    def __reduce__(self):
+        # unpickling helper
+        return Parameters, (self.to_dict(),)
+
     def __array_finalize__(self, obj):
         #
         if obj is None:
             # explicit constructor eg:  NestedParameters(foo=1)
+            # print('Explicit! ' * 3)
             return
+
+        # print('bla! ' * 3)
 
         # if we get here object constructor is view casting or new-from-template
         # (slice). Set `npar` here since this method sees creation of all
@@ -294,10 +301,11 @@ class Parameters(np.recarray):
         ----------
         attr: bool
             If true, the resulting dict will have item access through key
-            attribute lookup enabled similar to `Parameters`
+            attribute lookup enabled similar to `np.recarray` and `Parameters`
 
         Returns
         -------
+        dict
 
         """
         dict_ = dict
@@ -309,6 +317,7 @@ class Parameters(np.recarray):
 
     @property
     def flattened(self):
+        """A view into the flattened array"""
         return self.denest()
 
     def denest(self):  # OR overwrite flatten ???????

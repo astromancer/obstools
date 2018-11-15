@@ -3,6 +3,7 @@ Miscellaneous utility functions
 """
 
 from recipes.pprint import decimal_repr
+import numpy as np
 
 
 def hms(t):
@@ -79,3 +80,28 @@ def fmt_hms(t, precision=None, sep='hms', short=None, unicode=False):
         tstr = (part + s)
 
     return tstr
+
+
+def mad(data, data_median=None, axis=None):
+    """
+    Median absolute deviation
+
+    Parameters
+    ----------
+    data
+    data_median
+
+    Returns
+    -------
+
+    """
+    nans = np.isnan(data)
+    if nans.any():
+        data = np.ma.MaskedArray(data, nans)
+
+    if data_median is None:
+        data_median = np.ma.median(data, axis, keepdims=True)
+    # else:
+    # make sure we can broadcast them together
+    return np.ma.median(np.abs(data - data_median), axis)
+

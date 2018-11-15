@@ -169,7 +169,8 @@ def config(logpath, q):
             },
             'console': {
                 'class': 'logging.Formatter',
-                'format': '{asctime:<10} {name:<32} {levelname:<10} {message}',
+                'format': '{asctime:<10} {processName:<17} {name:<32}  {'
+                          'levelname:<10} {message}',
                 # 'datefmt': '%H:%M:%S',
                 'style': '{',
             },

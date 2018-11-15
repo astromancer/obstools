@@ -6,11 +6,8 @@ from graphical.imagine import ImageDisplay
 
 
 def plot_modelled_image(model, image, params):
-
-    # TODO: method of Model???
-
     # Plot!!
-    fig, axes = plt.subplots(3, 1, figsize=(13, 6),
+    fig, axes = plt.subplots(4, 1, figsize=(13, 6),
                              sharex='all', sharey='all',
                              # THESE VALUES FOR SALTICAM
                              gridspec_kw=dict(top=0.97,
@@ -22,11 +19,17 @@ def plot_modelled_image(model, image, params):
     # image
     ImageDisplay(image, ax=axes[0], title='Image')
 
-    # model
-    ImageDisplay(model(params), ax=axes[1], title='Model')
+    # segmentation
+    model.segm.display(ax=axes[1], label=True, title='Segmentation')
 
-    # residual
-    ImageDisplay(model.residuals(params, image), ax=axes[2], title='Residual')
+    if params is not None:
+        # model
+        ImageDisplay(model(params), ax=axes[2], title='Model')
+
+        # residuals
+        residuals = model.residuals(params, image)
+        ImageDisplay(residuals, ax=axes[3],
+                     title='Residual')
 
     return fig
 
@@ -34,7 +37,7 @@ def plot_modelled_image(model, image, params):
 def image_fit_report(mdl, image, p0=None):
     # fit
     t0 = time.time()
-    r = mdl.fit(image, p0=p0, method='nelder-mead')
+    r = mdl.fit(image, p0=p0)
     δt = time.time() - t0
 
     if r is None:
@@ -44,7 +47,7 @@ def image_fit_report(mdl, image, p0=None):
 
     # Print!
     print(mdl.name, repr(mdl))
-    print('Parameters (%i)' % len(r))
+    print('Parameters (%i)' % mdl.dof)
     print('Optimization took: %3.2f s' % δt)
     print(r)
     # '\n'.join(map(numeric_repr, r))  # mdl.format_params(r, precision=3))

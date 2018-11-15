@@ -6,7 +6,7 @@ from collections import OrderedDict as odict
 
 import numpy as np
 from IPython import embed
-from scipy.optimize import minimize
+from scipy.optimize import minimize, leastsq
 
 # from recipes.oop import ClassProperty
 from recipes.logging import LoggingMixin
@@ -32,6 +32,10 @@ def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
                 _sample_stat, axis, data, statistic, size_each, replace)
     else:
         raise ValueError('Invalid axis')
+
+
+class UnconvergedOptimization(Exception):
+    pass
 
 
 # def nd_sampler(data, sample_size, statistic, axis=None):
@@ -121,7 +125,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # TODO: think of a way to easily fit for variance parameter(s)
 
     dof = None  # sub-class should set  # todo determine intrinsically from p?
-    base_dtype = float              # FIXME - remove this here
+    base_dtype = float  # FIXME - remove this here
     objective = None
 
     # minimizer = minimize
@@ -176,7 +180,10 @@ class Model(OptionallyNamed, LoggingMixin):
 
     def fwrs(self, p, data, grid=None, stddev=None):
         """flattened weighted squared residuals"""
-        return self.wrs(p, data, grid, stddev).flatten()
+        return self.wrs(p, data, grid, stddev).ravel()
+        # if np.ma.isMA(fwrs):
+        #     return fwrs.compressed()
+        # return fwrs
 
     def wrss(self, p, data, grid=None, stddev=None):
         """weighted residual sum of squares. ie. The chi squared statistic χ²"""
@@ -189,10 +196,10 @@ class Model(OptionallyNamed, LoggingMixin):
         """Reduced chi squared statistic χ²ᵣ"""
         #  aka. mean square weighted deviation (MSWD)
         chi2 = self.chisq(p, data, grid, stddev)
-        dof = data.size - len(p)
+        dof = data.size - self.dof
         return chi2 / dof
 
-    def rsq(self, p, data, grid=None, stddev=None):
+    def rsq(self, p, data, grid=None):
         """
         The coefficient of determination, denoted R2 or r2 and pronounced
         "R squared", is the proportion of the variance in the dependent
@@ -224,13 +231,23 @@ class Model(OptionallyNamed, LoggingMixin):
         # that AIC will select models that have too many parameters...
         # AICc is essentially AIC with an extra penalty term for the number of
         #  parameters"
-        #  - from:  https://en.wikipedia.org/wiki/Akaike_information_criterion
-        # Assuming that the model is univariate, is linear in its parameters, and has normally-distributed residuals (conditional upon regressors), then the formula for AICc is as follows.
+        #
+        # Assuming that the model is univariate, is linear in its parameters,
+        # and has normally-distributed residuals (conditional upon regressors),
+        # then the formula for AICc is as follows.
         k = len(p)
         n = data.size
         return 2 * (k + (k * k + k) / (n - k - 1) -
                     self.logLikelihood(p, data, grid, stddev))
-        # If the assumption that the model is univariate and linear with normal residuals does not hold, then the formula for AICc will generally be different from the formula above. For some models, the precise formula can be difficult to determine. For every model that has AICc available, though, the formula for AICc is given by AIC plus terms that includes both k and k2. In comparison, the formula for AIC includes k but not k2. In other words, AIC is a first-order estimate (of the information loss), whereas AICc is a second-order estimate.
+        # "If the assumption that the model is univariate and linear with normal
+        # residuals does not hold, then the formula for AICc will generally be
+        # different from the formula above. For some models, the precise formula
+        # can be difficult to determine. For every model that has AICc
+        # available, though, the formula for AICc is given by AIC plus terms
+        # that includes both k and k2. In comparison, the formula for AIC
+        # includes k but not k2. In other words, AIC is a first-order estimate
+        # (of the information loss), whereas AICc is a second-order estimate."
+        # -- from: https://en.wikipedia.org/wiki/Akaike_information_criterion
 
     def bic(self, p, data, grid, stddev):
         n = data.size
@@ -282,7 +299,17 @@ class Model(OptionallyNamed, LoggingMixin):
 
     def pre_process(self, p0, data, grid=None, stddev=None, *args, **kws):
         """This will be run prior to the minimization routine"""
-        return p0, data, grid, stddev
+
+        if kws.get('method') == 'leastsq':
+            # remove masked data points
+            if np.ma.is_masked(data):
+                use = ~data.mask
+                grid = grid[..., use]
+                if stddev is not None:
+                    stddev = stddev[use]
+                data = data.compressed()
+
+        return p0, data, grid, stddev, args, kws
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         """
@@ -303,7 +330,7 @@ class Model(OptionallyNamed, LoggingMixin):
         """
 
         if self.objective is None:
-            self.objective = self.wrss  # wrs for leastsq...
+            self.objective = self.wrss  # fwrs for leastsq...
 
         if p0 is None:
             p0 = self.p0guess(data, grid)
@@ -318,6 +345,9 @@ class Model(OptionallyNamed, LoggingMixin):
         # check for nans
         if np.isnan(data).any():
             self.logger.warning('Your data contains nans.')
+        # check for inf
+        if np.isinf(data).any():
+            self.logger.warning('Your data contains non-finite elements.')
 
         # # check for masked data
         # if np.ma.is_masked(data):
@@ -336,31 +366,43 @@ class Model(OptionallyNamed, LoggingMixin):
         """Minimization worker"""
 
         # pre-processing
-        pre_args = kws.pop('pre_args', ())
-        pre_kws = kws.pop('pre_kws', {})
-        p0, data, grid, stddev = self.pre_process(p0, data, grid, stddev,
-                                                  *pre_args, **pre_kws)
+        p0, data, grid, stddev, args, kws = self.pre_process(
+                p0, data, grid, stddev, *args, **kws)
 
         # post-processing args
         post_args = kws.pop('post_args', ())
         post_kws = kws.pop('post_kws', {})
 
-        # minimization
-        result = minimize(self.objective, p0, (data, grid, stddev), *args,
-                          **kws)
+        # infix so we can easily wrap least squares optimization within the same
+        # method
+        if kws.get('method') == 'leastsq':
+            kws.pop('method')
+            p, cov_p, info, msg, flag = leastsq(
+                    self.fwrs, p0, (data, grid, stddev),
+                    full_output=True,
+                    **kws)
+            success = (flag in [1, 2, 3, 4])
+        else:
+            # minimization
+            result = minimize(self.objective, p0, (data, grid, stddev), *args,
+                              **kws)
+            p = result.x
+            success = result.success
+            msg = result.message
 
-        if result.success:
-            samesame = np.allclose(result.x, p0)
-            if samesame:
-                self.logger.warning('"Converged" parameter vector is identical '
-                                    'to initial guess: %s', p0)
+        if success:
+            unchanged = np.allclose(p, p0)
+            if unchanged:
+                self.logger.warning('"Converged" parameter vector is '
+                                    'identical to initial guess: %s', p0)
             # TODO: maybe also warn if any close ?
             else:
                 self.logger.debug('Successful fit %s', self.name)
                 # post-processing
-                return self.post_process(result.x, *post_args, **post_kws)
+                return self.post_process(p, *post_args, **post_kws)
 
-        self.logger.warning('Fit did not converge! %s', result.message)
+        # emit warning for non-convergence
+        self.logger.warning('Fit did not converge! %s', msg)
 
         # if not self._unconverged_None:
         #      return result.x
@@ -494,8 +536,14 @@ class SummaryStatsMixin(object):
 #     pass
 
 
+# from collections import MutableMapping
+
 class CompoundModel(AttrReadItem, ListLike, Model):
     # base dict-like container for models
+
+    # TODO: better to keep more pure dict that can be keyed on anything?
+    # TODO: then think of a consistent way of mapping to from semantic names
+    # in the event that you want structured
 
     def __init__(self, models=(), **kws):  #
         """
@@ -510,30 +558,11 @@ class CompoundModel(AttrReadItem, ListLike, Model):
         kws
         """
 
-        # TODO: check if models is mapping!!!
+        # if isinstance(models, MutableMapping):
 
         mapping = ()
         if len(models):
-            models = tuple(filter(None, models))
-            names = [m.name for m in models]
-            if None in names:
-                raise ValueError('All models passed to container must be '
-                                 'named. You can name them implicitly by '
-                                 'initializing %s via keyword arguments: '
-                                 '`%s(bg=`' %
-                                 self.__class__.__name__)
-            # check for duplicate names
-            unames = set(names)
-            if len(unames) != len(names):
-                # models have duplicate names
-                self.logger.info('Renaming %i models', len(unames))
-                new_names = []
-                for name, indices in tally(names).items():
-                    for i in range(len(indices)):
-                        new_names.append('%s_%i' % (name, i))
-                names = new_names
-            #
-            mapping = zip(names, models)
+            mapping = self._rename_models(models)
 
         # load models into dict
         super().__init__(mapping)
@@ -544,14 +573,36 @@ class CompoundModel(AttrReadItem, ListLike, Model):
     # def __repr__(self):
     #     return object.__repr__(self)
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key, model):
         # make sure the model has the same name that it is keyed on in the dict
-        if key != value.name:
+        if key != model.name:
             # set the model name (avoid duplicate names in dtype for models
             # of the same class)
-            value.name = key
+            model.name = key
 
-        return super().__setitem__(key, value)
+        return super().__setitem__(key, model)
+
+    def _rename_models(self, models):
+        models = tuple(filter(None, models))
+        names = [m.name for m in models]
+        if None in names:
+            raise ValueError('All models passed to container must be '
+                             'named. You can rename them implicitly by '
+                             'initializing %s via keyword arguments: '
+                             '`%s(bg=model)`' %
+                             self.__class__.__name__)
+        # check for duplicate names
+        unames = set(names)
+        if len(unames) != len(names):
+            # models have duplicate names
+            self.logger.info('Renaming %i models', len(unames))
+            new_names = []
+            for name, indices in tally(names).items():
+                for i in range(len(indices)):
+                    new_names.append('%s_%i' % (name, i))
+            names = new_names
+        #
+        return zip(names, models)
 
     @property
     def models(self):
@@ -627,7 +678,6 @@ class CompoundModel(AttrReadItem, ListLike, Model):
             return model.name, dt, out_shape
 
 
-
 # class CompoundSequentialFitter(CompoundModel):
 # FIXME: not always appropriate
 
@@ -652,43 +702,53 @@ class StaticGridMixin(object):
     """
     Mixin class that eliminated the need to pass a coordinate grid to every
     model evaluation call. This is convenience when fitting the same model
-    repeatedly on the same grid for various data (of the same shape).
+    repeatedly on the same grid for different data (of the same shape).
     Subclasses must implement the `set_grid` method will be used to construct
-    an evaluation grid based on the shape of the data upon the first call to
-    `residuals`.
+    an evaluation grid
     """
+    # based on the shape of the data upon the first call to `residuals`.
 
     # default value for static grid. Having this as a class variable avoids
     # having to initialize this class explicitly in inheritors
-    static_grid = None
+    _static_grid = None
 
     def __call__(self, p, grid=None):
         grid = self._check_grid(grid)
         return super().__call__(p, grid)
 
-    def residuals(self, p, data, grid=None):
-        if grid is None and self.static_grid is None:
-            self.set_grid(data)
-            grid = self.static_grid     # TODO: emit an info message!!
+    # def residuals(self, p, data, grid=None):
+    #     if grid is None and self.static_grid is None:
+    #         self.set_grid(data)
+    #         grid = self.static_grid  # TODO: emit an info message!!
+    #
+    #     grid = self._check_grid(grid)
+    #     # can you set the method as super method here dynamically for speed?
+    #     return super().residuals(p, data, grid)
 
-        grid = self._check_grid(grid)
-        # can you set the method as super method here dynamically for speed?
-        return super().residuals(p, data, grid)
+    @property
+    def static_grid(self):
+        return self._static_grid
 
-    def _check_grid(self, grid):        # todo rename get_static_grid
+    @static_grid.setter
+    def static_grid(self, grid):
+        self.set_grid(grid)
+
+    @static_grid.getter
+    def static_grid(self):
+        return self._static_grid
+
+    def _check_grid(self, grid):
         if grid is None:
             grid = self.static_grid
         if grid is None:
             raise ValueError(
                     'Please specify the coordinate grid for evaluation, '
                     'or use the `set_grid` method prior to the first call to '
-                    'assign a static coordinate grid.')
+                    'assign a coordinate grid.')
         return grid
 
-    def set_grid(self, data):
-        raise NotImplementedError(
-                'Derived class should implement this method, or assign the '
-                '`static_grid` attribute directly.')
+    def set_grid(self, grid):
+        self._static_grid = grid
 
     # def adapt_grid(self, grid):  # adapt_grid_segment
     #     return None

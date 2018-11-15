@@ -6,11 +6,12 @@ import sys
 from multiprocessing.managers import SyncManager  # , NamespaceProxy
 from pathlib import Path
 
+import itertools as itt
+
 import logging.handlers
 
 # ===============================================================================
 # Check input file | doing this before all the slow imports
-from graphical.multitab import MplMultiTab
 
 fitsfile = sys.argv[1]
 fitspath = Path(fitsfile)
@@ -27,7 +28,6 @@ chrono.mark('start')
 
 # ===============================================================================
 # related third party libs
-
 import numpy as np
 from scipy import ndimage
 from joblib.pool import MemmapingPool as MemmappingPool  # Parallel, delayed
@@ -45,7 +45,9 @@ from recipes.interactive import is_interactive
 from recipes.parallel.synced import SyncedCounter
 
 import slotmode
-from slotmode.modelling.image import SlotBackground
+from slotmode.modelling.image import SlotBackground, SlotModeBackground
+from obstools.modelling import nd_sampler
+from slotmode.modelling.image import FrameTransferBleed
 
 # from slotmode import get_bad_pixel_mask
 # * #StarTracker, SegmentationHelper, GraphicalStarTracker
@@ -56,22 +58,55 @@ from slotmode.modelling.image import SlotBackground
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 from obstools.phot import log  # listener_process, worker_init, logging_config
 from obstools.phot.proc import TaskExecutor
-from obstools.phot.trackers.core import SegmentationHelper, SlotModeTracker, \
-    check_image_drift
+from obstools.phot.utils import id_stars_kmeans, merge_segmentations, \
+    shift_combine
+from obstools.phot.tracking import StarTracker
+from obstools.phot.segmentation import SegmentationHelper
+
+# SlotModeTracker, check_image_drift
+
 
 # from motley.printers import func2str
 from graphical.imagine import ImageDisplay
+from graphical.multitab import MplMultiTab
 
 chrono.mark('Import: local libs')
 
+# version
+__version__ = 3.14519
+
+
+# TODO: colourful logs - like daquiry / technicolor
+# TODO: ipython style syntax highlighting for exceptions in logs ??
+
+# TODO: for slotmode: if stars on other amplifiers, can use these to get sky
+# variability and decorellate TS
+
+# todo: these samples can be done with Mixin class for FitsCube
+# think `cube.sample(100).max()` # :))
 
 # ===============================================================================
+# def create_sample_image(interval, ncomb):
+#     image = sampler.median(ncomb, interval)
+#     scale = nd_sampler(image, np.median, 100)
+#     mimage = np.ma.MaskedArray(image, BAD_PIXEL_MASK, copy=True)
+#     # copy here prevents bad_pixel_mask to be altered (only important if
+#     # processing is sequential)
+#     return mimage / scale, scale
 
-# class SyncedProgressLogger(ProgressLogger):
-#     def __init__(self, precision=2, width=None, symbol='=', align='^', sides='|',
-#                  logname='progress'):
-#         ProgressLogger.__init__(self, precision, width, symbol, align, sides, logname)
-#         self.counter = SyncedCounter()
+def create_sample_image(interval, ncomb):
+    image = sampler.median(ncomb, interval)
+    # scale = nd_sampler(image, np.median, 100)
+    # image_NORM = image / scale
+    mimage = np.ma.MaskedArray(image, BAD_PIXEL_MASK)
+    return mimage  # , scale
+
+
+def init_model(interval, ncomb, snr=3, npixels=5, deblend=False, dilate=2):
+    image = create_sample_image(interval, ncomb)
+    mdl, seg = SlotModeBackground.from_image(image, SPLINE_ORDERS, snr,
+                                             npixels, deblend, dilate)
+    return mdl, seg, image  # , scale
 
 
 def display(image, title=None, ui=None, **kws):
@@ -88,11 +123,6 @@ def display(image, title=None, ui=None, **kws):
     return im
 
 
-# TODO: colourful logs - like daquiry / technicolor
-# TODO: python style syntax highlighting for exceptions in logs ??
-
-__version__ = 3.14519
-
 # class MyManager(Manager):
 #     pass
 
@@ -107,11 +137,11 @@ def Manager():
     return m
 
 
-def task(size, maxfail=None):
+def task(size, max_fail=None):
     # a little task factory
     counter = manager.Counter()
     fail_counter = manager.Counter()
-    return TaskExecutor(size, counter, fail_counter, maxfail)
+    return TaskExecutor(size, counter, fail_counter, max_fail)
 
 
 if __name__ == '__main__':
@@ -122,10 +152,10 @@ if __name__ == '__main__':
 
     # say hello
     header = banner('⚡ ObsTools Photometry ⚡', align='^')
-    header = header + '\nv1.2\n'
+    header = header + '\nv1.3\n'  # __version__
     print(header)
 
-    # many cores?!?
+    # how many cores?!?
     ncpus = os.cpu_count()
 
     # parse command line args
@@ -280,9 +310,12 @@ if __name__ == '__main__':
 
     # bad pixels
     # ----------
-    bad_pixel_mask = slotmode.get_bad_pixel_mask(frame0, args.channel + 1)
+    BAD_PIXEL_MASK = slotmode.get_bad_pixel_mask(frame0, args.channel + 1)
     # TODO: handle bad_pixels as negative label in SegmentationHelper ???
+    # these can actually now just be label 0. however special treatment desired
+    # since we don't really need slices of these
     # TODO: option to try flat field out the bad pixels
+    # TODO: ALTERNATIVELY: try to flat field out bad pixels??
 
     # flat fielding
     # -------------
@@ -311,11 +344,7 @@ if __name__ == '__main__':
     calib = (None, None)
 
     # create sample image
-    sampler = ImageSampler(cube)            # prefer nd_sampler??
-    image = sampler.median(10, 100)
-    scale = np.median(image)
-    image_NORM = image / scale
-    # randimage = rand_median(cube, 10, 100)  # / flat
+    sampler = ImageSampler(cube)  # prefer nd_sampler??
 
     # extract flat field from sky
     # flat = slotmode.make_flat(cube[2136:])
@@ -324,224 +353,16 @@ if __name__ == '__main__':
     # TODO: same for all classes here
 
     # create the global background model
-    # mdlBG = Poly2D(1, 1)
-    # p0bg = np.ones(mdlBG.npar)  # [np.ones(m.nfree) for m in mdlBG.models]
-    # edge_cutoffs = slotmode.get_edge_cutoffs(image)
-    # border = make_border_mask(image, edge_cutoffs)
-    # mdlBG.set_mask(border)
-
-    # for SLOTMODE: fit median cross sections with piecewise polynomial
-    # orders_x, orders_y = (1, 5), (4, 1, 5)
-    # bpx = np.multiply((0, 0.94, 1), image.shape[1])
-    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
-    # #orders_y, bpy = (3, 1, 5), (0, 3.5, 17, image.shape[0]) # 0.15, 0.7
-    # mdlBG = Vignette2DCross(orders_x, bpx, orders_y, bpy)
-
-    # TODO: try fit for the breakpoints ??
-    # orders_x, orders_y = (5, 1), (4, 1, 5)
-    # bpx = np.multiply((0, 0.94, 1), image.shape[1])
-    # sy, sx = ishape
-    # # orders = orders_x, orders_y = (1, 3), (3, 1, 3)     # channel 1
-    # orders = orders_x, orders_y = (1, 3), (1, 1, 1)
-    # breaks = (0, 162, sx), (0, 3, 17, sy)  # 6x6
-    # smoothness = (True, False)
 
     # This for Amp3 (channel 2) binning 3x3
     sy, sx = ishape
-    orders = orders_x, orders_y = (5, 1), (5, 1, 5)
-    breaks = (0, 10, sx), (0, 11, 38, sy)  # 3x3
-    # smoothness = (False, True)
-
-    from slotmode.vignette import Vignette  # 2DCross
-
-    vignette = Vignette(*orders, *breaks, (1, 1))
-    # vignette.no_mixed_terms()
-    vignette.diagonal_freedom()
-    vignette.set_grid(image)
-
-    # bpy = np.multiply((0, 0.24, 0.84, 1), image.shape[0])
-    # bpy = (0, 10, 37.5, sy)
-    # bpy = (0, 3.5, 17.5, sy)  # 6x6
-    # orders = (1, 3), (1, 1, 1)
-    # breaks = (0, 162, sx), (0, 3.5, 17.5, sy)
-    # breaks = bpx, bpy
-
-    # load SementationHelper from pickle
-    # segmPath = fitspath.with_suffix('.segm.pkl')
-
-    # First initialize the SlotBackground model from the image
-    snr = (7, 5, 3)
-    npixels = (7, 5, 3)
-    dilate = (5, 3)
-
-    # models = []
-    # mdlr, mim, segm = SlotBackground.from_image(
-    #         image, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
-    # raise SystemExit
-
-    mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
-            image_NORM, bad_pixel_mask, vignette, snr, npixels, dilate=dilate)
-
-    #
-    from obstools.modelling.image.diagnostics import plot_modelled_image
-
-    fig = plot_modelled_image(vignette, image_NORM, p0bg.vignette.squeeze())
-    idisplay(fig)
-
-    raise SystemExit
-
-    # experimental
-    # ..........................................................................
-    # loop sample median images across cube to get relative star positions
-
-    from obstools.modelling import nd_sampler
-
-    ui = MplMultiTab()
-    snr = 3.0
-    npix = 3
-    ncomb = 25
-    bg = vignette(p0bg.vignette.squeeze())
-    coms = []
-    nproc_init = 10
-    for interval in mit.pairwise(range(0, len(cube), len(cube) // nproc_init)):
-        image = sampler.median(ncomb, interval)
-        scale = nd_sampler(image, np.median, 100)
-        image_NORM = image / scale
-
-        mdlr, p0bg, resi, seg_data, mask, groups = SlotBackground.from_image(
-                image_NORM, bad_pixel_mask, vignette, snr, npixels,
-                dilate=dilate)
-
-        # detect (again)
-        segm = SegmentationHelper.detect(image_NORM, bad_pixel_mask, bg, snr,
-                                         npix)
-        com = segm.com_bg(image_NORM)
-        coms.append(com)
-
-        # show image
-        r = p0bg.vignette.squeeze()
-        fig = plot_modelled_image(vignette, image_NORM, r)
-
-        # im = segm.display()
-        ui.add_tab(fig)
-    ui.show()
-
-    ndetected = list(map(len, coms))
-    max_nstars = max(ndetected)
-    comsRef = coms[np.argmax(ndetected)]
-    rxx = np.full((len(coms), max_nstars, 2), np.nan)
-    for i, com in enumerate(coms):
-        # print('i', i)
-        if len(com) == max_nstars:
-            rxx[i] = np.atleast_2d(com) - com[0]
-        else:
-            for cx in com:
-                j = np.square((comsRef - cx)).sum(1).argmin()
-                rxx[i, j] = cx - com[0]
-
-    #
-    rvec = np.nanmean(rxx, 0)
-    # ..........................................................................
-
-    # check for non-convergence
-    # failed = [np.isnan(x).any() for x in [p0bg.bleed, p0bg.vignette.y,
-    #                                       p0bg.vignette.x]]
-    if 'bleed' in mdlr.names:
-        failed = np.isnan(p0bg.bleed).any()
-        if failed:
-            # replace nans with zero
-            p0bg.bleed = 0  # Maybe do this at the model class ???
-
-    # segmentation (this one only contains the stars, not the frame transfer
-    # bleed masks
-    segm = SegmentationHelper(seg_data)
-
-    # everything in here will be used for sky
-    notSky = seg_data.astype(bool) | bad_pixel_mask
-    skyRegion = ~notSky
-    skyImageMasked = np.ma.MaskedArray(image, notSky)
-
-    # residuals (for sample image)
-    resi = mdlr.residuals(p0bg, image)
-    # masked residuals
-    skyResiMasked = np.ma.MaskedArray(resi, ~skyRegion)
-
-    # save_pickle(segmPath, segm)  # TODO: paths.segm
-
-    # init the tracker
-    # select here groups by snr to do photometry
-    groupsOpt = groups[1:3]
-    labels4CoM = np.hstack(groupsOpt)
-    com = segm.com_bg(resi, labels4CoM)
-    tracker = SlotModeTracker(com, seg_data, groupsOpt, labels4CoM,
-                              bad_pixel_mask)
-
-    # TODO: need a way of doing forced photometry at relative positions
+    SPLINE_ORDERS = YORD, XORD = (5, 1, 5), (5, 1)
+    # TODO: print some info about the model: dof etc
 
     # estimate maximal positional shift of stars by running detection loop on
     # maximal image of 1000 frames evenly distributed across the cube
-    mxshift, maxImage, segImx = check_image_drift(cube, 1000, bad_pixel_mask,
-                                                  snr=5)
-
-    # TODO: also check kif bg level changes significantly during run
-
-    # display
-    displayed = Dict()
-    if args.plot:
-        # initial diagnostic images (for the modelled sample image)
-        # todo: these samples can be done with Mixin class for FitsCube
-        # think `cube.sample(1000).max()` # :))
-
-        # embed in multi tab window
-        ui = MplMultiTab()
-        displayed.image = display(image, 'Sample image')
-        displayed.segmentation = display(segm, 'Segmentation')
-        displayed.residual = display(skyResiMasked, 'Sky Residuals')
-        # add CoM ticks
-        displayed.residual.ax.plot(*com[:, ::-1].T, 'rx', ms=3)
-
-        # camera drift image
-        displayed.drift = display(maxImage, 'Sample Max (Camera Drift)')
-        # FIXME: -------------------------------------------------------
-        # could be `segImx.slices.plot(displayed.drift.ax, ec='maroon')`
-        from obstools.phot.trackers.core import Slices
-
-        slices = Slices(segImx)
-        r = slices.plot(displayed.drift.ax, edgecolor='maroon')
-        # --------------------------------------------------------------
-
-        # plot cross sections for bg fit
-        fig = mdlr.plot_fit_results(skyImageMasked, p0bg)
-        displayed.cross = (idisplay(fig) if args.live else fig)
-
-        # TODO: plot psf for different group detections + models
-
-        #
-
-    # raise SystemExit
-
-    # tracker, image, p0bg = SlotModeTracker.from_cube_segment(cube, 25,
-    #                                                          100,
-    #                                                          mask=bad_pixel_mask,
-    #                                                          bgmodel=mdlBG,
-    #                                                          snr=(10, 3),
-    #                                                          npixels=(7, 3),
-    #                                                          dilate=(4, 3),
-    #                                                          deblend=True)
-    #
-    # if plot_diagnostics: # thread??
-    # resi = mdlBG.residuals(p0bg, image)
-    # resi_masked = tracker.mask_segments(resi, bad_pixel_mask)
-    # resi_clip = sigma_clipping.sigma_clip(resi_masked)
-
-    # check fit
-    # resi = mdlBG.residuals(p0bg, image)
-    # ImageDisplay(tracker.segm)
-    # ImageDisplay(tracker.mask_segments(resi, bad_pixel_mask))
-    # mdlBG.plot_fit_results(tracker.mask_segments(image, bad_pixel_mask), p0bg)
-
-    # TODO: for slotmode: if stars on other amplifiers, can use these to get sky
-    # variability and decorellate TS
+    # mxshift, maxImage, segImx = check_image_drift(cube, 1000, bad_pixel_mask,
+    #                                               snr=5)
 
     # TODO: set p0ap from image
     sky_width, sky_buf = 5, 0.5
@@ -566,36 +387,36 @@ if __name__ == '__main__':
     # ===============================================================================
     # create shared memory
     # aperture positions / radii / angles
-    nstars = tracker.nsegs
-    # ngroups = tracker.ngroups
-    naps = 1  # number of apertures per star
-
-    # TODO: single structured file may be better??
-    # TODO: paths.modelling etc..
-
-    # create frame processor
-    proc = FrameProcessor()
-    # TODO: folder structure for multiple aperture types circular /
-    # elliptical / optimal
-    proc.init_mem(n, nstars, ngroups, naps, resultsPath, clobber=clobber)
-
-    # modelling results
-    mdlr.init_mem(n, resultsPath / 'modelling/bg.par', clobber=clobber)
-    # BG residuals
-    bgResiduPath = resultsPath / 'residual'
-    bgshape = (n,) + ishape
-    residu = make_shared_mem_nans(bgResiduPath, bgshape, clobber)
-
-    # aperture parameters
-    # cmb.init_mem(n, resultsPath / 'aps.par', clobber=clobber)
-    optStatPath = resultsPath / 'opt.stat'
-    opt_stat = make_shared_mem_nans(optStatPath, (n, tracker.ngroups), clobber)
-
-    # tracking data
-    cooFile = resultsPath / 'coords'
-    coords = make_shared_mem_nans(cooFile, (n, 2), clobber)
-
-    chrono.mark('Memory alloc')
+    # nstars = tracker.nsegs
+    # # ngroups = tracker.ngroups
+    # naps = 1  # number of apertures per star
+    #
+    # # TODO: single structured file may be better??
+    # # TODO: paths.modelling etc..
+    #
+    # # create frame processor
+    # proc = FrameProcessor()
+    # # TODO: folder structure for multiple aperture types circular /
+    # # elliptical / optimal
+    # proc.init_mem(n, nstars, ngroups, naps, resultsPath, clobber=clobber)
+    #
+    # # modelling results
+    # mdlr.init_mem(n, resultsPath / 'modelling/bg.par', clobber=clobber)
+    # # BG residuals
+    # bgResiduPath = resultsPath / 'residual'
+    # bgshape = (n,) + ishape
+    # residu = make_shared_mem_nans(bgResiduPath, bgshape, clobber)
+    #
+    # # aperture parameters
+    # # cmb.init_mem(n, resultsPath / 'aps.par', clobber=clobber)
+    # optStatPath = resultsPath / 'opt.stat'
+    # opt_stat = make_shared_mem_nans(optStatPath, (n, tracker.ngroups), clobber)
+    #
+    # # tracking data
+    # cooFile = resultsPath / 'coords'
+    # coords = make_shared_mem_nans(cooFile, (n, 2), clobber)
+    #
+    # chrono.mark('Memory alloc')
 
     # ===============================================================================
     # main compute
@@ -603,28 +424,48 @@ if __name__ == '__main__':
     manager = Manager()
 
     # task executor  # there might be a better one in joblib ??
-    Task = task(subsize)
-    worker = Task(proc.process)
-
-    chunks = mit.divide(args.nprocesses, range(*subset))
-    chunks2 = chunks.copy()
-    rngs = mit.pairwise(next(zip(*chunks2)) + (subset[1],))
+    Task = task(subsize)  # PhotometryTask
 
 
-    # mdlr.logger.info('hello world')
+    # worker = Task(proc.process)
 
-    # raise SystemExit
+    def _pre_fit(i, mdl, image):
+        # normalize image
+        # scale = nd_sampler(image, np.ma.median, 100)
+        # image_NORM = image / scale
+        # mimage = np.ma.MaskedArray(image_NORM, bad_pixel_mask, copy=True)
+        # optimize knot positions
 
-    def proc_(irng, data, calib, residu, coords, opt_stat, tracker, mdlr,
+        # note: leastsq is ~4 times faster than other minimizers
+        r_best = mdl.optimize_knots(image, method='leastsq')
+        results = mdl.fit(image, method='leastsq')
+
+        # rescale result
+        # results[...] = tuple(r * scale for r in results.tolist())
+        #
+
+        # residuals
+        residuals = mdl.residuals(results, image)
+
+        # since pickled clones are optimized, we need to either set the
+        # knots in the original models, or pass the model back to the main
+        # process.  Avoid this by having models live entirely in forked process.
+        # (todo)
+
+        return mdl, results, residuals
+
+
+    def proc_(interval, data, calib, residu, coords, opt_stat, tracker, mdlr,
               p0bg, p0ap, sky_width, sky_buf):
 
-        #
-        logger.info('Model names: %s', tuple(mdl.name for mdl in mdlr.models))
+        # logger.info('Model names: %s', tuple(mdl.name for mdl in mdlr.models))
         # logger.info(tuple(mdlr.values()))
 
-        # use detections from max image to compute CoM and offset from initial
-        # reference image
-        i0, i1 = irng
+        # wait for all init processes to finish
+
+        # use detections from median image to compute CoM and offset from
+        # initial reference image
+        i0, i1 = interval
         # labels in tracker.segm corresponding to those in segImx
         lbl = np.sort(ndimage.median(tracker.segm.data, segImx.data,
                                      segImx.labels)).astype(int)
@@ -646,14 +487,117 @@ if __name__ == '__main__':
         logger.info('Init tracker at offset (%.3f, %.3f) for frame %i',
                     *off, i0)
 
-        for i in range(*irng):
+        for i in range(*interval):
             worker(i, data, calib, residu, coords, opt_stat, tracker, mdlr,
                    p0bg, p0ap, sky_width, sky_buf)
 
 
+    # setup
+    PreFitTask = task(args.nprocesses, '30%')
+    pre_fit = PreFitTask(_pre_fit)
+
+    chunks = mit.divide(args.nprocesses, range(*subset))
+    chunks2 = chunks.copy()
+    pairs = list(mit.pairwise(next(zip(*chunks2)) + (subset[1],)))
+
+    # mdlr.logger.info('hello world')
+
+    # raise SystemExit
+
     try:
         # Fork the worker processes to perform computation concurrently
         logger.info('About to fork into %i processes', args.nprocesses)
+
+        # global parameters for object detection
+        NCOMB = 10
+        SNR = 3
+        NPIX = 5
+        DILATE = 2
+        variters = tuple(map(itt.repeat, (NCOMB, SNR, NPIX, DILATE)))
+        vargen = zip(pairs, *variters)
+        #
+        logger.info('Detecting stars & initializing models')
+        # initialize worker pool
+        pool = MemmappingPool(args.nprocesses, initializer=log.worker_init,
+                              initargs=(config_worker,))
+        # initialize models (concurrently)
+        # TODO: do all this stuff in parallel to minimize serialization
+        # overheads
+        models, segmentations, sample_images = zip(
+                *pool.starmap(init_model, vargen)
+        )
+
+        # aggregate results
+        logger.info('Identifying stars')
+        cx, ccom, shifts = id_stars_kmeans(sample_images, segmentations)
+        nstars = len(ccom)
+        ishifts = shifts.round()
+
+        # global image segmentation
+        logger.info('Combining sample image segmentations')
+        segm_a = merge_segmentations(segmentations, ishifts)
+        sh = SegmentationHelper(segm_a)
+        sh.dilate(4, 2)
+
+        # update segmentation for models
+        for i, (mdl, shift) in enumerate(zip(models, ishifts)):
+            # add global segmentation to model
+            segm_stars = ndimage.shift(sh.data, shift)
+            _, star_labels0 = mdl.segm.add_segments(segm_stars)
+            mdl.groups.stars0 = star_labels0
+
+        # fit
+        logger.info('Fitting sample images')
+        counter = range(args.nprocesses)
+        models, results, sample_residuals = zip(
+                *pool.starmap(pre_fit, zip(counter, models, sample_images))
+        )
+
+        # residuals
+        sample_residuals = np.ma.array(sample_residuals)
+
+        # combined image
+        mdl = models[0]
+        mean_residuals = shift_combine(mdl.segm.grid, sample_residuals, shifts)
+        # mask frame transfer bleeding
+        mean_flux = sh.flux(mean_residuals)
+        l = sh.labels[mean_flux > 75]
+        sh_ft, new_labels = FrameTransferBleed._adapt_segments(sh, l, copy=True)
+        # second round detection to pick up faint stars for forced photometry
+        sh_ft.add_segments(sh)
+        sky = sh_ft.mask_segments(mean_residuals)
+        sh2 = sh.detect(sky, edge_cutoff=5)
+        sh2.dilate(4, 2)
+        # update global segmentation
+        sh.add_segments(sh2)
+        # update coordinates
+        rcoo = sh.com(mean_residuals)
+
+        # update segmentation for models (again)
+        for i, (mdl, shift) in enumerate(zip(models, ishifts)):
+            # add global segmentation to model
+            segm_stars = ndimage.shift(sh2.data, shift)
+            _, star_labels1 = mdl.segm.add_segments(segm_stars)
+            mdl.groups.stars1 = star_labels1
+
+
+
+        # plot results of sample fits
+        if args.plot:
+            # initial diagnostic images (for the modelled sample image)
+            logger.info('Plotting results')
+
+            # embed plots in multi tab window
+            ui = MplMultiTab()
+            for i, (image, mdl, params) in enumerate(
+                    zip(sample_images, models, results)):
+                #
+                mimage = mdl.segm.mask_segments(image, mdl.groups.stars0)
+                fig = mdl.plot_fit_results(mimage, params)
+                ui.add_tab(fig, '%i:%s' % (i, pairs[i]))
+
+            ui.show()
+
 
         # THIS IS FOR DEBUGGING PICKLING ERRORS
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -667,7 +611,7 @@ if __name__ == '__main__':
         #                  tracker, clone, p0bg, p0ap, sky_width, sky_buf)
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-        # rng = next(rngs)
+        # rng = next(pairs)
         # proc_(rng, cube, residu, coords, opt_stat,tracker, mdlr, p0bg, p0ap, sky_width, sky_buf)
 
         # raise SystemExit
@@ -707,17 +651,18 @@ if __name__ == '__main__':
         #               sky_width, sky_buf)
         #                 for chunk in chunks))
 
+        # from IPython import embed
+        # embed()
         #
-
         # raise SystemExit
-
-        with MemmappingPool(args.nprocesses, initializer=log.worker_init,
-                            initargs=(config_worker,)) as pool:
-            results = pool.starmap(proc_,
-                                   ((rng, cube, calib, residu, coords, opt_stat,
-                                     tracker, mdlr, p0bg, p0ap, sky_width,
-                                     sky_buf)
-                                    for rng in rngs))
+        #
+        # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
+        #                     initargs=(config_worker,)) as pool:
+        #     results = pool.starmap(proc_,
+        #                            ((rng, cube, calib, residu, coords, opt_stat,
+        #                              tracker, mdlr, p0bg, p0ap, sky_width,
+        #                              sky_buf)
+        #                             for rng in pairs))
 
         # with MemmappingPool(args.nprocesses, initializer=log.worker_init,
         #                     initargs=(config_worker, )) as pool:
@@ -744,6 +689,7 @@ if __name__ == '__main__':
         # statement.
 
         # Hang around for the workers to finish their work.
+        pool.close()
         pool.join()
         logger.info('Workers done')  # Logging in the parent still works
         chrono.mark('Main compute')
@@ -756,42 +702,42 @@ if __name__ == '__main__':
         # A finally clause is always executed before leaving the try statement,
         # whether an exception has occurred or not.
         # any unhandled exceptions will be raised after finally clause,
-        # basically just KeyboardInterrupt for now.
+        # basically only KeyboardInterrupt for now.
 
         # check task status
-        failures = Task.report()  # FIXME:  we sometimes get stuck here
+        # failures = Task.report()  # FIXME:  we sometimes get stuck here
         # TODO: print opt failures
 
         chrono.mark('Process shutdown')
 
         # diagnostics
-        if plot_diagnostics:
-            # TODO: GUI
-            # TODO: if interactive dock figs together
-            # dock for figures
-            # connect ts plots with frame display
-
-            from obstools.phot.diagnostics import new_diagnostics, save_figures
-
-            figs = new_diagnostics(coords, tracker.rcoo[tracker.ir],
-                                   proc.Appars, opt_stat)
-            if args.live:
-                for fig, name in figs.items():
-                    idisplay(fig)
-
-            save_figures(figs, figPath)
-
-            # GUI
-            from obstools.phot.gui_dev import FrameProcessorGUI
-
-            gui = FrameProcessorGUI(cube, coords, tracker, mdlr, proc.Appars,
-                                    residu, clim_every=1e6)
-
-        if plot_lightcurves:
-            from obstools.phot.diagnostics import plot_aperture_flux
-
-            figs = plot_aperture_flux(fitspath, proc, tracker)
-            save_figures(figs, figPath)
+        # if plot_diagnostics:
+        #     # TODO: GUI
+        #     # TODO: if interactive dock figs together
+        #     # dock for figures
+        #     # connect ts plots with frame display
+        #
+        #     from obstools.phot.diagnostics import new_diagnostics, save_figures
+        #
+        #     figs = new_diagnostics(coords, tracker.rcoo[tracker.ir],
+        #                            proc.Appars, opt_stat)
+        #     if args.live:
+        #         for fig, name in figs.items():
+        #             idisplay(fig)
+        #
+        #     save_figures(figs, figPath)
+        #
+        #     # GUI
+        #     from obstools.phot.gui_dev import FrameProcessorGUI
+        #
+        #     gui = FrameProcessorGUI(cube, coords, tracker, mdlr, proc.Appars,
+        #                             residu, clim_every=1e6)
+        #
+        # if plot_lightcurves:
+        #     from obstools.phot.diagnostics import plot_aperture_flux
+        #
+        #     figs = plot_aperture_flux(fitspath, proc, tracker)
+        #     save_figures(figs, figPath)
 
         chrono.mark('Diagnostics')
         chrono.report()  # TODO: improve report formatting
