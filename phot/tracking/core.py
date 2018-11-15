@@ -595,7 +595,7 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
             if len(too_close):
                 self.logger.debug(msg, str(too_close), 'close')
         if snr_cut:
-            too_faint = self.too_faint(snr_cut)
+            too_faint = self.too_faint(image, snr_cut)
             if len(too_faint):
                 self.logger.debug(msg, str(too_faint), 'faint')
 

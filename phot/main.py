@@ -578,7 +578,8 @@ if __name__ == '__main__':
             ui.show()
 
         # global background subtraction
-        
+        fit_every = 5
+        knot_search_every = 25
 
 
 
