@@ -283,18 +283,28 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         reference_index: int
 
         """
+
+        if isinstance(segm, SegmentationGridHelper):
+            # detecting the class of the SegmentationImage allows some
+            # optimization by avoiding unnecessary recompute of lazyproperties.
+            # Also allows custom subclasses of SegmentationGridHelper to be
+            # used
+            self.segm = segm
+        else:
+            self.segm = SegmentationGridHelper(segm)
+
+        # original segmentation
+        self._original_data = self.segm.data
         # counter for incremental update
         self.counter = itt.count(1)  # TODO: multiprocess!!!
-        # store zero and relative positions separately so we can update them
-        # independently
-        self.ir = int(reference_index)
 
         # pixel coordinates of reference position from which the shift will
         # be measured
+        self.ir = int(reference_index)
         self.yx0 = coords[self.ir]
         self.rvec = coords - coords[self.ir]
-        self.segm = SegmentationGridHelper(segm)
-        self._original_data = self.segm.data
+        # store zero and relative positions separately so we can update them
+        # independently
 
         # init groups
         LabelGroupsMixin.__init__(self, label_groups)

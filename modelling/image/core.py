@@ -144,7 +144,22 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             # used
             self.segm = segm
         else:
-            self.segm = SegmentationGridHelper(segm)
+            try:
+                self.segm = SegmentationGridHelper(segm)
+            except Exception as err:
+                from IPython import embed
+                import traceback, textwrap
+                header = textwrap.dedent(
+                    """\
+                    Caught the following %s:
+                    ------ Traceback ------
+                    %s
+                    -----------------------
+                    Exception will be re-raised upon exiting this embedded interpreter.
+                    """) % (err.__class__.__name__, traceback.format_exc())
+                embed(header=header)
+                raise
+
 
         #
         if isinstance(models, Model):

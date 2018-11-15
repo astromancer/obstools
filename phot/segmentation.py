@@ -99,7 +99,6 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
 # TODO: detect_gmm():
 
 
-
 def detect_loop(image, mask=None, bg_model=None, snr=(10, 7, 5, 3),
                 npixels=(7, 5, 3), edge_cutoff=None, deblend=(True, False),
                 dilate=(4, 1)):
@@ -852,6 +851,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     #     return new
 
     def __init__(self, data, use_zero=False):
+        if isinstance(data, SegmentationHelper):
+            data = data.data
+
         super().__init__(data)
         self._use_zero = bool(use_zero)
 
@@ -1626,7 +1628,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         #     # keep old labels over new ones (for duplicates)
         #     # zero new labels at positions of old labels  (for duplicate labels)
         #     data[self.to_bool(duplicate_labels)] = 0
-
 
         if label_insert is None:
             # new labels are appended
