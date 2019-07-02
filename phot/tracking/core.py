@@ -63,15 +63,25 @@ TABLE_STYLE = dict(txt='bold', bg='g')
 
 
 class GlobalSegmentation(SegmentationHelper):
+    @classmethod
+    def merge(cls, segmentations, xy_offsets, extend=True, f_accept=0.5,
+              post_dilate=1):
+        return cls(merge_segmentations(segmentations, xy_offsets,
+                                       extend,
+                                       f_accept,
+                                       post_dilate),
+                   np.floor(xy_offsets.min(0)))
 
-    def __init__(self, data, use_zero=False):
-        super().__init__(data, use_zero)
+    def __init__(self, data, zero_point):
+        super().__init__(data)
+        self.zero_point = zero_point
 
     def get_start_indices(self, xy_offsets):
         return np.abs((xy_offsets + self.zero_point).round().astype(int))
 
     def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
-        sub = self.select_subset(llc, image.shape)
+        sub = super(GlobalSegmentation, self).select_subset(llc, image.shape)
+        embed()
         return sub.flux(image, labels, labels_bg, bg_stat)
 
     def sort(self, measure, descend=False):
@@ -178,10 +188,9 @@ def id_stars_dbscan(xy, eps=0.1, min_samples=5):
     return db, n_clusters, n_noise
 
 
-def plot_clusters(ax, clf, xy, cmap='Spectral'):
+def plot_clusters(ax, clf, features, cmap='Spectral'):
     from matplotlib.cm import get_cmap
 
-    X = np.vstack(xy)
     core_sample_indices_, = np.where(clf.labels_ != -1)
     labels_xy = clf.labels_[core_sample_indices_]
 
@@ -191,23 +200,9 @@ def plot_clusters(ax, clf, xy, cmap='Spectral'):
     c = colors[clf.labels_[core_sample_indices_]]
 
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
-    ax.scatter(*X[core_sample_indices_].T, edgecolors=c,
+    ax.scatter(*features[core_sample_indices_].T, edgecolors=c,
                facecolors='none')
-    try:
-        ax.plot(*X[clf.labels_ == -1].T, 'kx', alpha=0.3)
-    except Exception as err:
-        from IPython import embed
-        import traceback
-        import textwrap
-        embed(header=textwrap.dedent(
-            """\
-            Caught the following %s:
-            ------ Traceback ------
-            %s
-            -----------------------
-            Exception will be re-raised upon exiting this embedded interpreter.
-            """) % (err.__class__.__name__, traceback.format_exc()))
-        raise
+    ax.plot(*features[clf.labels_ == -1].T, 'kx', alpha=0.3)
 
     ax.grid()
 
@@ -803,7 +798,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if plot:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(12.5, 2.25))
-            plot_clusters(ax, clf, xy, )
+            plot_clusters(ax, clf, np.vstack(coms))
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
             display(fig)
@@ -812,6 +807,11 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         logger.info('Measuring relative positions')
         _, centres, σ_xy, xy_offsets, outliers = \
             measure_positions_offsets(xy, centre_distance_max, f_detect_accept)
+
+        # zero point for tracker (slices of the extended frame) correspond
+        # to minimum offset
+        # xy_off_min = xy_offsets.min(0)
+        # zero_point = np.floor(xy_off_min)
 
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
@@ -822,30 +822,24 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             fig.suptitle('Position Measurements (CoM)', fontweight='bold')
 
         # combine segmentation images
-        seg_extended = GlobalSegmentation(
-                merge_segmentations(segmentations, xy_offsets,
-                                    True,  # extend
-                                    f_detect_accept,
-                                    post_merge_dilate))
-
+        seg_glb = GlobalSegmentation.merge(segmentations, xy_offsets,
+                                           True,  # extend
+                                           f_detect_accept,
+                                           post_merge_dilate)
+        return seg_glb
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
-            im = seg_extended.display()
+            im = seg_glb.display()
             im.ax.set_title('Global segmentation 0')
             display(im.figure)
-
-        # zero point for tracker (slices of the extended frame) correspond
-        # to minimum offset
-        xy_off_min = xy_offsets.min(0)
-        zero_point = np.floor(xy_off_min)
 
         # since the merge process re-labels the stars, we have to ensure the
         # order of the labels correspond to the order of the clusters.
         # Do this by taking the label of the pixel nearest measured centers
         # removed masked points from coordinate measurement
-        cxx = np.ma.getdata(centres) - zero_point
+        cxx = np.ma.getdata(centres) - seg_glb.zero_point
         indices = cxx.round().astype(int)
-        cluster_labels = seg_extended.data[tuple(indices.T)]
+        cluster_labels = seg_glb.data[tuple(indices.T)]
         ok = (cluster_labels != 0)
 
         # Measure fluxes here. bright objects near edges of the slot
@@ -854,13 +848,13 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # sources which leads to more accurate flux measurement and
         # therefore better change of flagging bright partial sources for
         # photon bleed
-        llcs = seg_extended.get_start_indices(xy_offsets, zero_point)
+        llcs = seg_glb.get_start_indices(xy_offsets)
 
         # ======================================================================
-        counts = worker_pool.map(
-                seg_extended.flux, ((image, ij0)
-                                    for i, (ij0, image) in
-                                    enumerate(zip(llcs, images))))
+        counts = worker_pool.starmap(
+                seg_glb.flux, ((image, ij0)
+                               for i, (ij0, image) in
+                               enumerate(zip(llcs, images))))
         # ======================================================================
         # counts = np.ma.masked_all(xy.shape[:-1])
         counts = np.array(counts)
@@ -869,7 +863,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         counts_med = np.ma.median(counts, 0)
         if flux_sort:
             # reorder star labels for descending brightness
-            brightness_order = seg_extended.sort(counts_med, descend=True)
+            brightness_order = seg_glb.sort(counts_med, descend=True)
             # bright to faint
             counts = counts[:, brightness_order]
             counts_med = counts_med[brightness_order]
@@ -884,9 +878,9 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
             # reorder everything
 
-            # print('relabel', old_labels, seg_extended.labels)
+            # print('relabel', old_labels, seg_glb.labels)
             # old_labels = brightness_order[ok] + 1
-            # seg_extended.relabel_many(old_labels, seg_extended.labels)
+            # seg_glb.relabel_many(old_labels, seg_glb.labels)
 
         # initialize tracker
         use_star = (σ_xy < required_positional_accuracy).all(1)
@@ -900,14 +894,15 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         use_labels = np.where(use_star)[0] + 1
 
         # init
-        tracker = cls(cxx, seg_extended, use_labels=use_labels,
+        tracker = cls(cxx, seg_glb, use_labels=use_labels,
                       bad_pixel_mask=mask)
         tracker.sigma_rvec = σ_xy
         tracker.clustering = clf
         # tracker.xy_off_min = xy_off_min
-        tracker.zero_point = zero_point
+        tracker.zero_point = seg_glb.zero_point
         # tracker.current_offset = xy_offsets[0]
-        tracker.current_start = (xy_offsets[0] - xy_off_min).round().astype(int)
+        tracker.current_start = \
+            (xy_offsets[0] - xy_offsets.min(0)).round().astype(int)
 
         # log
         if report is None:

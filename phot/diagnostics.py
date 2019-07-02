@@ -282,7 +282,7 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=True,
         ax.grid(True)
         ax.set_aspect('equal')
 
-    ax.figure.tight_layout()
+    # ax.figure.tight_layout() # triggers warning
     return ax.figure, axes
 
 
