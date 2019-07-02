@@ -8,11 +8,11 @@ import numpy as np
 from astropy.io.ascii import read
 from astropy.table import vstack
 
-from myio import read_file_line
+# from recipes.io import read_file_line
 
 # from tsa.tfr import TimeFrequencyRepresentation as TFR
 
-from ansi.str import banner
+# from ansi.str import banner
 
 
 # from decor import print_args
@@ -26,7 +26,8 @@ def read_data(filepath):
 
 
 def set_column_names(table):
-    namesline = next(filter(lambda l: l.startswith('name'), table.meta['comments']))
+    namesline = next(
+        filter(lambda l: l.startswith('name'), table.meta['comments']))
     namesline = namesline.strip('#').rstrip('*num_aper\n')
     cols1, _, rcols = namesline.partition('[')
     cols1 = cols1.replace('name/', '').split()
@@ -52,7 +53,9 @@ def as2Dfloat(table, colid):
     dtype = list(zip(a.dtype.names, (float,) * len(colnames)))
     return a.astype(dtype).view(float).reshape(len(table), -1)
 
+
 get_multiple_columns = as2Dfloat
+
 
 def get_target_name(header):
     matcher = re.compile(r'target\s+=\s+([\w\s]+)')
@@ -64,7 +67,6 @@ def read_list(filelist, bad=(), stack=True, keyed_on='target'):
     # Load data
     # path = Path('/media/Oceanus/UCT/Observing/TNO/data_20151108')
     # bad = ()  # 'run023_RXJ0325.log', 'run019_RXJ0325.log'
-
 
     Tables = defaultdict(list)
     for filepath in filelist:

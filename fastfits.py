@@ -33,8 +33,10 @@ def fetch_first_frame(filename):
 
 
 def fastheader(filename):
-    """Get header from fits file.  Much quicker than pyfits.getheader for large files.
-    Works with pathlib.Path objects."""
+    """
+    Get header from fits file.  Much quicker than pyfits.getheader for large
+    files. Works with pathlib.Path objects.
+    """
     with open(str(filename), 'rb') as fp:
         return pyfits.Header.fromfile(fp)
 
@@ -43,7 +45,8 @@ def fastheadkeys(filename, keys, defaults=()):
     header = quickheader(str(filename))
     if isinstance(keys, str):
         keys = keys,
-    return [header.get(k, d) for (k, d) in itt.zip_longest(keys, defaults, fillvalue=None)]
+    return [header.get(k, d) for (k, d) in itt.zip_longest(keys, defaults,
+                                                           fillvalue=None)]
 
 
 quickheader = fastheader
@@ -134,91 +137,6 @@ class FitsCube(object):
 
     def __len__(self):
         return len(self.data)
-
-    # @property
-    # def shape(self):
-    #     return self.data.shape
-
-    # @property
-    # def master_header(self):
-    #     from recipes.io.tracewarn import warning_traceback_on, warning_traceback_off
-    #     warning_traceback_on()
-    #     warnings.warning('master_header deprecated')
-    #     warning_traceback_off()
-    #     return self.header
-
-    # def __len__(self):
-    #     return self.shape[-1]
-    #
-    # def __getitem__(self, i):
-    #     """enable array-like indexing tricks"""
-    #     # TODO: handle tuple
-    #     if isinstance(i, (int, np.integer)):
-    #         if i < 0:
-    #             i += len(self)
-    #         return self._get_from_slice(slice(i, i + 1)).squeeze()
-    #
-    #     elif isinstance(i, (list, np.ndarray)):
-    #         return self._get_from_list(i)
-    #
-    #     elif isinstance(i, slice):
-    #         return self._get_from_slice(i)
-    #
-    #     else:
-    #         raise IndexError(
-    #             'Only integers, and (continuous) slices are valid indices. '
-    #             '(For now). Received: {}, {}'.format(type(i), i))
-    #
-    # def _get_from_slice(self, slice_):
-    #     """Retrieve frames from slice of data along 3rd axis"""
-    #     isize = self.image_start_bytes
-    #     istart = slice_.start or 0
-    #     istop = slice_.stop or len(self)
-    #     istep = slice_.step or 1
-    #     ispan = istop - istart
-    #     shape = ((istop - istart) // istep,) + self.ishape
-    #
-    #     if istop > len(self):
-    #         raise IndexError('index {} is out of bounds for axis 2 with size {}'
-    #                          ''.format(slice_, len(self)))
-    #
-    #     if slice_.step:
-    #         _buffer = BytesIO()
-    #         iframes = range(len(self))[slice_]  # extract frame numbers as sequence of integers
-    #         for j in iframes:
-    #             _start = self.data_start_bytes + j * isize
-    #             _buffer.write(self.filemap[_start:(_start + isize)])
-    #         _buffer.seek(0)
-    #         return self.bzero + np.ndarray(shape,
-    #                                        dtype=self.dtype,
-    #                                        buffer=_buffer.read()
-    #                                        ).astype(float)
-    #
-    #     start = self.data_start_bytes + isize * istart
-    #     end = start + isize * ispan
-    #
-    #     return self.bzero + np.ndarray(shape,
-    #                                    dtype=self.dtype,
-    #                                    buffer=self.filemap[start:end]
-    #                                    ).astype(float)
-    #
-    # def _get_from_list(self, list_or_array):
-    #     """Retrieve frames indicated by indices in list or array"""
-    #     isize = self.image_start_bytes
-    #     shape = (len(list_or_array),) + self.ishape
-    #     _buffer = BytesIO()
-    #     for j in list_or_array:
-    #         _start = self.data_start_bytes + j * isize
-    #         _buffer.write(self.filemap[_start:(_start + isize)])
-    #     _buffer.seek(0)
-    #     return self.bzero + np.ndarray(shape,
-    #                                    dtype=self.dtype,
-    #                                    buffer=_buffer.read()
-    #                                    ).astype(float)
-    #
-    # def __iter__(self):
-    #     for i in range(len(self)):
-    #         yield self[i]
 
     def __getstate__(self):
         # capture what is normally pickled

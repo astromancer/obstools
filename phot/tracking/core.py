@@ -2,33 +2,470 @@
 Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
-# import inspect
-import functools
-import itertools as itt
-import warnings
+# std libs
+from typing import Any
 
-import more_itertools as mit
-import numpy as np
-from astropy.stats import median_absolute_deviation as mad
-
-from recipes.dict import ListLike, AttrReadItem
-from recipes.logging import LoggingMixin
-from recipes.string import get_module_name
-from scipy import ndimage
-from scipy.spatial.distance import cdist
+from IPython import embed
 
 import logging
+import functools as ftl
+import itertools as itt
+import multiprocessing as mp
 
-from obstools.phot.segmentation import SegmentationHelper, \
-    SegmentationGridHelper, make_border_mask, detect_loop
+# third-party libs
+import numpy as np
+from scipy import ndimage
+from scipy.spatial.distance import cdist
+from astropy.stats import median_absolute_deviation as mad
+
+# local libs
+from recipes.logging import LoggingMixin
+from recipes.introspection.utils import get_module_name
+from obstools.phot.utils import LabelGroupsMixin
+from obstools.phot.segmentation import (SegmentationHelper,
+                                        SegmentationGridHelper,
+                                        make_border_mask,
+                                        merge_segmentations, select_rect_pad)
+from obstools.stats import geometric_median
+
+from scipy.cluster.vq import kmeans
+from scipy.spatial.distance import cdist
+from sklearn.cluster import DBSCAN
+from sklearn.preprocessing import StandardScaler
+from astropy.utils import lazyproperty
+
+from recipes.dict import AttrReadItem
+from recipes.parallel.synced import SyncedCounter, SyncedArray
+
+import more_itertools as mit
+
+# from obstools.phot.utils import id_stars_dbscan, group_features
 
 # from IPython import embed
 
+# TODO: CameraTrackingModel / CameraOffset / CameraPosition
 
-#
+# TODO: filter across frames for better shift determination ???
+# TODO: wavelet sharpen / lucky imaging for better relative positions
+from sklearn.cluster import OPTICS
+from scipy.stats import mode
+
+# TODO
+#  simulate how different centre measures performs for stars with decreasing snr
+#  super resolution images
+#  lucky imaging ?
+
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
+
+TABLE_STYLE = dict(txt='bold', bg='g')
+
+
+class GlobalSegmentation(SegmentationHelper):
+
+    def __init__(self, data, use_zero=False):
+        super().__init__(data, use_zero)
+
+    def get_start_indices(self, xy_offsets):
+        return np.abs((xy_offsets + self.zero_point).round().astype(int))
+
+    def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
+        sub = self.select_subset(llc, image.shape)
+        return sub.flux(image, labels, labels_bg, bg_stat)
+
+    def sort(self, measure, descend=False):
+        if len(measure) != self.nlabels:
+            raise ValueError('nope')
+
+        o = slice(None, None, -1) if descend else ...
+        order = np.ma.argsort(measure, endwith=False)[o]
+        self.relabel_many(order + 1, self.labels)
+        return order
+
+
+def id_stars_kmeans(images, segmentations):
+    # TODO: method of tracker ????
+
+    # combine segmentation for sample images into global segmentation
+    # this gives better overall detection probability and yields more accurate
+    # optimization results
+
+    # this function also uses kmeans clustering to id stars within the overall
+    # constellation of stars across sample images.  This is fast but will
+    # mis-identify stars if the size of camera dither between frames is on the
+    # order of the distance between stars in the image.
+
+    coms = []
+    snr = []
+    for image, segm in zip(images, segmentations):
+        coms.append(segm.com_bg(image))
+        snr.append(segm.snr(image))
+
+    ni = len(images)
+    # use the mode of cardinality of sets of com measures
+    lengths = list(map(len, coms))
+    mode_value, counts = mode(lengths)
+    k, = mode_value
+    # nstars = list(map(len, coms))
+    # k = np.max(nstars)
+    features = np.concatenate(coms)
+
+    # rescale each feature dimension of the observation set by stddev across
+    # all observations
+    # whitened = whiten(features)
+
+    # fit
+    centroids, distortion = kmeans(features, k)  # centroids aka codebook
+    labels = cdist(centroids, features).argmin(0)
+
+    cx = np.ma.empty((ni, k, 2))
+    cx.mask = True
+    w = np.ma.empty((ni, k))
+    w.mask = True
+    indices = np.split(labels, np.cumsum(lengths[:-1]))
+    for ifr, ist in enumerate(indices):
+        cx[ifr, ist] = coms[ifr]
+        w[ifr, ist] = snr[ifr]
+
+    # shifts calculated as snr-weighted average
+    shifts = np.ma.average(cx - centroids, 1, np.dstack([w, w]))
+
+    return cx, centroids, np.asarray(shifts)
+
+
+def cluster_id_stars(clf, xy):
+    X = np.vstack(xy)
+    n = len(X)
+    logger.info('Grouping %i position measurements using:\n%s', n, clf)
+    clf.fit(X)
+
+    labels = clf.labels_
+    # core_samples_mask = (clf.labels_ != -1)
+    # core_sample_indices_, = np.where(core_samples_mask)
+
+    # Number of clusters in labels, ignoring noise if present.
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)
+    # n_per_label = np.bincount(db.labels_[core_sample_indices_])
+    logger.info('Identified %i stars using %i/%i points (%i noise)',
+                n_clusters, n - n_noise, n, n_noise)
+    return n_clusters, n_noise
+
+
+def id_stars_dbscan(xy, eps=0.1, min_samples=5):
+    # todo: make this a more general method ???
+
+    # stars_per_image = list(map(len, xy))
+    # no_detection = np.equal(stars_per_image, 0)
+    scaler = StandardScaler()
+    X = scaler.fit_transform(np.vstack(xy))
+
+    # DBSCAN clustering
+    db = DBSCAN(eps, min_samples)
+    logger.info('Grouping %i position measurements using:\n%s',
+                len(X), db)
+    db.fit(X)
+    core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
+    core_samples_mask[db.core_sample_indices_] = True
+    labels = db.labels_
+
+    # Number of clusters in labels, ignoring noise if present.
+    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
+    n_noise = list(labels).count(-1)
+    # n_per_label = np.bincount(db.labels_[db.core_sample_indices_])
+
+    return db, n_clusters, n_noise
+
+
+def plot_clusters(ax, clf, xy, cmap='Spectral'):
+    from matplotlib.cm import get_cmap
+
+    X = np.vstack(xy)
+    core_sample_indices_, = np.where(clf.labels_ != -1)
+    labels_xy = clf.labels_[core_sample_indices_]
+
+    # plot
+    cmap = get_cmap(cmap)
+    colors = cmap(np.linspace(0, 1, labels_xy.max() + 1))
+    c = colors[clf.labels_[core_sample_indices_]]
+
+    # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
+    ax.scatter(*X[core_sample_indices_].T, edgecolors=c,
+               facecolors='none')
+    ax.plot(*X[clf.labels_ == -1].T, 'kx', alpha=0.3)
+    ax.grid()
+
+
+def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
+    """
+    Measure the relative positions of detected stars from the individual
+    location measurements in xy
+
+    Parameters
+    ----------
+    xy:     array, shape (n_points, n_stars, 2)
+    d_cut:  float
+    detect_frac_min
+
+    Returns
+    -------
+
+    """
+    assert 0 < detect_frac_min < 1
+
+    n, n_stars, _ = xy.shape
+    nans = np.isnan(np.ma.getdata(xy))
+    bad = (nans | np.ma.getmask(xy)).any(-1)
+    ignore_frames = nans.all((1, 2))
+    n_ignore = ignore_frames.sum()
+    assert n_ignore < n
+    if n_ignore:
+        logger.info('Ignoring %i/%i (%.1f%%) nan values',
+                    n_ignore, n, (n_ignore / n) * 100)
+
+    # mask nans
+    xy = np.ma.MaskedArray(xy, nans)
+
+    # any measure of centrality for cluster centers is only a good estimator of
+    # the relative positions of stars when the camera offsets are taken into
+    # account.
+
+    # Due to camera/telescope drift, some stars (those near edges of the frame)
+    # may not be detected in many frames. Cluster centroids are not an accurate
+    # estimator of relative position for these stars. Only stars that are
+    # detected in most frames will be used to calculate camera xy_offset
+
+    n_use = n - n_ignore
+    n_detections_per_star = np.empty(n_stars, int)
+    w = np.where(~bad)[1]
+
+    n_detections_per_star[np.unique(w)] = np.bincount(w)
+    use_stars = (n_detections_per_star / n_use) > detect_frac_min
+    i_use, = np.where(use_stars)
+    if np.any(~use_stars):
+        logger.info(
+                'Ignoring %i/%i stars with low (<%.0f%%) detection fraction',
+                n_stars - len(i_use), n_stars, detect_frac_min * 100)
+
+    # first estimate of relative positions comes from unshifted cluster centers
+    # Compute cluster centres as geometric median
+    good = ~ignore_frames
+    xyc = xy[good][:, use_stars]
+
+    #
+    centres = np.ma.masked_all((n_stars, 2))
+    for i, j in enumerate(i_use):
+        centres[j] = geometric_median(xyc[:, i])
+
+    # ensure output same size as input
+    δxy = np.ma.masked_all((n, 2))
+    σxy = np.ma.masked_all((n_stars, 2))
+    centres[use_stars], σxy[use_stars], δxy[good], out = \
+        _measure_positions_offsets(xyc, centres[use_stars], d_cut)
+
+    # TODO: here we can actually compute centres of all stars with offsets
+    #  from best and brightest
+
+    # fix outlier indices
+    idxf, idxs = np.where(out)
+    idxg, = np.where(good)
+    idxu, = np.where(use_stars)
+    outlier_indices = (idxg[idxf], idxu[idxs])
+    xy[outlier_indices] = np.ma.masked
+
+    return xy, centres, σxy, δxy, outlier_indices
+
+
+def _measure_positions_offsets(xy, centres, d_cut=None):
+    # ensure we have at least some centres
+    assert not np.all(np.ma.getmask(centres))
+
+    n, n_stars, _ = xy.shape
+    n_points = n * n_stars
+
+    out = np.zeros(xy.shape[:-1], bool)
+    xym = np.ma.MaskedArray(xy, copy=True)
+
+    counter = itt.count()
+    while True:
+        count = next(counter)
+        if count >= 5:
+            raise Exception('Emergency stop')
+
+        # xy position offset in each frame
+        xy_offsets = (xym - centres).mean(1, keepdims=True)
+
+        # shifted cluster centers (all stars)
+        xy_shifted = xym - xy_offsets
+        # Compute cluster centres as geometric median of shifted clusters
+        centres = np.ma.empty((n_stars, 2))
+        for i in range(n_stars):
+            centres[i] = geometric_median(xy_shifted[:, i])
+
+        if d_cut is None:
+            return centres, xy_shifted.std(0), xy_offsets.squeeze(), out
+
+        # compute position residuals
+        cxr = xy - centres - xy_offsets
+        # flag outliers
+        d = np.sqrt((cxr * cxr).sum(-1))
+        out_new = (d > d_cut)
+        out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
+
+        changed = (out != out_new).any()
+        if changed:
+            out = out_new
+            xym[out] = np.ma.masked
+            n_out = out.sum()
+
+            if n_out / n_points > 0.5:
+                raise Exception('Too many outliers!!')
+
+            logger.info('Ignoring %i/%i (%.3f%%) values with |δr| > %.1f',
+                        n_out, n_points, (n_out / n_points) * 100, d_cut)
+        else:
+            break
+
+    return centres, xy_shifted.std(0), xy_offsets.squeeze(), out
+
+
+# def measure_positions_dbscan(xy):
+#     # DBSCAN clustering
+#     db, n_clusters, n_noise = id_stars_dbscan(xy)
+#     xy, = group_features(db, xy)
+#
+#     # Compute cluster centres as geometric median
+#     centres = np.empty((n_clusters, 2))
+#     for j in range(n_clusters):
+#         centres[j] = geometric_median(xy[:, j])
+#
+#     xy_offsets = (xy - centres).mean(1)
+#     xy_shifted = xy - xy_offsets[:, None]
+#     # position_residuals = xy_shifted - centres
+#     centres = xy_shifted.mean(0)
+#     σ_pos = xy_shifted.std(0)
+#     return centres, σ_pos, xy_offsets
+
+
+def group_features(classifier, *features):
+    """
+    Groups items from multiple data sets in features into classes based on the
+    cluster labels taken from `classifier`. Each data set is returned as a
+    masked array in which items from a certain class that are omitted in the
+    sequence are masked out. It is therefore assumed that items in each
+    data set are part of a ordered sequence.
+
+
+    Parameters
+    ----------
+    classifier
+    features
+
+    Returns
+    -------
+
+    """
+    labels = classifier.labels_
+    # core_samples_mask = np.zeros(len(labels), dtype=bool)
+    # core_samples_mask[classifier.core_sample_indices_] = True
+
+    unique_labels = list(set(labels))
+    if -1 in unique_labels:
+        unique_labels.pop(unique_labels.index(-1))
+    n_clusters = len(unique_labels)
+    n_samples = len(features[0])
+
+    items_per_frame = list(map(len, features[0]))
+    split_indices = np.cumsum(items_per_frame[:-1])
+    indices = np.split(labels, split_indices)
+
+    grouped = []
+    for f in next(zip(*features)):
+        shape = (n_samples, n_clusters)
+        if f.ndim > 1:
+            shape += (f.shape[-1],)
+
+        g = np.ma.empty(shape)
+        g.mask = True
+        grouped.append(g)
+
+    for i, j in enumerate(indices):
+        ok = (j != -1)
+        if ~ok.any():
+            # catches case in which f[i] is empty (eg. no object detections)
+            continue
+
+        for f, g in zip(features, grouped):
+            g[i, j[ok]] = f[i][ok, ...]
+
+    return tuple(grouped)
+
+
+def report_measurements(xy, centres, σ_xy, counts=None,
+                        detect_frac_min=None, logger=logger):
+    # report on relative position measurement
+    from recipes import pprint
+    from motley.table import Table, highlight
+
+    # TODO: probably mask nans....
+
+    #
+    n_points, n_stars, _ = xy.shape
+    n_points_tot = n_points * n_stars
+
+    if np.ma.is_masked(xy):
+        bad = xy.mask.any(-1)
+        good = np.logical_not(bad)
+        points_per_star = good.sum(0)
+        stars_per_image = good.sum(1)
+        n_noise = bad.sum()
+        no_detection, = np.where(np.equal(stars_per_image, 0))
+        if len(no_detection):
+            logger.info(f'No stars detected in frames: {no_detection!s}')
+
+        if n_noise:
+            extra = f'\nn_noise = {n_noise}/{n_points_tot} ' \
+                f'({n_noise / n_points_tot :.1%})'
+    else:
+        points_per_star = np.tile(n_points, n_stars)
+        extra = ''
+
+    f_detect = points_per_star / n_points
+    # f_detect
+
+    col_headers = ['n', 'n (%)', 'x (px.)', 'y (px.)']
+    # get array with number ± std representations
+    pos_tbl = pprint.uarray(centres, σ_xy, 2)[:, ::-1]
+    if detect_frac_min is not None:
+        f_detect = highlight(f_detect * 100, f_detect < detect_frac_min, 'y',
+                             precision=1, compact=False)
+
+    columns = [points_per_star[:, None],
+               f_detect,
+               pos_tbl, ]
+
+    fmt = {}
+    if counts is not None:
+        cn = 'counts (e⁻)'
+        fmt[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1)
+        columns.append(counts)  # pprint.numeric_array(counts, thousands=' ')
+        col_headers += [cn]
+
+    # tbl = np.ma.column_stack(columns)
+    tbl = Table.from_columns(*columns,
+                             title='Measured star locations',
+                             title_props=TABLE_STYLE,
+                             col_headers=col_headers,
+                             col_head_props=TABLE_STYLE,
+                             precision=0,
+                             align='r',
+                             number_rows=True,
+                             total=[0],
+                             formatters=fmt)
+
+    logger.info('\n' + str(tbl) + extra)
+    return tbl
 
 
 def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
@@ -114,54 +551,105 @@ class LabelUser(object):
         return [len(labels) for labels in self.values()]
 
 
-class Record(AttrReadItem, ListLike):
-    pass
+# class MaskUser(object):
+#     """Mixin class giving masks property"""
+#
+#     def __init__(self, groups=None):
+#         self._groups = None
+#         self.set_groups(groups)
+#
 
 
-class LabelGroups(Record):
-    """
-    Ordered dict with key access via attribute lookup. Also has some
-    list-like functionality: indexing by int and appending new data.
-    Best of both worlds.  Also makes sure labels are always arrays.
-    """
-    _auto_name_fmt = 'group%i'
+class SegmentationMasksHelper(SegmentationGridHelper, LabelGroupsMixin):
 
-    def _allow_item(self, item):
-        return bool(len(item))
+    def __init__(self, data, grid=None, domains=None, groups=None,
+                 **persistent_masks):
+        super().__init__(data, grid, domains)
 
-    def _convert_item(self, item):
-        return np.atleast_1d(item).astype(int)
+        LabelGroupsMixin.__init__(self, groups)
+        self._masks = None
+        self._persistent_masks = persistent_masks
 
-    @property
-    def sizes(self):
-        return list(map(len, self.values()))
-        # return [len(item) for item in self.values()]
+    def set_groups(self, groups):
+        LabelGroupsMixin.set_groups(self, groups)
+        del self.group_masks  #
 
-    # def inverse(self):
-    #     return {lbl: gid for gid, labels in self.items() for lbl in labels}
+    @lazyproperty
+    # making group_masks a lazyproperty means it will get reset auto-magically when
+    # the segmentation data changes
+    def group_masks(self):
+        return MaskContainer(self, self.groups, **self._persistent_masks)
 
 
-class LabelGroupsMixin(object):
-    """Mixin class for grouping and labelling image segments"""
+class MaskContainer(AttrReadItem):
+    def __init__(self, seg, groups, **persistent):
+        assert isinstance(groups, dict)  # else __getitem__ will fail
+        super().__init__(persistent)
+        self.persistent = np.array(list(persistent.values()))
+        self.segm = seg
+        self.groups = groups
 
-    def __init__(self, groups=None):
-        self._groups = LabelGroups(groups)
+    def __getitem__(self, name):
+        if name in self:
+            return super().__getitem__(name)
+        elif name in self.groups:
+            # compute the mask of this group on demand
+            mask = self[name] = self.of_group(name)
+            return mask
+        raise KeyError(name)
 
-    @property
-    def groups(self):
-        return self._groups
+    @lazyproperty
+    def all(self):
+        return self.segm.to_bool()
 
-    # todo
-    # def remove_group()
+    def for_phot(self, labels=None, ignore_labels=None):
+        """
+        Select sub-regions of the image that will be used for photometry
+        """
+        labels = self.segm.resolve_labels(labels)
+        # np.setdiff1d(labels, ignore_labels)
+        # indices = np.digitize(labels, self.segm.labels) - 1
+        kept_labels = np.setdiff1d(labels, ignore_labels)
+        indices = np.digitize(labels, kept_labels) - 1
+
+        m3d = self.segm.to_bool_3d(None, ignore_labels)
+        all_masked = m3d.any(0)
+        return all_masked & ~m3d[indices]
+
+    def prepare(self, labels=None, ignore_labels=None, sky_buffer=2,
+                sky_width=10, edge_cutoffs=None):
+        """
+        Select sub-regions of the image that will be used for photometry
+        """
+
+        # sky_regions = self.prepare_sky(labels, sky_buffer, sky_width,
+        #                                edge_cutoffs)
+        self['phot'] = masks_phot = self.for_phot(labels, ignore_labels)
+        self['sky'] = masks_phot.any(0)
+
+    def prepare_sky(self, labels, sky_buffer=2, sky_width=10,
+                    edge_cutoffs=None):
+        sky_regions = self.segm.to_annuli(sky_buffer, sky_width, labels)
+        if edge_cutoffs is not None:
+            edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
+            sky_regions &= ~edge_mask
+
+        return sky_regions
+
+    def of_group(self, g):
+        return self.segm.to_bool(self.groups[g])
 
 
-# TODO:
-# optionally keep track of distribution of CoM for each star
-# keep track of changes in relative positions, and switch off the update step when below threshold
-# once stability is reached, start photometry
+DETECTION_DEFAULTS = dict(snr=3.,
+                          npixels=7,
+                          edge_cutoffs=None,
+                          deblend=False,
+                          dilate=1)
+
+from obstools.phot.tracking.core import GlobalSegmentation
 
 
-class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
+class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     """
     A class to track stars in a CCD image frame to aid in doing time series
     photometry.
@@ -179,21 +667,33 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
     """
 
-    # TODO: groups.bad_pixels
-
     # TODO: bayesian version
     # TODO: make multiprocessing safe
 
     segmClass = SegmentationHelper
 
     # TODO: manage as properties ?
-    snr_weighting = True
-    snr_cut = 3
+    snr_weighting = False
+    snr_cut = 0
     _distance_cut = 10
     _saturation_cut = 95  # %
 
     # this allows tracking stars with low snr, but not computing their
     # centroids which will have larger scatter
+
+    # clustering algorithm for construction from ungrouped centroid measurements
+    clustering = None  # just a place holder for now
+
+    # todo: put default clustering algorithm here
+    # outlier removal
+    delta_r = 1  # pixels  # TODO: pass to initializer!!!
+
+    # maximal distance for individual location measurements from centre of
+    # distribution
+
+    # # minimum location measurements on individual stars before clustering is
+    # # triggered
+    # _min_measurements =
 
     # TODO:
     # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
@@ -230,38 +730,382 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         return obj, p0bg
 
     @classmethod
-    def from_cube_segment(cls, cube, ncomb, subset, nrand=None, mask=None,
-                          bgmodel=None, snr=(10., 3.), npixels=7,
-                          edge_cutoffs=None, deblend=False, dilate=1,
-                          flux_sort=True):
-
-        # select `ncomb`` frames randomly from `nrand` in the interval `subset`
-        if isinstance(subset, int):
-            subset = (0, subset)  # treat like a slice
-
-        i0, i1 = subset
-        if nrand is None:  # if not given, select from entire subset
-            nrand = i1 - i0
-        nfirst = min(nrand, i1 - i0)
-        ix = np.random.randint(i0, i0 + nfirst, ncomb)
-        # create ref image for init
-        image = np.median(cube[ix], 0)
-        cls.logger.info('Combined %i frames from amongst frames (%i->%i) for '
-                        'reference image.', ncomb, i0, i0 + nfirst)
-
-        # init the tracker
-        tracker, p0bg = SlotModeTracker.from_image(
-                image, mask, bgmodel, snr, npixels, edge_cutoffs, deblend,
-                dilate, flux_sort)
-        return tracker, image, p0bg
-
-    def __init__(self, coords, segm, label_groups=None, use_labels=None,
-                 bad_pixel_mask=None, edge_cutoffs=None, reference_index=0):
+    def from_images(cls, images, mask=None, required_positional_accuracy=0.5,
+                    centre_distance_max=1, f_detect_accept=0.5,
+                    post_merge_dilate=1, flux_sort=True,
+                    worker_pool=None, report=None, plot=False, **detect_kws):
         """
 
-        Object for tracking CCD camera movement by combining centroid positions
-        of all stars with good signal-to-noise.  Relative position of stars are
-        updated on each call based on new input data.
+        Parameters
+        ----------
+        images
+        mask
+        required_positional_accuracy
+        centre_distance_max
+        f_detect_accept
+        post_merge_dilate
+        flux_sort
+        worker_pool
+        report
+        plot
+        detect_kws
+
+        Returns
+        -------
+
+        """
+
+        from obstools.phot.segmentation import detect_measure
+
+        if worker_pool is None:
+            # create worker pool
+            raise NotImplementedError
+
+        from collections import Callable
+        if isinstance(plot, Callable):
+            display = plot
+            plot = True
+        else:
+            plot = bool(plot)
+
+            def display(*_):
+                pass
+
+        # detect stars (initial)
+        # TODO: detec_loop here ??
+        #  segs, groups, info, result, residual = zip(*worker_pool.starmap(
+        #          detect_loop, ((im, mask, snr, npixels, deblend, dilate,
+        #                         edge_cutoff, max_iter, bg_model, opt_kws)
+        #                        for i, im in enumerate(images))))
+
+        n, *ishape = images.shape
+        # detect sources, measure locations
+        # detect stars (initial)
+        _detect_measure = ftl.partial(detect_measure, **detect_kws)
+        segmentations, coms = zip(
+                *worker_pool.map(_detect_measure, images))
+
+        # clustering + relative position measurement
+        logger.info('Identifying stars')
+        clf = OPTICS(min_samples=int(f_detect_accept * n))
+        n_clusters, n_noise = cluster_id_stars(clf, coms)
+        xy, = group_features(clf, coms)
+
+        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if plot:
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(12.5, 2.25))
+            plot_clusters(ax, clf, xy, )
+            ax.set(**dict(zip(map('{}lim'.format, 'yx'),
+                              tuple(zip((0, 0), ishape)))))
+            display(fig)
+
+        #
+        logger.info('Measuring relative positions')
+        _, centres, σ_xy, xy_offsets, outliers = \
+            measure_positions_offsets(xy, centre_distance_max, f_detect_accept)
+
+        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if plot:
+            # diagnostic for source location measurements
+            from obstools.phot.diagnostics import plot_position_measures
+
+            fig, axes = plot_position_measures(xy, centres, xy_offsets)
+            fig.suptitle('Position Measurements (CoM)', fontweight='bold')
+
+        # combine segmentation images
+        seg_extended = GlobalSegmentation(
+                merge_segmentations(segmentations, xy_offsets,
+                                    True,  # extend
+                                    f_detect_accept,
+                                    post_merge_dilate))
+
+        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if plot:
+            im = seg_extended.display()
+            im.ax.set_title('Global segmentation 0')
+            display(im.figure)
+
+        # zero point for tracker (slices of the extended frame) correspond
+        # to minimum offset
+        xy_off_min = xy_offsets.min(0)
+        zero_point = np.floor(xy_off_min)
+
+        # since the merge process re-labels the stars, we have to ensure the
+        # order of the labels correspond to the order of the clusters.
+        # Do this by taking the label of the pixel nearest measured centers
+        # removed masked points from coordinate measurement
+        cxx = np.ma.getdata(centres) - zero_point
+        indices = cxx.round().astype(int)
+        cluster_labels = seg_extended.data[tuple(indices.T)]
+        ok = (cluster_labels != 0)
+
+        # Measure fluxes here. bright objects near edges of the slot
+        # have lower detection probability and usually only partially
+        # detected merged segmentation usually more complete for these
+        # sources which leads to more accurate flux measurement and
+        # therefore better change of flagging bright partial sources for
+        # photon bleed
+        llcs = seg_extended.get_start_indices(xy_offsets, zero_point)
+
+        # ======================================================================
+        counts = worker_pool.map(
+                seg_extended.flux, ((image, ij0)
+                                    for i, (ij0, image) in
+                                    enumerate(zip(llcs, images))))
+        # ======================================================================
+        # counts = np.ma.masked_all(xy.shape[:-1])
+        counts = np.array(counts)
+
+        # ordering
+        counts_med = np.ma.median(counts, 0)
+        if flux_sort:
+            # reorder star labels for descending brightness
+            brightness_order = seg_extended.sort(counts_med, descend=True)
+            # bright to faint
+            counts = counts[:, brightness_order]
+            counts_med = counts_med[brightness_order]
+            xy = xy[:, brightness_order]
+            σ_xy = σ_xy[brightness_order]
+
+            # ensure we have the same number of stars as id'd by clustering
+            # (if not all detected sources accepted in `merge_segments`)
+            # if n_labels < n_clusters:
+            #     brightness_order = np.r_[brightness_order,
+            #                              np.arange(n_labels, n_clusters)]
+
+            # reorder everything
+
+            # print('relabel', old_labels, seg_extended.labels)
+            # old_labels = brightness_order[ok] + 1
+            # seg_extended.relabel_many(old_labels, seg_extended.labels)
+
+        # initialize tracker
+        use_star = (σ_xy < required_positional_accuracy).all(1)
+        use_star = np.ma.getdata(use_star) & ~np.ma.getmask(use_star)
+        if use_star.sum() < 2:
+            cls.logger.warning('Measured positions not accurate enough: σ_xy '
+                               '= %s > %f', σ_xy, required_positional_accuracy)
+            # TODO: continue until accurate enough!!!
+
+        # FIXME: should use bright stars / high snr here!!
+        use_labels = np.where(use_star)[0] + 1
+
+        # init
+        tracker = cls(cxx, seg_extended, use_labels=use_labels,
+                      bad_pixel_mask=mask)
+        tracker.sigma_rvec = σ_xy
+        tracker.clustering = clf
+        # tracker.xy_off_min = xy_off_min
+        tracker.zero_point = zero_point
+        # tracker.current_offset = xy_offsets[0]
+        tracker.current_start = (xy_offsets[0] - xy_off_min).round().astype(int)
+
+        # log
+        if report is None:
+            report = cls.logger.getEffectiveLevel() <= logging.INFO
+        if report:
+            tracker.report_measurements(xy, centres, σ_xy, counts_med,
+                                        f_detect_accept)
+
+        return tracker, xy, centres, xy_offsets, counts, counts_med
+
+    @classmethod
+    def from_measurements(cls, segmentations, xy, counts=None,
+                          merge_accept_frac=0.2, post_merge_dilate=1,
+                          required_positional_accuracy=0.5,
+                          detect_frac_min=0.9,
+                          bad_pixel_mask=None, report=None):
+        """
+        Initialize from set of segmentation images sampled across the data cube.
+
+        This method will construct a global segmentation image from which the
+        source tracker will be initialized.
+
+        TODO: describe position measurement  algorithm
+
+        Combine various image segmentations into single global image segmentation.
+        This works better than the single image deep segmentation for a number of
+        reasons:
+            * The background gradient is large towards the edges of the
+            image. Frame dither may therefore shift sources out of this region
+            and onto region with flatter background, thereby increase their
+            detectability.  This only really works if the maximal
+            positional movement of the telescope / camera is large enough to
+            move stars significantly away from the edges of the slot.
+            * The background level and structure may change throughout the run,
+            detection from multiple sample images across the cube improves overall
+            sensitivity.
+            * Influence of bad pixels on object detectability are smoothed out by
+            dither.
+
+
+
+        Returns
+        -------
+
+        """
+
+        # This method makes more sense when dealing with images that have
+        # strong vignetting towards edges than detecting on the mean image
+        # since background effects will skew detection statistics towards edges.
+
+        # clustering + relative position measurement
+        cls.logger.info('Identifying stars from position measurements')
+        db, n_clusters, n_noise = id_stars_dbscan(xy)
+        xy, = group_features(db, xy)
+
+        from motley.table import Table
+        cls.logger.info('Identified the following stars:\n%s',
+                        Table.from_columns(xy.mean(0)[::-1],
+                                           np.sum(~xy[..., 0].mask, 0),
+                                           title='Detected stars',
+                                           title_props=TABLE_STYLE,
+                                           col_headers=list('xyn'),
+                                           col_head_props=TABLE_STYLE,
+                                           number_rows=True, align='r'))
+
+        #
+        cls.logger.info('Measuring relative positions')
+        _, centres, σ_xy, xy_offsets, outliers = \
+            measure_positions_offsets(xy, cls.delta_r, detect_frac_min)
+        # TODO: use self.measure_positions_offsets ?!
+
+        # combine segmentation images
+        seg_extended = merge_segmentations(segmentations.astype(bool),
+                                           xy_offsets,
+                                           True,  # extend
+                                           merge_accept_frac,
+                                           0)  # post_merge_dilate
+
+        # zero point for tracker (slices of the extended frame) correspond to
+        # minimum offset
+        xy_off_min = xy_offsets.min(0)
+        zero_point = np.floor(xy_off_min)
+        # δ = zero_point - xy_off_min
+
+        # MEASURE FLUXES HERE. bright objects near edges of the slot
+        #  have lower detection probability and usually only partially detected
+        #  merged segmentation usually more complete for these sources which
+        #  leads to more accurate flux measurement and therefore better
+        #  change of flagging bright partial sources for photon bleed
+        llcs = get_start_indices(xy_offsets, zero_point)
+        for start in llcs:
+            select_rect_pad(seg_extended, )
+
+        # ordering
+        # if counts is not None:
+        #     # reorder everything bright to faint
+        #     counts, = group_features(db, counts)
+        #
+        #     # reorder star labels for descending brightness
+        #     counts_med = np.ma.median(counts, 0)
+        #     brightness_order = counts_med.argsort()[::-1]  # bright to faint
+        #
+        #     # reorder everything
+        #     xy = xy[:, brightness_order]
+        #     counts = counts[:, brightness_order]
+        #     counts_med = counts_med[brightness_order]
+        # else:
+        #     counts_med = None
+
+        # Make position measures relative to segmentation zero point
+        # xy_offsets_z = xy_offsets - zero_point
+
+        # xy -= zero_point
+        # centres -= zero_point
+        # xy_offsets += zero_point
+
+        # since the merge process re-labels the stars, we have to ensure the
+        # order of the labels correspond to the order of the clusters.
+        # Do this by taking the label of the pixel nearest measured centers
+        # removed masked points from coordinate measurement
+        cxx = centres - zero_point
+        if np.ma.is_masked(centres):
+            cxx = cxx[~centres.mask.any(-1)].data
+
+        indices = cxx.round().astype(int)
+        old_labels = seg_extended.data[tuple(indices.T)]
+
+        # it may happen that there are more labelled object in the merged
+        # SegmentationImage than where found by the clustering algorithm.
+        n_clusters = len(cxx)
+        if n_clusters < seg_extended.nlabels:
+            missing = np.setdiff1d(seg_extended.labels, old_labels)
+            old_labels = np.append(old_labels, missing)
+
+        # print('relabel', old_labels, seg_extended.labels)
+        seg_extended.relabel_many(old_labels, seg_extended.labels)
+
+        # initialize tracker
+        use_star = (σ_xy < required_positional_accuracy).all(1)
+        use_star = np.ma.getdata(use_star) & ~np.ma.getmask(use_star)
+        if use_star.sum() < 2:
+            cls.logger.warning('Measured positions not accurate enough: σ_xy '
+                               '= %s > %f', σ_xy, required_positional_accuracy)
+            # TODO: continue until accurate enough!!!
+
+        # FIXME: should use bright stars / high snr here!!
+        use_labels = np.where(use_star)[0] + 1
+
+        # init
+        tracker = cls(cxx, seg_extended, use_labels=use_labels,
+                      bad_pixel_mask=bad_pixel_mask)
+        tracker.sigma_rvec = σ_xy
+        tracker.clustering = db
+        # tracker.xy_off_min = xy_off_min
+        tracker.zero_point = zero_point
+        # tracker.current_offset = xy_offsets[0]
+        tracker.current_start = (xy_offsets[0] - xy_off_min).round().astype(int)
+
+        # log
+        if report is None:
+            report = cls.logger.getEffectiveLevel() <= logging.INFO
+        if report:
+            tracker.report_measurements(xy, centres, σ_xy, counts_med)
+
+        return tracker, xy, centres, xy_offsets, counts, counts_med
+
+    #
+    # @classmethod
+    # def from_cube_segment(cls, cube, ncomb, subset, nrand=None, mask=None,
+    #                       bgmodel=None, snr=(10., 3.), npixels=7,
+    #                       edge_cutoffs=None, deblend=False, dilate=1,
+    #                       flux_sort=True):
+    #
+    #     # select `ncomb`` frames randomly from `nrand` in the interval `subset`
+    #     if isinstance(subset, int):
+    #         subset = (0, subset)  # treat like a slice
+    #
+    #     i0, i1 = subset
+    #     if nrand is None:  # if not given, select from entire subset
+    #         nrand = i1 - i0
+    #     nfirst = min(nrand, i1 - i0)
+    #     ix = np.random.randint(i0, i0 + nfirst, ncomb)
+    #     # create ref image for init
+    #     image = np.median(cube[ix], 0)
+    #     cls.logger.info('Combined %i frames from amongst frames (%i->%i) for '
+    #                     'reference image.', ncomb, i0, i0 + nfirst)
+    #
+    #     # init the tracker
+    #     tracker, p0bg = SlotModeTracker.from_image(
+    #             image, mask, bgmodel, snr, npixels, edge_cutoffs, deblend,
+    #             dilate, flux_sort)
+    #     return tracker, image, p0bg
+
+    def __init__(self, coords, segm, label_groups=None, use_labels=None,
+                 reference_index=0, bad_pixel_mask=None, edge_cutoffs=3,
+                 background_estimator=np.ma.median, weights=None,
+                 update_rvec_every=100, update_weights_every=10,
+                 precision=0.25):
+        """
+        Class for tracking CCD camera movement by measuring location of stars in
+        images (by eg. centroid or projected geometric median)
+
+         positions of all stars with good signal-to-noise.
+
+        Relative position of stars are
+        updated on each call based on new input data. # fixme
 
 
         Parameters
@@ -284,49 +1128,123 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
         """
 
-        if isinstance(segm, SegmentationGridHelper):
+        # label include / exclude logic
+        LabelUser.__init__(self, use_labels)
+        LabelGroupsMixin.__init__(self, label_groups)
+
+        if isinstance(segm, SegmentationMasksHelper):
             # detecting the class of the SegmentationImage allows some
             # optimization by avoiding unnecessary recompute of lazyproperties.
             # Also allows custom subclasses of SegmentationGridHelper to be
             # used
             self.segm = segm
         else:
-            self.segm = SegmentationGridHelper(segm)
+            self.segm = SegmentationMasksHelper(segm,
+                                                groups=label_groups,
+                                                bad_pixels=bad_pixel_mask)
 
-        # original segmentation
-        self._original_data = self.segm.data
         # counter for incremental update
-        self.counter = itt.count(1)  # TODO: multiprocess!!!
+        self.counter = None
+        self.measurements = None
+        self.xy_offsets = None
 
         # pixel coordinates of reference position from which the shift will
-        # be measured
+        # be measured.
+
+        n_stars = len(coords)
         self.ir = int(reference_index)
         self.yx0 = coords[self.ir]
         self.rvec = coords - coords[self.ir]
-        # store zero and relative positions separately so we can update them
-        # independently
+        self.sigma_rvec = np.full(n_stars, np.inf)
+        self.precision = float(precision)
+        # store zero point and relative positions separately so we can update
+        # them independently
 
-        # init groups
-        LabelGroupsMixin.__init__(self, label_groups)
-        # FIXME: do you really need this
+        # algorithmic details
+        # self._measure_star_locations = self.segm.com_bg
+        self._update_rvec_every = int(update_rvec_every)
+        self._update_weights_every = int(update_weights_every)
 
-        # TODO: once you figure out how to use negative labels, these things can
-        # live inside the segmentation image.  also adapt_segments??
-        self.bad_pixel_mask = bad_pixel_mask
-        if edge_cutoffs is not None:
-            self.edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
-        else:
-            self.edge_mask = None
-        #
-        self.offset = [0, 0]
+        # background_estimator for location measurement
+        self.bg = background_estimator
+        self._weights = weights
+        # self.current_offset = np.zeros(2)
+        self.current_start = np.zeros(2, int)
+        # self.xy_off_min = None
+
+        self.edge_cutoffs = edge_cutoffs
+
+        # masks for photometry
+        # self.bad_pixel_mask = bad_pixel_mask
+
+        # if edge_cutoffs is not None:
+        #     self.edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
+        # else:
+        #     self.edge_mask = None
+
+        # extended masks
+        # self.masks = MaskContainer(self.segm, self.groups,
+        #                            bad_pixels=bad_pixel_mask)
 
         # label logic
         # if use_labels is None:
         #     # we want only to use the stars with high snr fro CoM tracking
 
-        LabelUser.__init__(self, use_labels)
-
     def __call__(self, image, mask=None):
+        return self.track(image, mask)
+
+    # @property
+    # def ngroups(self):
+    #     return len(self.groups)
+
+    # def _com_use_labels(self):
+    #     return self.segm.com(self, self.use_labels)
+
+    @property
+    def masks(self):  # extended masks
+        return self.segm.group_masks
+
+    # @property
+    # def nsegs(self):
+    #     return self.segm.nlabels
+
+    @property
+    def rcoo(self):  # todo rename coords / xy_coords
+        """
+        Reference coordinates (yx). Computed as initial coordinates + relative
+        coordinates to allow updating the relative positions upon call
+        """
+        return self.yx0 + self.rvec
+
+    @property
+    def rcoo_xy(self):  # todo rename coords_xy
+        """Reference coordinates (xy)"""
+        return self.rcoo[:, ::-1]
+
+    def run(self, data, indices=None, pool=None, njobs=mp.cpu_count(),
+            start_offset=None):
+        # run concurrently
+
+        if self.measurements is None:
+            raise Exception('Initialize memory first')
+
+        if indices is None:
+            indices = range(len(self.measurements))
+
+        self.counter = SyncedCounter()
+        self.sigma_rvec = SyncedArray(self.sigma_rvec)
+
+        if pool is None:
+            'create pool with njobs'
+            raise NotImplementedError
+
+        # TODO: initializer that sets the starting indices for each pickled
+        #  clone
+
+        pool.map(self.track_loop, ((i, data)
+                                   for i in mit.divide(indices, njobs)))
+
+    def track(self, index, image, mask=None):
         """
         Track the shift of the image frame from initial coordinates
 
@@ -340,53 +1258,378 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
         """
 
-        # more robust that individual CoM track.
-        # eg: cosmic rays:
-        # '/media/Oceanus/UCT/Observing/data/Feb_2015/MASTER_J0614-2725/20150225.001.fits' : 236
+        count = next(self.counter)
 
-        if not ((mask is None) or (self.bad_pixel_mask is None)):
-            mask |= self.bad_pixel_mask
-        else:
-            mask = self.bad_pixel_mask  # might be None
+        # TODO: use grid and add offset to grid when computing CoM.  Will be
+        #  vastly more efficient
+        yx = self.measure_star_locations(image, mask, self.current_start)
+        self.measurements[index] = yx
 
-        # calculate CoM
-        com = self.segm.com_bg(image, self.use_labels, mask)
         # weights
-        weights = self.get_weights(com)
-
-        # update relative positions from CoM measures
-        self.update_rvec(com)
-
-        # calculate median com shift using current best relative positions
-        # optionally using snr weighting scheme
         if self.snr_weighting or self.snr_cut:
-            weights = self.set_snr_weights(weights, image)
+            if (self._weights is None) or (count // self._update_weights_every):
+                self._weights = self.get_snr_weights(image)
+                # TODO: maybe aggregate weights and use mean ??
 
-        off = self.update_offset(com, weights)
+        # # update relative positions from CoM measures
+        # check here if measurements of cluster centres are good enough!
+        if ((count + 1) % self._update_rvec_every) == 0 and count > 0 and \
+                (self.sigma_rvec > self.precision).any():
+            self.logger.info('Measuring positions, offsets')
+            self.measure_positions_offsets(self.measurements[:(index + 1)])
+            off = self.xy_offsets[index]
+        else:
+            # calculate median frame shift using current best relative positions
+            # optionally using snr weighting scheme
+            # measurements wrt image, offsets wrt rcoo
+            off = self.compute_offset(yx, self._weights)
+            self.xy_offsets[index] = off
+
+        # TODO: detect if stars move off frame!!!
+
+        #
+        self.current_start = off.round().astype(int)
+
+        # if np.isnan(off).any():
+        #     raise Exception('PISS WIT')
+        #
+        # if np.ma.is_masked(off):
+        #     raise ValueError('OFFICIOUS TWAT-WAFFLE')
+        #
+        # if np.any(np.abs(off) > 20):
+        #     raise ValueError('FUCK STICKS')
+
+        # if np.any(np.abs(self.current_offset - off) > 1):
+        #     self.current_start = off.round().astype(int)
+        # print('OFFSET', off)
 
         # finally return the new coordinates
         return self.rcoo + off
 
-    # @property
-    # def ngroups(self):
-    #     return len(self.groups)
+    def track_loop(self, indices, data):
+        for i in indices:
+            self.track(i, data[i])
 
-    @property
-    def nsegs(self):
-        return self.segm.nlabels
+    def get_coords(self, i=None):
+        if i is None:
+            return self.rcoo[None] - self.xy_offsets[:, None]
+        return self.rcoo - self.xy_offsets[i]
 
-    @property
-    def rcoo(self):
+    def get_coord(self, i):
+        return self.rcoo - self.xy_offsets[i]
+
+    def get_coords_residual(self):
+        return self.measurements - self.rcoo - self.xy_offsets[:, None]
+
+    def init_mem(self, n, loc=None, clobber=False):
         """
-        Reference coordinates (yx). Computed as initial coordinates + relative
-        coordinates to allow updating the relative positions upon call
-        """
-        return self.yx0 + self.rvec
 
-    @property
-    def rcoo_xy(self):
-        """Reference coordinates (xy)"""
-        return self.rcoo[:, ::-1]
+        Parameters
+        ----------
+        n:
+            number of frames
+        loc
+        clobber
+
+        Returns
+        -------
+
+        """
+        from obstools.modelling.utils import load_memmap
+
+        if loc is None:
+            import tempfile
+            from pathlib import Path
+            loc = Path(tempfile.mkdtemp())
+
+        common = ('f', np.nan, clobber)
+        self.measurements = load_memmap(loc / 'coo.com',
+                                        (n, self.nlabels, 2),
+                                        *common)
+        self.xy_offsets = load_memmap(loc / 'coo.shift',
+                                      (n, 2),
+                                      *common)
+
+    def measure_star_locations(self, image, mask=None, start_indices=(0, 0)):
+        """
+        calculate measure of central tendency for the objects in the
+        segmentation image
+
+        Parameters
+        ----------
+        image
+        mask
+
+        Returns
+        -------
+
+        """
+        # more robust that individual CoM track.
+        # eg: cosmic rays:
+        # '/media/Oceanus/UCT/Observing/data/Feb_2015/
+        #  MASTER_J0614-2725/20150225.001.fits' : 23
+
+        if not ((mask is None) or (self.masks.bad_pixels is None)):
+            mask |= self.masks.bad_pixels
+        else:
+            mask = self.masks.bad_pixels  # may be None
+            if mask is None:
+                mask = False
+
+        # ensure correct type
+        start_indices = np.asanyarray(start_indices)
+        if np.ma.is_masked(start_indices):
+            raise ValueError('Start indices cannot be masked array')
+
+        if not start_indices.dtype.kind == 'i':
+            start_indices = start_indices.round().astype(int)
+
+        yx = self._measure_star_locations(image, mask, start_indices)
+
+        # check measurements
+        bad = np.any((yx < self.edge_cutoffs) |
+                     (yx > np.subtract(image.shape, self.edge_cutoffs)),
+                     1)
+        yx[bad] = np.nan  # FIXME: better to excise using mask!!
+
+        return yx
+
+    def _measure_star_locations(self, image, mask, start_indices):
+
+        seg = self.get_segments(start_indices, image.shape)
+        xy = SegmentationHelper(seg).com_bg(image, self.use_labels, mask, None)
+
+        # note this is ~2x faster than padding image and mask. can probably
+        #  be made even faster by using __slots__
+        # todo: check if using grid + offset then com is faster
+
+        # TODO: can do FLUX estimate here!!!
+
+        # TODO: filter bad values here ??
+
+        # self.check_measurement(xy)
+        # self.rcoo - tracker.zero_point < start[0]
+
+        # check values inside segment labels
+        # good = ~self.is_bad(com)
+        # self.coms[i, good] = com[good]
+
+        return xy  # + start_indices
+
+    # def check_measurement(self, xy):
+
+    def measure_positions_offsets(self, xy=None):
+        """
+        Measure the relative positions of stars, as well as the xy offset of
+        each image based on the set of measurements in `coms`
+
+        Parameters
+        ----------
+        xy
+
+        Returns
+        -------
+
+        """
+
+        # TODO: many different algorithms can be used here
+        # if i is not None:
+        #     i = len(self.measurements)
+
+        if xy is None:
+            xy = self.measurements
+
+        i = len(xy)
+        xym, centres, σ_pos, xy_offsets, out = \
+            measure_positions_offsets(xy, self.delta_r)
+        n_points = xy_offsets.mask.any(-1).sum()
+
+        # origin = np.floor(xy_offsets.min(0))
+
+        # self.zero_point
+        # note using the first non-masked point will avoid this compute
+        #  FIXME: account for difference between zero point and min off here...
+        # smallest offset as origin makes sense from global image perspective
+        # changing the zero_point means you have to update all offsets
+
+        # make the offsets relative to the global segmentation
+        yx0 = centres[self.ir]
+        δ = self.yx0 - yx0
+        self.xy_offsets[:i] = xy_offsets + δ
+        self.rvec = centres - yx0
+        self.sigma_rvec[:] = σ_pos
+
+        if (σ_pos < self.precision).all():
+            self.logger.info(
+                    'Required positional accuracy of %g achieved with %i '
+                    'measurements. Relative positions will not be updated '
+                    'further.', self.precision, n_points)
+
+        self.report_measurements(xym, centres, σ_pos)
+
+    def report_measurements(self, xy=None, centres=None, σ_xy=None,
+                            counts=None, detect_frac_min=None):
+
+        if xy is None:
+            nans = np.isnan(self.measurements)
+            good = ~nans.all((1, 2))
+            xy = self.measurements[good]
+
+        if centres is None:
+            centres = self.rcoo
+
+        if σ_xy is None:
+            σ_xy = self.sigma_rvec
+
+        return report_measurements(xy, centres, σ_xy, counts, detect_frac_min,
+                                   logger=self.logger)
+
+    def group_measurements(self, *measurement_sets):
+        return group_features(self.clustering, *measurement_sets)
+
+    def plot_position_measures(self):
+        from obstools.phot.diagnostics import plot_position_measures
+
+        return plot_position_measures(self.measurements, self.rcoo,
+                                      -self.xy_offsets)
+
+    # def _pad(self, image, start_indices, zero=0.):
+    #     # make a measurement of some property of image using the segments
+    #     # from the tracker. In general, image will be smaller than global
+    #     # segmentation, therefore first pad the image with zeros
+    #
+    #     stop_indices = start_indices + image.shape
+    #
+    #     istart = -np.min([start_indices, (0, 0)], 0)
+    #     istop = np.array([None, None])
+    #     thing = np.subtract(self.segm.shape, stop_indices)
+    #     l = thing < 0
+    #     istop[l] = thing[l]
+    #     islice = tuple(map(slice, istart, istop))
+    #
+    #     start_indices = np.clip(start_indices, 0, None)
+    #     stop_indices = np.clip(stop_indices, None, self.segm.shape)
+    #
+    #     section = tuple(map(slice, start_indices, stop_indices))
+    #     im = np.full(self.segm.shape, zero)
+    #     im[section] = image[islice]
+    #
+    #     return im
+
+    def prepare_image(self, image, start_indices):
+        """
+        Prepare a background image by masking stars, bad pixels and whatever
+        else
+
+        Parameters
+        ----------
+        image
+        start_indices
+
+        Returns
+        -------
+
+        """
+        mask = self.get_object_mask(start_indices, start_indices + image.shape)
+        return np.ma.MaskedArray(image, mask)
+
+    def get_object_mask(self, start, stop):
+        i0, j0 = start
+        i1, j1 = stop
+        return self.masks.all[i0:i1, j0:j1] | self.masks.bad_pixels
+
+    # def get_segments(self, start, stop):
+    #     i0, j0 = start
+    #     i1, j1 = stop
+    #     return self.segm.data[i0:i1, j0:j1]
+
+    def get_masks(self, start, shape):
+        phot_masks = select_rect_pad(self.segm, self.masks.phot, start, shape)
+        sky_mask = select_rect_pad(self.segm, self.masks.sky, start, shape)
+        bad_pix = self.masks.bad_pixels
+        return phot_masks | bad_pix, sky_mask | bad_pix
+
+    def get_segments(self, start, shape):
+        """
+        ensure that if the start indices implies that we are beyond the
+        limits of the global segmentation array, we return only overlapping data
+
+
+        Parameters
+        ----------
+        start
+        shape
+
+        Returns
+        -------
+
+        """
+        return self.select_overlap(self.segm.data, start, shape)
+
+    def flux_sort(self, fluxes):
+
+        n_labels = len(self.use_labels)
+        assert len(fluxes) == n_labels
+
+        # reorder star labels for descending brightness
+        brightness_order = fluxes.argsort()[::-1]  # bright to faint
+        new_order = np.arange(n_labels)
+        new_labels = new_order + 1
+
+        # re-label for ascending brightness
+        # new_labels = np.arange(1, len(self.use_labels) + 1)
+        self.segm.relabel_many(brightness_order + 1,
+                               new_labels)
+
+        self.ir = new_order[self.ir]
+        self.rvec[brightness_order] = self.rvec[new_order]
+        self.sigma_rvec[brightness_order] = self.sigma_rvec[new_order]
+        self.use_labels = new_labels
+
+        return brightness_order
+
+    # def offsets_to_indices(self, xy_offsets):
+
+    # def reset_counter(self):
+    #     self.count = 0
+
+    # def update_rvec(self):
+
+    # def measure_offset(self, com, weights):
+    #     pass
+
+    # def update_rvec_batch(self, coms=None):
+    #     #
+    #     # self._pre_batch = coms
+    #     # self._pre_batch_size = len(coms)
+    #
+    #     # TODO: many different algorithms can be used here
+    #
+    #     if coms is None:
+    #         coms = np.ma.MaskedArray(self.measurements,
+    #                                  np.isnan(self.measurements))
+    #
+    #     # cluster centroids
+    #     cen = coms.mean(0)
+    #     # mean frame shift measured from CoM
+    #     shifts = np.ma.average(coms - cen, 1, self._weights)
+    #     # since the above combines measurements, stddev is same for all stars
+    #     sigma_rvec = (coms[:, 0] - shifts).std(0)
+    #
+    #     rvec = cen - cen[self.ir]
+    #     self.rvec[self.use_labels - 1] = rvec
+    #     return rvec, sigma_rvec, shifts
+
+    # def centroids(self, image, mask=None):
+    #
+    #     if not ((mask is None) or (self.bad_pixel_mask is None)):
+    #         mask |= self.bad_pixel_mask
+    #     else:
+    #         mask = self.bad_pixel_mask  # may be None
+    #
+    #     # calculate CoM
+    #     com = self.segm.com_bg(image, self.use_labels, mask, self.bg)
+    #     return com
 
     def pprint(self):
         from motley.table import Table
@@ -394,7 +1637,7 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         # FIXME: not working
 
         # TODO: say what is being ignored
-
+        # TODO: include uncertainties
 
         # coo = [:, ::-1]  # , dtype='O')
         tbl = Table(self.rcoo_xy,
@@ -411,77 +1654,118 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         coo = self.rcoo
         return cdist(coo, coo)
 
-    def mask_segments(self, image, mask=None):
-        """
-        Prepare a background image by masking stars, bad pixels and whatever
-        else
-        """
-        # mask stars
-        imbg = self.segm.mask_segments(image)
-        if mask is not None:
-            imbg.mask |= mask
+    # def mask_segments(self, image, mask=None):  # todo prepare_background better
+    #     """
+    #     Prepare a background image by masking stars, bad pixels and whatever
+    #     else
+    #     """
+    #     # mask stars
+    #     imbg = self.segm.mask_segments(image)
+    #     if mask is not None:
+    #         imbg.mask |= mask
+    #
+    #     if self.masks.bad_pixels is not None:
+    #         imbg.mask |= self.masks.bad_pixels
+    #
+    #     return imbg
 
-        if self.bad_pixel_mask is not None:
-            imbg.mask |= self.bad_pixel_mask
+    # def prep_masks_phot(self, labels=None, edge_cutoffs=None, sky_buffer=2,
+    #                     sky_width=10):
+    #     """
+    #     Select sub-regions of the image that will be used for photometry
+    #     """
+    #     if labels is None:
+    #         labels = self.segm.labels
+    #         indices = np.arange(self.segm.nlabels)
+    #         # note `resolve_labels` only uses the labels in `use_labels`,
+    #         #  which is NOT what we want since we want all stars to be masked
+    #         #  not just those which are being used for tracking
+    #     else:
+    #         indices = np.digitize(labels, self.segm.labels) - 1
+    #
+    #     #
+    #     m3d = self.segm.to_bool_3d()
+    #     all_masked = m3d.any(0)
+    #
+    #     sky_regions = self.segm.to_annuli(sky_buffer, sky_width, labels)
+    #     if edge_cutoffs is not None:
+    #         edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
+    #         sky_regions &= ~edge_mask
+    #
+    #     phot_masks = all_masked & ~m3d[indices]
+    #     self.masks.phot, self.masks.sky = phot_masks, sky_regions
+    #     self.mask_all = all_masked
+    #     return phot_masks, sky_regions, all_masked
 
-        return imbg
+    # def mask_all_objects(self):
 
-    def prep_masks_phot(self, labels=None):
-        # NOTE: this is the only method that really uses the edge_mask...
+    # def _flux_estimate(self, image, ij):
+    #
+    #     seg.sum(image) - seg.median(image, [0]) * seg.areas
 
-        segm = self.segm
-        m3d = segm.to_bool_3d()
-        sky_mask = m3d.any(0)
-        if not self.bad_pixel_mask is None:
-            sky_mask |= self.bad_pixel_mask
-        if self.edge_mask is not None:
-            sky_mask |= self.edge_mask
+    # def flux_estimate_annuli(self, image, sky_buffer=2, sky_width=10):
+    #     sky_masks = self.segm.to_annuli(sky_buffer, sky_width)
+    #     # sky_masks &= ~self.streak_mask
 
-        labels = self.resolve_labels(labels)
-        indices = self.segm.index(labels)
+    def _flux_estimate_annuli(self, image, ij, edge_cutoffs=None):
 
-        phot_masks = sky_mask & ~m3d[indices]
-        return phot_masks, sky_mask
+        # add object segments to model
+        stop = ij + image.shape
+        slice2d = tuple(map(slice, ij, stop))
+        slice3d = (slice(None),) + slice2d
+        edge_mask = make_border_mask(image, edge_cutoffs)
+        sm = (self.masks.sky[slice3d] & ~(edge_mask | self.masks.bad_pixels))
 
-    def get_weights(self, com):
-        # use = self.use_labels - 1
-        # ign = self.ignore_labels - 1
-        weights = np.ones(len(self.use_labels))
+        n_stars = len(self.masks.sky)
+        flx_bg, npix_bg = np.empty((2, n_stars), int)
+        counts, npix = np.ma.MaskedArray(np.empty((2, n_stars), int), True)
+        for i, sky in enumerate(sm):
+            bg_pixels = image[sky]
+            flx_bg[i] = self.bg(bg_pixels)
+            npix_bg[i] = len(bg_pixels)
 
-        # flag outliers
-        bad = self.is_bad(com)
-        self.logger.debug('bad: %s', np.where(bad)[0])
-        weights[bad] = 0
-        # weights[use[bad]] = 0
-        return weights
+        # source counts
+        seg = SegmentationHelper(self.segm.data[slice2d])
+        indices = seg.labels - 1
+        counts[indices] = seg.counts(image)
+        npix[indices] = seg.counts(np.ones_like(image))
+        src = counts - flx_bg * npix
 
-    def set_snr_weights(self, weights, image):
+        return src, flx_bg, npix, npix_bg
+
+    # def get_weights(self, com):
+    #     #
+    #     weights = np.ones(len(self.use_labels))
+    #     # flag outliers
+    #     bad = self.is_bad(com)
+    #     self.logger.debug('bad: %s', np.where(bad)[0])
+    #     weights[bad] = 0
+    #     return weights
+
+    def get_snr_weights(self, image, i=None):
         # snr weighting scheme (for robustness)
 
-        # if weights is None:
-        # use = self.use_labels - 1
-        ix = np.where(weights != 0)[0]
-        lbl = ix + 1
-
-        weights[ix] = snr = self.segm.snr(image, lbl)
+        im = self._pad(image, self.current_start)
+        weights = snr = self.segm.snr(im, self.use_labels)
         # self.logger.debug('snr: %s', snr)
-        # self.logger.debug('weights: %s', weights)
 
         # ignore stars with low snr (their positions will still be tracked,
         # but not used to compute new positions)
         low_snr = snr < self.snr_cut
-        if low_snr.sum() == len(lbl):
-            self.logger.warning('SNR for all stars below cut: %s < %.1f',
+        if low_snr.sum() == len(snr):
+            self.logger.warning(('Frame %i: ' if i else '') +
+                                'SNR for all stars below cut: %s < %.1f',
                                 snr, self.snr_cut)
             low_snr = snr < snr.max()  # else we end up with nans
 
-        weights[ix[low_snr]] = 0
-
+        weights[low_snr] = 0
         self.logger.debug('weights: %s', weights)
 
         if np.all(weights == 0):
-            self.logger.warning('All weights are 0!')
-            weights += 1
+            raise ValueError('Could not determine weights for centrality '
+                             'measurement from image')
+            # self.logger.warning('Received zero weight vector. Setting to
+            # unity')
 
         return weights
 
@@ -519,11 +1803,11 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
         return lj | lm | lbad
 
-    def update_offset(self, coo, weights):
+    def compute_offset(self, xy, weights):
         """
-        Calculate the offset from the previous frame
+        Calculate the xy offset of coordinate `coo` from centre reference
 
-        Parameters
+        Parameters`
         ----------
         coo
         weights
@@ -533,44 +1817,30 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 
         """
         # shift calculated as snr weighted mean of individual CoM shifts
-
-        offset = np.ma.average(coo - self.rcoo, 0, weights)
-        self.logger.debug('offset: (%.2f, %.2f)', *offset)
-
-        # shift from previous frame
-        shift = offset - self.offset
-        ishift = np.round(shift).astype(int).data  # array not ma
-
-        # if frame has shifted by more than one pixel, update the segmentationImage
-        if np.abs(ishift).sum():  # any shift greater or equal one pixel
-            # shift the segmentation data
-            ioff = np.round(offset).astype(int).data
-            self.logger.debug('shifting to offset: (%i, %i)', *ioff)
-            # TODO: lock here
-            self.segm.data = ndimage.shift(self._original_data, ioff)
-
-            # update pixel offset from original
-            # self.offset = np.round(offset).astype(int).data # array not ma
-            self.offset = offset.data
-
+        xym = np.ma.MaskedArray(xy, np.isnan(xy))
+        δ = (self.rcoo[self.use_labels - 1] - xym)
+        offset = np.ma.average(δ, 0, weights)
+        # this offset already relative to the global segmentation
         return offset
 
-    def update_rvec(self, coo, weights=None):
+    def update_rvec_point(self, coo, weights=None):
+        # TODO: bayesian_update
         """"
         Incremental average of relative positions of stars (since they are
         considered static)
         """
         # see: https://math.stackexchange.com/questions/106700/incremental-averageing
         vec = coo - coo[self.ir]
-        n = next(self.counter)
+        n = self.count + 1
         if weights is not None:
             weights = (weights / weights.max() / n)[:, None]
         else:
             weights = 1. / n
 
-        inc = (vec - self.rvec) * weights
+        ix = self.use_labels - 1
+        inc = (vec - self.rvec[ix]) * weights
         self.logger.debug('rvec increment:\n%s', str(inc))
-        self.rvec += inc
+        self.rvec[ix] += inc
 
     # def get_shift(self, image):
     #     com = self.segm.com_bg(image)
@@ -599,8 +1869,7 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
             if len(too_faint):
                 self.logger.debug(msg, str(too_faint), 'faint')
 
-        ignore = functools.reduce(
-                np.union1d, (too_bright, too_close, too_faint))
+        ignore = ftl.reduce(np.union1d, (too_bright, too_close, too_faint))
         ix = np.setdiff1d(np.arange(len(self.yx0)), ignore)
         if len(ix) == 0:
             self.logger.warning('No suitable stars found for tracking!')
@@ -630,7 +1899,6 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
         b = np.any(np.abs(np.array(satpix)[:, None].T - self.coords) < 3, 0)
         w, = np.where(np.all(b, 1))
         return w
-
 
 # def get_streakmasks(self, image, flx_thresh=2.5e3, width=6):
 #     # Mask streaks
@@ -676,156 +1944,6 @@ class StarTracker(LabelUser, LabelGroupsMixin, LoggingMixin):
 #     # print('returning')
 #     return StarTracker.__call__(self, image)
 
-
-class SlotModeTracker(StarTracker):
-    snr_cut = 1.5
-
-    @classmethod
-    def from_image(cls, image, bgmodel=None, snr=3., npixels=7,
-                   edge_cutoffs=None,
-                   deblend=False, dilate=1, flux_sort=True, bad_pixel_mask=None,
-                   streak_threshold=1e3):
-        #
-        import slotmode
-
-        # get the bad pixel mask
-        if bad_pixel_mask is None:
-            bad_pixel_mask = slotmode.get_bad_pixel_mask(image)
-
-        # create edge mask for sky photometry
-        if edge_cutoffs is None:
-            edge_cutoffs = slotmode.get_edge_cutoffs(image)
-
-        # init parent class
-        tracker, p0bg = super(SlotModeTracker, cls).from_image(
-                image, bgmodel, snr, npixels, edge_cutoffs, deblend, dilate,
-                flux_sort, bad_pixel_mask)
-
-        # mask streaks
-        # tracker.bright = tracker.bright_star_labels(image)
-        # tracker.streaks = False
-        # tracker.streaks = tracker.get_streakmasks(
-        #         tracker.rcoo[tracker.bright - 1])
-        return tracker, p0bg
-
-    # def __call__(self, image, mask=None):
-    #
-    #     # mask = self.bad_pixel_mask | self.streaks
-    #     com = StarTracker.__call__(self, image, mask)
-    #     # return com
-    #
-    #     # update streak mask
-    #     # self.streaks = self.get_streakmasks(com[:len(self.bright)])
-    #     return com
-
-    def bright_star_labels(self, image, flx_thresh=1e3):
-        flx = self.segm.flux(image)
-        w, = np.where(flx > flx_thresh)
-        w = np.setdiff1d(w, self.ignore_labels)
-        coo = self.rcoo[w]
-        bsl = self.segm.data[tuple(coo.round(0).astype(int).T)]
-        return bsl
-
-    # def mask_segments(self, image, mask=None):
-    #     imbg = StarTracker.mask_segments(self, image, mask)
-    #     # imbg.mask |= self.streaks
-    #     return imbg
-
-    # def get_streakmasks(self, coo, width=6):
-    #     # Mask streaks
-    #
-    #     w = np.multiply(width / 2, [-1, 1])
-    #     strkRng = coo[:, None, 1] + w
-    #     strkSlc = map(slice, *strkRng.round(0).astype(int).T)
-    #
-    #     strkMask = np.zeros(self.segm.data.shape, bool)
-    #     for sl in strkSlc:
-    #         strkMask[:, sl] = True
-    #
-    #     return strkMask
-
-    # return grid, data arrays
-    # return [(np.where(m), image[m]) for m in reg]
-
-    # def get_edgemask(self, xlow=0, xhi=None, ylow=0, yhi=None):
-    #     """Edge mask"""
-    #     # can create by checking derivative of vignette model
-    #     # return
-
-    #     def add_streakmasks(self, image, flx_thresh=2.5e3, width=6):
-
-    #         strkMask = self.get_streakmasks(image, flx_thresh, width)
-    #         labelled, nobj = ndimage.label(strkMask)
-    #         novr = strkMask & (self.segm.data != 0) # non-overlapping streaks
-    #         labelled[novr] = 0
-
-    #         streak_labels = self.segm.add_segments(labelled)
-    #         self.ignore_labels = np.union1d(self.ignore_labels, streak_labels)
-    #         return streak_labels
-
-    # def refine(self, image, bgmodel=None, use_edge_mask=True, snr=3., npixels=6,
-    #            edge_cutoff=0, deblend=False, flux_sort=False, dilate=1):
-    #     # mask bad pixels / stars for bg fit
-    #     # TODO: combine use_edge_mask with edge_cutoff
-    #     # TODO: incorporate in from_image method??
-    #
-    #     # mask stars, streaks, bad pix
-    #     imm = self.segm.mask_segments(image)  # stars masked
-    #     # starmask = imm.mask.copy()
-    #     use_edge_mask = use_edge_mask and self.edge_mask is not None
-    #     if self.bad_pixel_mask is not None:
-    #         imm.mask |= self.bad_pixel_mask
-    #     if use_edge_mask:
-    #         imm.mask |= self.edge_mask
-    #     # if self.streaks is not None:
-    #     #     imm.mask |= self.streaks
-    #
-    #     if bgmodel:
-    #         # fit background
-    #         results = bgmodel.fit(np.ma.array(imm, mask=self.streaks))  # = (ry, rx)
-    #         # input image with background model subtracted
-    #         im_bgs = bgmodel.residuals(results, image)
-    #
-    #         # do detection run without streak masks since there may be faint but
-    #         # detectable stars partly in the streaks
-    #         resi_sm = np.ma.array(im_bgs, mask=imm.mask)
-    #         # prepare frame: fill bright stars
-    #         resif = np.ma.filled(resi_sm, np.ma.median(resi_sm))
-    #     else:
-    #         resif = np.ma.filled(imm, np.ma.median(imm))
-    #         im_bgs = image
-    #
-    #     # detect faint stars
-    #     new_segm = SegmentationHelper.from_image(resif, snr, npixels,
-    #                                              edge_cutoff, deblend,
-    #                                              flux_sort, dilate)
-    #     # since we dilated the detection masks, we may now be overlapping with
-    #     # previous detections. Remove overlapping pixels here
-    #     if dilate:
-    #         overlap = new_segm.data.astype(bool) & self.segm.data.astype(bool)
-    #         new_segm.data[overlap] = 0
-    #
-    #     # remove detections with small areas:
-    #     # l = tracker.segm.areas[1:] < npixels
-    #
-    #     # add new detections
-    #     faint_labels = self.segm.add_segments(new_segm)
-    #     # calculate centroids of new detections
-    #     if len(faint_labels):
-    #         coords = self.segm.com_bg(im_bgs, mask=self.bad_pixel_mask)
-    #         # ignore the faint stars for subsequent frame shift calculations
-    #         self.ignore_labels = np.union1d(self.ignore_labels, faint_labels)
-    #
-    #         # update coords
-    #         self.yx0 = coords[self.ir]
-    #         self.rvec = coords - self.yx0
-    #
-    #         # set bg model
-    #         self.bgmodel = bgmodel
-    #
-    #         return faint_labels, results, im_bgs
-    #     else:
-    #         return faint_labels, None, image
 
 # from graphical.imagine import FitsCubeDisplay
 # from matplotlib.widgets import CheckButtons

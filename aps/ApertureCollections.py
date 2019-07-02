@@ -1,5 +1,5 @@
 # TODO: UPDATE ALL DOCSTRINGS (once stable)
-# TODO: unittests
+# TODO: unit tests
 
 import re
 from copy import copy
@@ -108,10 +108,9 @@ def pick_handler(artist, event):
 #     return anyhit, props
 
 
-
-
 class KeywordTranslator(TransDict):
     """Dictionary for translating keywords"""
+
     def __call__(self, dic=None, **kws):
         """translate keywords"""
         dic = dic or {}
@@ -159,7 +158,7 @@ class PropertyManager(dict):
     translator.add_vocab(dict(coords='offsets',
                               ls='linestyle',
                               lw='linewidth',
-                              w='width',        # TODO: a, b, theta, θ
+                              w='width',  # TODO: a, b, theta, θ
                               h='height',
                               r='radii'))
     # many to one mappings
@@ -171,17 +170,16 @@ class PropertyManager(dict):
     # property convertion
     # Convert properties to arrays - easier this way to concatenate!
     converter = PropertyConverter(
-        color=lambda val: rgba_array(as_sequence(val)),
-        offsets=np.atleast_2d,
-        radii=np.atleast_1d,
-        widths=np.atleast_1d,
-        heights=np.atleast_1d,
-        angles=np.atleast_1d, )
+            color=lambda val: rgba_array(as_sequence(val)),
+            offsets=np.atleast_2d,
+            radii=np.atleast_1d,
+            widths=np.atleast_1d,
+            heights=np.atleast_1d,
+            angles=np.atleast_1d, )
 
     # Add equivalence mapping that maps *colour -> *color
     converter.add_map(
-        lambda key: ''.join(re.search('(colo)u?(r)', key).groups()))
-
+            lambda key: ''.join(re.search('(colo)u?(r)', key).groups()))
 
     # @expose.args( pre='%'*100, post = '\\'*100 )
     def __init__(self, defaults=None, **kws):
@@ -206,7 +204,6 @@ class PropertyManager(dict):
         dict.__init__(self, **new)
 
     # def set(self, key, value):
-
 
     # @classmethod
     # # @expose.args( pre='*'*100, post = '_'*100 )
@@ -254,7 +251,7 @@ class PropertyManager(dict):
     #         print()
     #         return current
 
-            # ===============================================================================================
+    # ===============================================================================================
 
 
 def stacker(*arrays):
@@ -331,7 +328,6 @@ class ApertureCollection(EllipseCollection):
         if off.size == 0:
             self._restore_ec = _properties['edgecolor'].copy()
             _properties['edgecolor'][:] = 0
-
 
         # NOTE:  for some bizarre reason the width / height passed to EllipseCollection
         # are divided by 2 when self._width / self._height are set. We therefore
@@ -486,18 +482,17 @@ class ApertureCollection(EllipseCollection):
             # specify all the properties to overwrite, or figure out a rule of how to slice the
             # original properties when appending.
 
-
             # print( '\n ORIGINAL PROPS' )
             # print( self._properties._original )
             # print( '\n INCOMING PROPS' )
             # print( props )
             # print()
 
+            props = self._properties(self._properties._original,
+                                     broadcast=False, **props)
 
-
-            props = self._properties(self._properties._original, broadcast=False, **props)
-
-            if not np.size(props.get('offsets', [])):  # 'coords'  #TODO: Manage as property to avoid this check
+            if not np.size(props.get('offsets',
+                                     [])):  # 'coords'  #TODO: Manage as property to avoid this check
                 return
 
         return props
@@ -526,7 +521,7 @@ class ApertureCollection(EllipseCollection):
         for key, val in props.items():
             if (not key in oprops) \
                     or (not np.array_equal(oprops[key], props[
-                        key])):  # `np.array_equal` here flags the empty properties as being unequal to the new ones, whereas `np.all` evaluates as True under the same conditions
+                key])):  # `np.array_equal` here flags the empty properties as being unequal to the new ones, whereas `np.all` evaluates as True under the same conditions
                 new = concatenate(self[key], val)
 
                 # print( '8'*88 )
@@ -542,8 +537,6 @@ class ApertureCollection(EllipseCollection):
                 # embed()
                 # pyqtRestoreInputHook()
 
-
-
                 # OR:
 
     # def remove(self, idx=None):
@@ -553,22 +546,21 @@ class ApertureCollection(EllipseCollection):
     #         # self.radii = np.delete(self.radii, idx, axis=0)
     #     else:
     #         self.coords = []
-            # self.radii = []
+    # self.radii = []
 
+    # def within_allowed_range(self, r):
+    ##self.allowed_range
+    # return True
 
-            # def within_allowed_range(self, r):
-            ##self.allowed_range
-            # return True
+    # def resize(self, relative_motion, idx=..., ):
+    ##print( 'RESIZING!', relative_motion )
+    # if not relative_motion is None:
+    # rnew = self.radii
+    # rnew[idx] += relative_motion
+    # if not self.within_allowed_range( rnew ):
+    # return
 
-            # def resize(self, relative_motion, idx=..., ):
-            ##print( 'RESIZING!', relative_motion )
-            # if not relative_motion is None:
-            # rnew = self.radii
-            # rnew[idx] += relative_motion
-            # if not self.within_allowed_range( rnew ):
-            # return
-
-            # self.radii = rnew                   #remember this is a property
+    # self.radii = rnew                   #remember this is a property
 
     def area(self, idx=...):
         """
@@ -679,7 +671,8 @@ class ApertureCollection(EllipseCollection):
             names = np.arange(len(self)).astype(str)
 
         if len(names) != len(self):
-            raise ValueError('Inadequate name specs', names, 'for %i Apertures' % len(self))
+            raise ValueError('Inadequate name specs', names,
+                             'for %i Apertures' % len(self))
 
         if self._axes is None:
             raise Exception('First add the Collection to an axes')
@@ -695,7 +688,8 @@ class ApertureCollection(EllipseCollection):
             offset = offset * (np.cos(angle), np.sin(angle))
 
         self.annotations = [self._axes.annotate(name, coo, off, **kws)
-                            for coo, off, name in zip(self.coords, self.coords + offset, names)]
+                            for coo, off, name in
+                            zip(self.coords, self.coords + offset, names)]
 
         # ==============================================================================================
         # def numbering(self, TF): #convenience method for toggling number display?
@@ -711,11 +705,10 @@ def duplicate(off):
     # duplicate the coordinates
     return np.swapaxes([off, off], 0, 1).reshape((-1, 2))
 
-class SkyApsPropMan(PropertyManager):
 
+class SkyApsPropMan(PropertyManager):
     converter = PropertyManager.converter.copy()
     converter['offsets'] = duplicate
-
 
     # def __init__(self, defaults=None, **kws):
     #     PropertyManager.__init__(self, defaults, **kws)
@@ -738,7 +731,6 @@ class SkyApertures(ApertureCollection):
     PropertyManager = SkyApsPropMan
 
     # def set_widths(self):
-
 
     #
     #
@@ -780,6 +772,8 @@ class SkyApertures(ApertureCollection):
     #
     # def set_visible(self, v):
     #     self.methodcaller('set_visible', v)
+
+
 #
 #
 #
@@ -851,18 +845,18 @@ class SkyApertures(ApertureCollection):
 #
 #         return lc
 
-        # class Test(object):
-        # def connect(name):
-        # def _decorator(func):
-        # print( name, func )
-        # def trivial_wrapper( self, *args ):
-        # func( self, *args )
-        # return trivial_wrapper
-        # return _decorator
+# class Test(object):
+# def connect(name):
+# def _decorator(func):
+# print( name, func )
+# def trivial_wrapper( self, *args ):
+# func( self, *args )
+# return trivial_wrapper
+# return _decorator
 
-        # @connect( 'something' )
-        # def bar( self, *args ) :
-        # print( "normal call:", args )
+# @connect( 'something' )
+# def bar( self, *args ) :
+# print( "normal call:", args )
 
 
 #################################################################################################################################################################################################################
@@ -907,10 +901,6 @@ class ApLineCollection(LineCollection):
         # self.aplines.set_transform( self.line_transform )              #necessary becasue update_from kills the transform
 
 
-
-
-
-
 ######################################################################################################
 class SameSizeMixin():
     SAME_SIZE_AXIS = 0  # axis of the aperture radii along which values are to be set equal
@@ -930,7 +920,8 @@ class SameSizeMixin():
         x = self.SAME_SIZE_AXIS
         ix = [...] * len(index)
         ix[x] = index[x]
-        return tuple(ix)  # tuple(ix if i==aps.AXIS else ... for i,ix in enumerate(index))
+        return tuple(
+            ix)  # tuple(ix if i==aps.AXIS else ... for i,ix in enumerate(index))
 
     # @unhookPyQt
     def resize(self, relative_motion, idx=...):
@@ -939,7 +930,8 @@ class SameSizeMixin():
         # embed()
         # Resize all apertures along the AXIS with linked radii
         super().resize(relative_motion,
-                       self.samesize(idx))  # NOTE: does not enforce the same size, only same relative increment
+                       self.samesize(
+                           idx))  # NOTE: does not enforce the same size, only same relative increment
         # self.samesize()
 
     # @expose.args()
@@ -956,7 +948,8 @@ class SameSizeMixin():
 
         x = self.SAME_SIZE_AXIS
         # radii = np.array(radii, ndmin=x+1)
-        ix = list(np.zeros((radii.ndim, 1), int))  # use zeroth radius for all radii
+        ix = list(
+            np.zeros((radii.ndim, 1), int))  # use zeroth radius for all radii
         ix[x] = ...
         radii[...] = radii[ix]
         super().set_radii(radii)
@@ -1014,7 +1007,8 @@ class InteractionMixin():
 
         print('super().__init__', kws)
 
-        self.badcolour = kws.pop('badcolour', rgba_array('y'))  # FIXME:  This will cause errors eventually.
+        self.badcolour = kws.pop('badcolour', rgba_array(
+            'y'))  # FIXME:  This will cause errors eventually.
 
         super().__init__(broadcast=True, **kws)
 
@@ -1022,8 +1016,6 @@ class InteractionMixin():
 
         # if self.size and check:
         # self.auto_colour( check=check )
-
-
 
         # 'badcolour' :       BAD_COLOUR,
 
@@ -1066,7 +1058,6 @@ class InteractionMixin():
             # the original.  To make this work for variable shape appending, one will need to
             # specify all the properties to overwrite, or figure out a rule of how to slice the
             # original properties when appending.
-
 
             print('\n ORIGINAL PROPS')
             print(self._properties._original)
@@ -1116,7 +1107,8 @@ class InteractionMixin():
 
         # FIXME: SMELLY CODE!!!!!!!!!!!!
         if not self.size:
-            concatenate = lambda o, a: a  # HACK! if the Collection was initialized as empty, set the new properties as current
+            concatenate = lambda o, a: a
+            # HACK! if the Collection was initialized as empty, set the new properties as current
         else:
             concatenate = PropertyManager.concatenate
 
@@ -1211,7 +1203,8 @@ class InteractionMixin():
         rshape = self.radii.shape + (1,)
         r = self.radii.reshape(*rshape)  # reshapes radii for arithmetic
         # try:
-        coords = self.coords.reshape(*cshape)  # reshapes coords for arithmetic       # RESHAPING IN THE GETTER????
+        coords = self.coords.reshape(
+            *cshape)  # reshapes coords for arithmetic       # RESHAPING IN THE GETTER????
         # except:
         # print('\n'*2, 'check_edge fail', '\n'*2 )
         # embed()
@@ -1228,7 +1221,8 @@ class InteractionMixin():
         check = kws.get('check')
         edge = kws.get('edge')
         cross = kws.get('cross')
-        if check == 'all':        check = 1
+        if check == 'all':
+            check = 1
 
         lc = np.zeros(len(self), bool)
         if not (check or edge or cross):

@@ -1,26 +1,31 @@
-import ctypes
-# from pprint import pprint
+# std libs
+import time
 import operator
-import warnings
-from collections import defaultdict, MutableMapping, OrderedDict
-from pathlib import Path
 import itertools as itt
+from pathlib import Path
+from collections import defaultdict, MutableMapping, OrderedDict
 
+# third-party libs
 import numpy as np
-from IPython import embed
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
-from recipes.dict import AttrDict
-from recipes.list import tally
-# from recipes.array import neighbours
-from recipes.logging import LoggingMixin
-from recipes.string import seq_repr_trunc
-from scipy.optimize import leastsq
 
-from ..core import Model, UnconvergedOptimization #, CompoundModel
+# local libs
+from recipes.list import tally
+from recipes.logging import LoggingMixin
+from recipes.dict import Record, AttrDict
+from graphical.imagine import VideoDisplay
+
+# relative libs
 from ..parameters import Parameters
-from ..utils import make_shared_mem, int2tup
-from ...phot.tracking import LabelGroupsMixin  # LabelUser
+from ...phot.utils import LabelGroupsMixin
+from ..utils import load_memmap, int2tup
+from ..core import Model, UnconvergedOptimization
 from ...phot.segmentation import SegmentationGridHelper
+
+
+# from pprint import pprint
+
+# from recipes.array import neighbours
 
 
 # from IPython import embed
@@ -30,6 +35,11 @@ from ...phot.segmentation import SegmentationGridHelper
 # TODO: option to fit centres or use Centroids
 # idea: detect stars that share windows and fit simultaneously
 
+
+# def agro(dtypes, labels):
+#     if len(dtypes):
+#         dtypes.append((g, dtype, ()))
+#
 
 class ModelContainer(OrderedDict, LoggingMixin):
 
@@ -82,7 +92,7 @@ class ModelContainer(OrderedDict, LoggingMixin):
             self.logger.info('Renaming %i models', len(unames))
             new_names = []
             for name, indices in tally(names).items():
-                fmt = '%s_{:i}' % name
+                fmt = '%s{:d}' % name
                 new_names.extend(
                         map(fmt.format, range(len(indices))))
             names = new_names
@@ -93,29 +103,54 @@ class ModelContainer(OrderedDict, LoggingMixin):
             model.name = name
 
 
-
-
-
-from recipes.dict import Record
-
-
 class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
     """
 
+    # TODO: inherit from CompoundModel ???
+
     # TODO: refactor to use list of Segments  ListOfSegments from
-    # self.segm.segments / self.segmentation.segments
+    #  self.segm.segments / self.segmentation.segments
+    #  to keep up with recent photutils dev...
 
     # TODO: mask_policy.  filter / set error to inf
 
     # self.bg = bg  # TODO: many models - combinations of psf + bg models
 
+    # FIXME: implement group stuff in different class HierarchicalImageModel
+    # LayeredImageModel
+
     # use record arrays for fit results (structured parameters)
     use_record = False
     use_params = True
 
-    def __init__(self, segm, models=(), label_groups=None):
+    # @classmethod
+    # def from_image(cls, image, snr=3, npixels=5, edge_cutoff=None,
+    #                deblend=False, dilate=1):
+    #     """
+    #     Basic constructor that initializes the model from an image. The
+    #     base version here runs a detection algorithm to separate foreground
+    #     objects and background, but doesn't actually include any physically
+    #     useful models. Subclasses can overwrite this method to add useful
+    #     models to the segments."""
+    #
+    #     seg = SegmentationGridHelper.detect(image, False, None, snr, npixels,
+    #                                         edge_cutoff, deblend)
+    #     return cls(seg), seg
+
+    def detect(self, image, mask=False, background=None, snr=3., npixels=7,
+               edge_cutoff=None, deblend=False, dilate=0):
+        """
+        Object detection to update segmentation image.
+        """
+
+        new = self.segm.detect(image, mask, background, snr, npixels,
+                               edge_cutoff, deblend, dilate)
+        # add new detections to model ??
+        return new
+
+    def __init__(self, segm, models=()):  # , label_groups=None
         """
 
         Parameters
@@ -137,54 +172,18 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             same model will be used for multiple segments.
         """
 
-        if isinstance(segm, SegmentationGridHelper):
-            # detecting the class of the SegmentationImage allows some
-            # optimization by avoiding unnecessary recompute of lazyproperties.
-            # Also allows custom subclasses of SegmentationGridHelper to be
-            # used
-            self.segm = segm
-        else:
-            try:
-                self.segm = SegmentationGridHelper(segm)
-            except Exception as err:
-                from IPython import embed
-                import traceback, textwrap
-                header = textwrap.dedent(
-                    """\
-                    Caught the following %s:
-                    ------ Traceback ------
-                    %s
-                    -----------------------
-                    Exception will be re-raised upon exiting this embedded interpreter.
-                    """) % (err.__class__.__name__, traceback.format_exc())
-                embed(header=header)
-                raise
-
-
-        #
-        if isinstance(models, Model):
-            models = [models]
-
-        n_models = len(models)
-        if not isinstance(models, MutableMapping):
-            if n_models not in (0, self.segm.nlabels):
-                raise ValueError("Mapping from segments to models is not "
-                                 "1-to-1 ")
-            models = dict(zip(self.segm.labels, models))
-        else:
-            self.segm.check_labels(models.keys())
-
-        # probably check the labels in the groups
-
+        # init segments
+        self.set_segments(segm)
         # init container
-        self.models = ModelContainer(models)
+        self.set_models(models)
 
         # optional unique names for parameter construction
         self._names = None
 
-        # optional named groups
-        LabelGroupsMixin.__init__(self, label_groups)
-        self.groups.info = Record()
+        # probably check the labels in the groups
+        # # optional named groups
+        # LabelGroupsMixin.__init__(self, label_groups)
+        # self.groups.info = Record()
 
     # def __reduce__(self):
     #     # helper method for unpickling.
@@ -205,16 +204,45 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
     def nlabels(self):
         return self.segm.nlabels
 
-    @property
-    def ngroups(self):
-        return len(self.groups)
+    # @property
+    # def ngroups(self):
+    #     return len(self.groups)
 
     @property
     def nmodels(self):
         """number of segments with models"""
         return len(self.models)
 
-    def add_model(self, model, labels, group=None):
+    def set_models(self, models):
+        #
+        if isinstance(models, Model):
+            models = [models]
+
+        n_models = len(models)
+        if not isinstance(models, MutableMapping):
+            if n_models not in (0, self.segm.nlabels):
+                raise ValueError("Mapping from segments to models is not "
+                                 "1-to-1")
+            models = dict(zip(self.segm.labels, models))
+        else:
+            self.segm.check_labels(list(models.keys()))
+
+        # init container
+        self.models = ModelContainer(models)
+
+    def set_segments(self, seg):
+        if isinstance(seg, SegmentationGridHelper):
+            # detecting the class of the SegmentationImage allows some
+            # optimization by avoiding unnecessary recompute of lazyproperties.
+            # Also allows custom subclasses of SegmentationGridHelper to be
+            # used
+            self.segm = seg
+            # TODO: figure out if you can do this inside init of
+            #  SegmentationHelper
+        else:
+            self.segm = SegmentationGridHelper(seg)
+
+    def add_model(self, model, labels):  # group=None
         """
 
         Parameters
@@ -237,10 +265,10 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             self.models[lbl] = model
             # one model may be used for many labels
 
-        if group is not None:
-            group_labels = self.groups.get(group, ())
-            group_labels = np.hstack([group_labels, labels])
-            self.groups[group] = group_labels
+        # if group is not None:
+        #     group_labels = self.groups.get(group, ())
+        #     group_labels = np.hstack([group_labels, labels])
+        #     self.groups[group] = group_labels
 
         self._names = None
 
@@ -251,71 +279,42 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
     #     else:
     #         return self._dtype
 
-    def models_to_labels(self):
+    def models_to_labels(self, labels=None):
         """Mapping from models to labels"""
         #  Inverse of `self.models`
+
+        if labels is None:
+            labels = self.models.keys()
+        else:
+            labels_valid = set(self.models.keys())
+            labels_invalid = set(labels) - labels_valid  # maybe print these ???
+            labels = set(labels) - labels_invalid
+
         m2l = defaultdict(list)
-        for lbl, mdl in self.models.items():
-            m2l[mdl].append(lbl)
+        for lbl in labels:
+            m2l[self.models[lbl]].append(lbl)
         return m2l
 
     def names_to_models(self):
         return dict(zip(self.models.names, self.models.values()))
 
-    def get_dtype(self, labels=None, groups=None):
-        # build the structured np.dtype object for a particular model or
-        # group of models. default is to use the full set of models and groups
+    # def get_dtype(self, labels=None):
+    #     dtype, _ = self._get_dtype(labels, groups)
+    #     # TODO: you can probably use some clever trickery to make
+    #     #  return_labels and optional
+    #     return dtype
+
+    def get_dtype(self, labels=None):
+        # build the structured np.dtype object for a particular set of labels.
+        # default is to use the full set of models
 
         dtypes = []
+        for mdl, lbls in self.models_to_labels(labels).items():
+            dtype = self._adapt_dtype(mdl, len(lbls))
+            dtypes.append(dtype)
 
-        # TODO: use groups to make nested dtype
-        if groups is not None:
-            if isinstance(groups, str):
-                groups = groups,
-            for g in groups:
-                dtype = self.get_dtype(self.groups[g])
-                self.append((g, dtype, ()))
-        elif labels is None:
-            labels = list(self.models.keys())
+        return dtypes
 
-        labels = self.segm.resolve_labels(labels)
-        models = [self.models[_] for _ in labels]
-
-        result_keys = {}
-        # check if there are models that map to many segments
-        if len(set(models)) < len(models):
-            raise NotImplementedError
-            # these can be reshaped to a block by adapting dtype shape
-            for mdl, lbls in self.models_to_labels():
-                dtype = self._adapt_dtype(mdl, len(lbls))
-                dtypes.append(dtype)
-                result_keys.update({lbl: (self.names[lbl], i)
-                                    for i, lbl in enumerate(lbls)})
-                # WARNING: may require different iteration ???
-        else:
-            for lbl in labels:
-                model = self.models[lbl]
-                dt = self._adapt_dtype(model, ())
-                dtypes.append(dt)
-            return dtypes
-
-    # def get_dtype(self, models=None, groups=None):  # todo get from segments
-    #     # build the structured np.dtype object for a particular model or
-    #     # group of models. default is to use the full set of models an
-    #     if models is None:
-    #         models = self.models
-    #
-    #     if groups is None:
-    #         groups = self.groups
-    #
-    #     dtype = []
-    #     for i, mdl in enumerate(models):
-    #         g = groups.get(i, None)
-    #         nlabels = len(g) if g else ()
-    #         dt = self._adapt_dtype(mdl, nlabels)
-    #         dtype.append(dt)
-    #     return dtype
-    #
     def _adapt_dtype(self, model, out_shape):
         # adapt the dtype of a component model so that it can be used with
         # other dtypes in a (possibly nested) structured dtype. `out_shape`
@@ -323,7 +322,11 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
         # more than one segment to be represented by a 2D array.
 
         # make sure size in a tuple
-        out_shape = int2tup(out_shape)
+        if out_shape == 1:
+            out_shape = ()
+        else:
+            out_shape = int2tup(out_shape)
+
         dt = model.get_dtype()
         if len(dt) == 1:  # simple 1 component model
             name, base, dof = dt[0]
@@ -334,21 +337,14 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             # structured dtype - nest!
             return model.name, dt, out_shape
 
-    def _results_container(self, labels=None, groups=None, fill=np.nan,
+    def _results_container(self, labels=None, dtype=None, fill=np.nan,
                            shape=()):
         # create the container `np.recarray` for the result of an
         # optimization run on `models` in `groups`
 
-        # if (models, groups) == (None, None):
-        #     dtype = self.dtype
-        #     # FIXME: if the dof of the component models change after init,
-        #     # this will be wrong!!!
-        #
-        # else:
-        #     dtype = self.get_dtype(models, groups)
-
         # build model dtype
-        dtype = self.get_dtype(labels, groups)
+        if dtype is None:
+            dtype = self.get_dtype(labels)
 
         # create array
         out = np.full(shape, fill, dtype)
@@ -361,130 +357,6 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
 
         return out
 
-    # --------------------------------------------------------------------------
-    # detect stars over the background and update segmentation
-    # def detect(self, image, mask=False, background=None, snr=3., npixels=7,
-    #            edge_cutoff=None, deblend=False, dilate=0):
-    #     """
-    #     Image object detection that returns a SegmentationHelper instance
-    #
-    #     Parameters
-    #     ----------
-    #     image
-    #     mask
-    #     background
-    #     snr
-    #     npixels
-    #     edge_cutoff
-    #     deblend
-    #     dilate
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #
-    #     # segmentation based on sigma-clipping
-    #     obj = detect(image, mask, background, snr, npixels, edge_cutoff,
-    #                  deblend)
-    #
-    #     # Initialize
-    #     new = cls(obj.data)
-    #
-    #     #
-    #     if dilate:
-    #         new.dilate(iterations=dilate)
-    #     #
-    #     return new
-
-    # def detection_loop(self, image, mask=None, snr=(10, 7, 5, 3),
-    #                    npixels=(7, 5, 3), edge_cutoff=None,
-    #                    deblend=(True, False),
-    #                    dilate=(4, 1)):
-    #     """
-    #     Multi-threshold blob detection on minimized residual background for
-    #     modelled image
-    #     """
-    #
-    #     from recipes.string import seq_repr_trunc  # todo move to pprint
-    #     from obstools.phot.utils import iter_repeat_last
-    #     from obstools.phot.segmentation import SegmentationHelper
-    #
-    #     #
-    #     self.logger.info('Running detection loop')
-    #
-    #     # make iterables
-    #     variters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
-    #     vargen = zip(*variters)
-    #
-    #     # segmentation data
-    #     data = np.zeros(image.shape, int)  # for new segments only!
-    #     if mask is None:
-    #         mask = np.zeros(image.shape, bool)
-    #
-    #     # first round detection on raw data
-    #     residual = image
-    #     results = None
-    #     counter = itt.count(0)
-    #     while True:
-    #         # keep track of iteration number
-    #         count = next(counter)
-    #         group_name = 'stars%i' % count
-    #
-    #         # detect
-    #         # -----------------------------------------------------------------
-    #         _snr, _npix, _dil, _debl = next(vargen)
-    #         # or self.segm.__class__.detect
-    #         sh = SegmentationHelper.detect(residual, mask, None, _snr, _npix,
-    #                                        edge_cutoff, _debl, _dil)
-    #
-    #         # update mask, get new labels
-    #         new_mask = sh.to_bool()
-    #         new_data = new_mask & np.logical_not(mask)
-    #         mask = mask | new_mask
-    #
-    #         # since we dilated the detection masks, we may now be overlapping
-    #         # with previous detections. Remove overlapping pixels here
-    #         if dilate:
-    #             overlap = data.astype(bool) & new_mask
-    #             sh.data[overlap] = 0
-    #             new_data[overlap] = False
-    #
-    #         # aggregate
-    #         _, new_labels = self.segm.add_segments(sh)
-    #         # add new segments
-    #         data[new_data] = sh.data[new_data]
-    #         # todo: method here ??
-    #         # -----------------------------------------------------------------
-    #
-    #         # log what has been found
-    #         self.logger.info(
-    #                 'detect_loop: round %i: %i new detections: %s',
-    #                 count, len(new_labels), seq_repr_trunc(tuple(new_labels)))
-    #
-    #         # break the loop if there are no new detections
-    #         if not len(new_labels):
-    #             break
-    #
-    #         # add group info, detection meta data
-    #         self.groups[group_name] = new_labels
-    #         self.groups.info[group_name] = \
-    #             dict(snr=_snr, npixels=_npix, dilate=_dil, deblend=_debl)
-    #
-    #         if count == 1:
-    #             mimage = np.ma.MaskedArray(image, mask)
-    #             self.optimize_knots(mimage)
-    #
-    #         # fit background
-    #         results = self.fit(image)
-    #         residual = self.residuals(results, image)
-    #         #
-    #
-    #         # TODO: start at previous optimum
-    #
-    #     # TODO: log summary of what you found
-    #     return results, residual, data, mask
-
     # def evaluate(self, model, labels, mask=False, extract=False):
     #     # segmented = self.segm.coslice(self.segm.grid,
     #     #                               labels=labels, mask=mask, extract=extract)
@@ -492,33 +364,6 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
     #     for lbl in self.segm.resolve_labels(labels):
     #         grid = self.segm.coord_grids[lbl]
     # g = model.adapt_grid(grid)
-
-    # def fit(self, data, stddev=None, **kws):
-    #     """
-    #     Fit frame data by looping over segments and models
-    #
-    #     Parameters
-    #     ----------
-    #     data
-    #     std
-    #     mask
-    #     models
-    #     labels
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #
-    #     # loop over models and fit
-    #     results = self._results_container()
-    #
-    #     for i, model in enumerate(self.models):
-    #         labels = self.groups[i]
-    #         self._fit_model_sequential(model, data, stddev, labels,
-    #                                    results[model.name], **kws)
-    #
-    #     return results
 
     def fit(self, data, stddev=None, **kws):
         """
@@ -536,41 +381,49 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
         -------
 
         """
-
         return self.fit_sequential(data, stddev, **kws)
 
-    def fit_sequential(self, data, stddev=None, labels=None, **kws):
+    def fit_sequential(self, data, stddev=None, labels=None,
+                       reduce=False, **kws):
         """
         Fit data in the segments with labels.
         """
 
+        full_output = kws.pop('full_output', False)
         # full results container is returned with nans where not fit / not
         # converged
-
-        mask = kws.pop('mask', True)
-        flatten = kws.pop('flatten', False)
-        full_output = kws.pop('full_output', False)
         p0 = kws.pop('p0', None)
 
-        # resolve labels
-        all_labels = list(self.models.keys())
+        # if full_output:
+        #     labels = None
+
         if labels is None:
-            labels = all_labels
-        else:
-            labels = np.atleast_1d(labels).astype(int)
-            # TODO: segm.resolve_labels()
-            bad = np.setdiff1d(labels, all_labels)
-            if len(bad):
-                raise ValueError('Invalid labels: %s' % bad)
+            labels = list(self.models.keys())
 
         # output
         results = self._results_container(None if full_output else labels)
-        # labels
+        residuals = np.ma.getdata(data).copy() if reduce else None
 
+        self.fit_worker(data, stddev, labels, p0, results, residuals, **kws)
+
+        if reduce:
+            return results, residuals
+
+        return results
+
+    def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
         # iterator for data segments
-        subs = self.segm.coslice(data, stddev, labels=labels, masked_bg=mask,
-                                 flatten=flatten)
-        for label, (sub, std) in zip(labels, subs):
+        # subs = self.segm.coslice(data, stddev, labels=labels,
+        #                          masked_bg=mask_bg, flatten=flatten)
+
+        # get slices
+        slices = self.segm.get_slices(labels)
+        if data.ndim > 2:
+            slices = list(map((...,).__add__, slices))
+
+        #
+        reduce = residuals is not None
+        for label, slice_ in zip(labels, slices):
             model = self.models[label]
 
             # skip models with 0 free parameters
@@ -580,28 +433,47 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             if p0 is not None:
                 kws['p0'] = p0[model.name]
 
+            # select data
+            sub = np.ma.array(data[slice_])
+            sub[..., self.segm.masks[label]] = np.ma.masked
+            std = None if stddev is None else stddev[..., slice_]
+
             # get coordinate grid
             grid = self.segm.coord_grids[label]
+
+            # if flatten:
+            #     grid = grid.reshape(2, -1)
+
+            # print(sub.shape, grid.shape)
+
             # minimize
             # kws['jac'] = model.jacobian_wrss
             # kws['hess'] = model.hessian_wrss
+
+            #
             r = model.fit(sub, grid, std, **kws)
 
             if r is None:
-                raise UnconvergedOptimization(
-                        'Fit for segment %i (%r) did not converge'
-                        % (label, self.models[label]))
+                # TODO: optionally raise here based on cls.raise_on_failure
+                #  can do this by catching above and raising from.
+                #  raise_on_failure can also be function / Exception ??
+                msg = (f'{self.models[label]!r} fit to segment {label} '
+                       f'failed to converge.')
+                med = np.ma.median(sub)
+                if np.abs(med - 1) > 0.3:
+                    msg += '\nMaybe try median rescale? data median is %f' % med
+                raise UnconvergedOptimization(msg)
             else:
-                results[model.name] = r
+                # print(label, model.name, i)
+                result[model.name] = r.squeeze()
 
+                if reduce:
+                    # resi = model.residuals(r, np.ma.getdata(sub), grid)
+                    # print('reduce', residuals.shape, slice_, resi.shape)
+                    residuals[slice_] = model.residuals(r, np.ma.getdata(sub),
+                                                        grid)
 
-        return results
-        # if len(labels) > 1:
-        #     return results
-        # else:
-        #     return results.flattened
-
-    # def _fit_segment(self, data, label):
+        return r
 
     def minimized_residual(self, data, stddev=None, **kws):
         # loop over all models and all segments
@@ -646,6 +518,23 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
                 results[i] = r
 
         return results  # squeeze for models that only have one label
+
+    def animate(self, shape):
+        """
+        Animate the image model by stepping through the parameter values in
+        plist
+
+        Parameters
+        ----------
+        plist
+        image
+
+        Returns
+        -------
+
+        """
+
+        return ImageModelAnimation(self, shape)
 
     # def _fit_model_simul(self, model, data, std, labels, results, **kws):
 
@@ -810,6 +699,147 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
     #     return ix_bf, best_model, msg
 
 
+class HierarchicalImageModel(LabelGroupsMixin):  # CompoundModel ??
+
+    def __init__(self, segm, groups=None):
+        LabelGroupsMixin.__init__(groups)
+
+        self.groups.info = Record()
+
+        for grp, labels in groups.items():
+            SegmentedImageModel(segm, models)
+
+        @property
+        def ngroups(self):
+            return len(self.groups)
+
+    def add_model(self, model, group, labels):
+        """
+
+        Parameters
+        ----------
+        model:
+
+        labels: array-like
+            image segments for which the model will be used
+        group: str
+            the group to which this model segment belongs
+
+        Returns
+        -------
+
+        """
+
+        group_labels = self.groups.get(group, ())
+        group_labels = np.append(group_labels, labels)
+        self.groups[group] = group_labels
+
+        self._names = None
+
+    def groups_to_labels(self, labels):
+        _, groups = self.get_dtype(labels, all)
+        return groups
+
+    def get_dtype(self, groups=all, labels=None):
+        # if return_labels:
+        #     out = dtypes, out_lbl
+        # else:
+        #     out = dtypes
+        #
+        #     aggregate =
+        # else:
+        #     aggregate = dtypes.append
+
+        # if groups is None and labels is None:
+        #     groups = all
+
+        if labels is None:
+            if groups is all:
+                groups = self.groups.keys()
+        else:
+            groups = None
+
+        if groups is not None:
+            # use groups to make nested dtype
+            if isinstance(groups, str):
+                groups = groups,
+
+            for g in groups:
+                # recurse
+                dtype, lbls = self._get_dtype(self.groups[g])
+                if len(dtype):
+                    dtypes.append((g, dtype, ()))
+                    out_lbl[g] = lbls
+
+            return dtypes, out_lbl
+
+        # group structure not included in hierarchy:    i.e dtype not nested
+        for mdl, lbls in self.models_to_labels(labels).items():
+            dtype = self._adapt_dtype(mdl, len(lbls))
+            dtypes.append(dtype)
+            out_lbl[mdl.name] = lbls
+
+        return dtypes, out_lbl
+
+    # def fit(self):
+    # # resolve groups / labels
+    # resolve groups / labels
+    # group = kws.pop('group', None)
+    # if group:
+    #     groups = group,
+    # else:
+    #     groups = kws.pop('groups', None)
+
+    # if groups is None:
+    #     valid_labels = list(self.models.keys())
+    #     if labels is None:
+    #         labels = valid_labels
+    #         # not using `self.segm.resolve_labels` here since there may
+    #         # be labels that do not have a corresponding model
+    #     else:
+    #         labels = np.atleast_1d(labels).astype(int)
+    #         bad = np.setdiff1d(labels, valid_labels)
+    #         if len(bad):
+    #             raise ValueError('Invalid labels: %s' % bad)
+    #
+    #     groups = {...: labels}
+    # else:
+    #     groups = {g: self.groups[g] for g in groups}
+
+    # if groups is not None and len(groups) == 1 and labels is None:
+    #     labels = self.groups.get(groups[0])
+    #     # groups = {...: labels}
+    # else:
+
+    # dtype, groups = self.get_dtype(labels, groups)
+
+    # # model_counter = defaultdict(int)
+    # for grp, labels in groups.items():
+    #     # print(grp, labels)
+    #     if isinstance(labels, dict):  # nested
+    #         # print('fit_groups')
+    #         self.fit_groups(data, stddev, labels, p0,
+    #                         results[grp], residuals, **kws)
+    #     else:
+    #         # print('fit_inner')
+    #         self.fit_inner(data, stddev, labels, p0,
+    #                        results, residuals, **kws)
+    #
+    #     if reduce:
+    #         data = residuals
+
+    #
+    # if len(groups) == 1:
+    #     # de-nest
+    #     results = results[list(groups.keys())[0]]
+
+    # def fit_groups(self, data, stddev, groups, p0, out, residuals, **kws):
+    #
+    #     for grp, labels in groups.items():
+    #         # print(grp, labels)
+    #         self.fit_inner(data, stddev, labels, p0, out, residuals, **kws)
+
+
 class PSFModeller(SegmentedImageModel):
 
     # TODO: option to fit centres or use Centroids
@@ -895,9 +925,9 @@ class PSFModeller(SegmentedImageModel):
 #         # shape = (n, nfit, npars)
 #         # locPar = '%s.par' % model.name
 #         # locStd = '%s.std' % model.name
-#         # self.params = make_shared_mem(locPar, shape, 'f', np.nan, clobber)
+#         # self.params = load_memmap(locPar, shape, 'f', np.nan, clobber)
 #         # # standard deviation on parameters
-#         # self.params_std = make_shared_mem(locStd, shape, 'f', np.nan, clobber)
+#         # self.params_std = load_memmap(locStd, shape, 'f', np.nan, clobber)
 #
 #         # self.
 #         #
@@ -905,8 +935,8 @@ class PSFModeller(SegmentedImageModel):
 #         #     locFlx = folder / 'flx'
 #         #     locFlxStd = folder / 'flxStd'
 #         #     shape = (n, nfit)
-#         #     self.flux = make_shared_mem(locFlx, shape, np.nan)
-#         #     self.flux_std = make_shared_mem(locFlxStd, shape, np.nan)
+#         #     self.flux = load_memmap(locFlx, shape, np.nan)
+#         #     self.flux_std = load_memmap(locFlxStd, shape, np.nan)
 #         #     # NOTE: can also be computed post-facto
 #
 #     def save_params(self, i, j, p, pu):
@@ -935,8 +965,8 @@ class ModellingResultsMixin(object):
             loc = Path(tempfile.mkdtemp())
 
         self.loc = str(loc)
-        self.data = make_shared_mem(loc, shape, self.get_dtype(), np.nan,
-                                    clobber)
+        self.data = load_memmap(loc, shape, self.get_dtype(), np.nan,
+                                clobber)
         return self.data
 
         # for k, model in enumerate(self.models):
@@ -954,21 +984,21 @@ class ModellingResultsMixin(object):
         # if self.nmodels:
         #     locMetric = loc / 'GoF.dat'
         #     shape = (n, nfit, self.nmodels, len(self.metrics))
-        #     self.metricData = make_shared_mem(
+        #     self.metricData = load_memmap(
         #             locMetric, shape, 'f', np.nan, clobber)
         #
         #     # shared Data containers for best fit flux
         #     # columns:
         #     locBest = loc / 'bestIx.dat'
-        #     self.best.ix = make_shared_mem(
+        #     self.best.ix = load_memmap(
         #             locBest, (n, nfit), ctypes.c_int, -99, clobber)
         #
         #     # Data containers for best fit flux
         #     locFlx = loc / 'bestFlx.dat'
         #     # locFlxStd = loc / 'bestFlxStd.dat'
-        #     self.best.flux = make_shared_mem(
+        #     self.best.flux = load_memmap(
         #             locFlx, (n, nfit, 2), 'f', np.nan, clobber)
-        #     # self.best.flux_std = make_shared_mem(locFlxStd, (n, nfit), np.nan)
+        #     # self.best.flux_std = load_memmap(locFlxStd, (n, nfit), np.nan)
         #
         # return loc
 
@@ -1057,9 +1087,9 @@ class AperturesFromModel(LoggingMixin):
     #     return self._pars[:, -1]
 
     def init_mem(self, n, loc, clobber=False):
-        self.coords = make_shared_mem(loc, (n, 2), 'f', np.nan, clobber)
-        self.sigmaXY = make_shared_mem(loc, (n, 2), 'f', np.nan, clobber)
-        self.theta = make_shared_mem(loc, (n,), 'f', np.nan, clobber)
+        self.coords = load_memmap(loc, (n, 2), 'f', np.nan, clobber)
+        self.sigmaXY = load_memmap(loc, (n, 2), 'f', np.nan, clobber)
+        self.theta = load_memmap(loc, (n,), 'f', np.nan, clobber)
 
     def combine_results(self, models, p, pstd, cfunc=np.nanmedian, axis=(), ):
         # nan_policy=None):
@@ -1181,10 +1211,6 @@ class ImageModeller(SegmentedImageModel, ModellingResultsMixin):
         ModellingResultsMixin.__init__(self, save_residual)
 
 
-import time
-from graphical.imagine import VideoDisplay
-
-
 class ImageModelAnimation(VideoDisplay):
     """
     Visualise an image model by stepping through random parameter choices and
@@ -1198,12 +1224,13 @@ class ImageModelAnimation(VideoDisplay):
         super().__init__(np.zeros(shape), **kws)
         self.model = model
         self.pscale = float(pscale)
+        self.rng = np.random.randn
 
     def _scroll(self, event):
         pass  # scroll disabled
 
     def get_image_data(self, i):
-        p = np.random.randn(self.model.dof)  # * scale
+        p = self.rng(self.model.dof)  # * scale
         return self.model(p)
 
     def set_frame(self, i):

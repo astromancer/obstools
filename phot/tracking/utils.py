@@ -13,8 +13,8 @@ from photutils.detection import detect_threshold
 from photutils.segmentation import detect_sources
 
 
-def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_sort=True,
-                 return_index=False):
+def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False,
+                 flux_sort=True,                 return_index=False):
     # TODO: evolve a class that partitions the input frame spatially based on
     # window, and data value thresholds (upper and lower) as input for fitting
     # NOTE: Pretty damn slow.... can you generalize to higher dimension?
@@ -30,7 +30,8 @@ def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False, flux_so
         from photutils import deblend_sources
         segm = deblend_sources(data, segm, npixels)
 
-    found = np.array(CoM(data, segm.data, segm.labels))  # NOTE: yx coords (row, column)
+    found = np.array(CoM(data, segm.data, segm.labels))
+    # NOTE: yx coords (row, column)
     try:
         flux_est = detected_flux(data, segm)
     except:

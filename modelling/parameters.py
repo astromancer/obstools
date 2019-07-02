@@ -3,6 +3,7 @@ Classes for implementing prior probabilities in the context of Bayesian
 modelling and inference.
 """
 import functools
+import numbers
 
 import numpy as np
 from IPython import embed
@@ -49,14 +50,15 @@ def _walk_dtype_adapt(obj, new_base):
         yield new_base
 
 
-from recipes.pprint import numeric_repr
+from recipes import pprint
 
 
 def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
                   times='x', compact=True, unicode=True, latex=False,
                   engineering=False):
     assert len(params) == len(names)
-    s = np.vectorize(numeric_repr, ['U10'])(params, precision, switch, sign,
+    # FIXME: use recipes.pprint.numeric_array
+    s = np.vectorize(pprint.numeric, ['U10'])(params, precision, switch, sign,
                                             times, compact, unicode, latex,
                                             engineering)
     if uncert is not None:
@@ -111,14 +113,18 @@ class _RecurseHelper(object):
         if allow_types is any:
             return obj
 
-        print('allow types', allow_types)
+        # print('allow types', allow_types)
         if not isinstance(obj, allow_types):
             raise TypeError('%s type objects are not supported' % type(obj))
 
     @staticmethod
     def asscalar(key, val):
-        if val.size == 1:
-            return key, np.asscalar(val)
+        if isinstance(val, numbers.Real):
+            return key, val
+
+        if np.size(val) == 1:
+            return key, val.item()
+
         return key, val
 
     # def upper_walk(self, obj, container_out=list):
@@ -264,10 +270,17 @@ class Parameters(np.recarray):
         # hack so we don't end up with un-sized array containing single object
         item = super().__getattribute__(key)
         #
+
+        # note: the following block causes problems downstream when checking
+        #  the lengths of parameter sets.  It may however at some point be
+        #  useful when construction involves single named parameters. so:
+        # fixme: make optinal.  or make sure your downstream checks use
+        #  np.size
         if isinstance(item, np.ndarray):
             kls = super().__getattribute__('__class__')
             if not isinstance(item, kls) and (np.size(item) == 1):
                 return np.asscalar(item)
+
         # if not item.dtype.fields and (np.size(item) == 1):
         #     return np.asscalar(item)
         return item
@@ -312,8 +325,8 @@ class Parameters(np.recarray):
         if attr:
             dict_ = AttrReadItem
 
-        return dict_(_par_help.walk(self, _par_help.asscalar, flat,
-                                    container_out=dict_))
+        # _par_help.asscalar  #
+        return dict_(_par_help.walk(self, echo, flat, container_out=dict_))
 
     @property
     def flattened(self):
@@ -326,6 +339,11 @@ class Parameters(np.recarray):
         return self
         # TODO somehow, the view above does not seem to work if npar == size
         # TODO IS THIS A BUG??
+
+    def rescale(self, scale):
+        """Multiply by scale keeping nested structure"""
+        view = self.flattened
+        view *= scale
 
     @classmethod
     def from_shapes(cls, **shapes):

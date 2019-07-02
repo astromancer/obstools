@@ -15,8 +15,8 @@ from astropy.table import Table
 from astropy.coordinates import SkyCoord
 
 # local libs
-from obstools.utils import fmt_hms
-from recipes.string import get_module_name
+from recipes import pprint
+from recipes.introspection.utils import get_module_name
 
 
 # TODO: check coordinates are correct?  UPDATE WITH DATA FROM ALADIN?
@@ -289,8 +289,8 @@ class RKCat(object):  # TODO: inherit from Table??
         self.coords = coo = self.get_skycoord()
         fmt_kws = dict(precision=1, short=False)
         tbl['ra'], tbl['dec'] = coo.ra, coo.dec
-        tbl['ra'].format = functools.partial(fmt_hms, sep='ʰᵐˢ', **fmt_kws)
-        tbl['dec'].format = functools.partial(fmt_hms, sep='°’”', **fmt_kws)
+        tbl['ra'].format = functools.partial(pprint.hms, sep='ʰᵐˢ', **fmt_kws)
+        tbl['dec'].format = functools.partial(pprint.hms, sep='°’”', **fmt_kws)
 
     def _unflags_columns(self, names, pre_flags, post_flags):
         # regex matchers for numeric data columns (hard coded)

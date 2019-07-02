@@ -114,7 +114,8 @@ def config(logpath, q):
         'formatters': {
             'detailed': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(name)-15s %(levelname)-8s %(processName)-10s %(message)s'
+                'format': '%(asctime)s %(name)-15s %(levelname)-8s '
+                          '%(processName)-10s %(message)s'
             }
         },
         'handlers': {

@@ -13,12 +13,14 @@ from recipes.logging import LoggingMixin
 from recipes.dict import AttrReadItem, ListLike
 from recipes.list import tally
 
-from .utils import make_shared_mem, int2tup
+from .utils import load_memmap, int2tup
 from .parameters import Parameters
 
 
 def _sample_stat(data, statistic, sample_size, replace=True):
-    return statistic(np.random.choice(data, sample_size, replace))
+    return statistic(
+            np.random.choice(np.ma.compressed(data), sample_size, replace)
+    )
 
 
 def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
@@ -130,6 +132,13 @@ class Model(OptionallyNamed, LoggingMixin):
 
     # minimizer = minimize
 
+    # exception behaviour
+    raise_on_failure = False  # if minimize reports failure, should I raise?
+    # warnings for nans / inf
+    do_checks = True
+    # masked array handelling
+    compress_ma = None  # only if method == 'leastsq'
+
     def __call__(self, p, grid=None):
         raise NotImplementedError
 
@@ -142,9 +151,9 @@ class Model(OptionallyNamed, LoggingMixin):
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
 
-    def get_name(self):
-        # ensure lower case names
-        return super().get_name().lower()
+    # def get_name(self):
+    #     # ensure lower case names
+    #     return super().get_name().lower()
 
     def get_dtype(self):
         # todo: use p0guess to determine the dtype in pre_process?? / pre_fit
@@ -300,7 +309,22 @@ class Model(OptionallyNamed, LoggingMixin):
     def pre_process(self, p0, data, grid=None, stddev=None, *args, **kws):
         """This will be run prior to the minimization routine"""
 
-        if kws.get('method') == 'leastsq':
+        if p0 is None:
+            p0 = self.p0guess(data, grid)
+            self.logger.debug('p0 guess: %s', p0)
+        else:
+            p0 = np.asanyarray(p0)
+
+        # nested parameters: flatten prior to minimize, re-structure post-fit
+        # TODO: move to HandleParameters Mixin??
+        if isinstance(p0, Parameters):
+            p0 = p0.flattened
+
+        compress_ma = self.compress_ma
+        if compress_ma is None:
+            compress_ma = (kws.get('method') == 'leastsq')
+
+        if compress_ma:
             # remove masked data points
             if np.ma.is_masked(data):
                 use = ~data.mask
@@ -310,6 +334,9 @@ class Model(OptionallyNamed, LoggingMixin):
                 data = data.compressed()
 
         return p0, data, grid, stddev, args, kws
+
+    def post_process(self, p, *args, **kws):
+        return p
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         """
@@ -332,56 +359,57 @@ class Model(OptionallyNamed, LoggingMixin):
         if self.objective is None:
             self.objective = self.wrss  # fwrs for leastsq...
 
-        if p0 is None:
-            p0 = self.p0guess(data, grid)
-            self.logger.debug('p0 guess: %s', p0)
+        # check for nan / inf
+        if self.do_checks:
+            #  this may be slow for large arrays.
+            if np.isnan(data).any():
+                self.logger.warning('Your data contains nans.')
+            # check for inf
+            if np.isinf(data).any():
+                self.logger.warning('Your data contains non-finite elements.')
 
-        # nested parameters: flatten prior to minimize, re-structure post-fit
-        # TODO: move to HandleParameters Mixin??
-        type_, dtype = type(p0), p0.dtype
-        if isinstance(p0, Parameters):
-            p0 = p0.flattened
-
-        # check for nans
-        if np.isnan(data).any():
-            self.logger.warning('Your data contains nans.')
-        # check for inf
-        if np.isinf(data).any():
-            self.logger.warning('Your data contains non-finite elements.')
-
-        # # check for masked data
-        # if np.ma.is_masked(data):
-        #     self.logger.warning('Your data has masked elements.')
-
-        # minimization
-        p = self._fit(p0, data, grid, stddev=None, *args, **kws)
-
-        if p is not None:
-            # get back structured view if required
-            return p.view(dtype, type_)  # .squeeze()
-            # for some strange reason `result.x.view(dtype, type_)` ends up
-            # with higher dimensionality. weird. #TODO BUG REPORT??
-
-    def _fit(self, p0, data, grid, stddev=None, *args, **kws):
-        """Minimization worker"""
-
-        # pre-processing
-        p0, data, grid, stddev, args, kws = self.pre_process(
-                p0, data, grid, stddev, *args, **kws)
+            # # check for masked data
+            # if np.ma.is_masked(data):
+            #     self.logger.warning('Your data has masked elements.')
 
         # post-processing args
         post_args = kws.pop('post_args', ())
         post_kws = kws.pop('post_kws', {})
 
+        # pre-processing
+        p0, data, grid, stddev, args, kws = self.pre_process(
+                p0, data, grid, stddev, *args, **kws)
+
+        # TODO: move to HandleParameters Mixin??
+        type_, dtype = type(p0), p0.dtype
+
+        # minimization
+        p = self._fit(p0, data, grid, stddev=None, *args, **kws)
+
+        # post-processing
+        p = self.post_process(p, *post_args, **post_kws)
+
+        # TODO: move to HandleParameters Mixin??
+        if p is not None:
+            # get back structured view if required
+            # for some strange reason `result.x.view(dtype, type_)` ends up
+            # with higher dimensionality. weird. #TODO BUG REPORT??
+            return p.view(dtype, type_)
+
+    def _fit(self, p0, data, grid, stddev=None, *args, **kws):
+        """Minimization worker"""
+
         # infix so we can easily wrap least squares optimization within the same
         # method
         if kws.get('method') == 'leastsq':
             kws.pop('method')
+            #
             p, cov_p, info, msg, flag = leastsq(
                     self.fwrs, p0, (data, grid, stddev),
                     full_output=True,
                     **kws)
             success = (flag in [1, 2, 3, 4])
+            # print('RESULT:', p)
         else:
             # minimization
             result = minimize(self.objective, p0, (data, grid, stddev), *args,
@@ -398,17 +426,22 @@ class Model(OptionallyNamed, LoggingMixin):
             # TODO: maybe also warn if any close ?
             else:
                 self.logger.debug('Successful fit %s', self.name)
-                # post-processing
-                return self.post_process(p, *post_args, **post_kws)
+                # TODO: optionally print fit statistics. npars, niters, gof,
+                #  ndata, etc
+                return p
+
+        # generate message for convergence failure
+        from recipes import pprint
+        objective_repr = pprint.method(self.objective, submodule_depth=0)
+        fail_msg = (f'{self.__class__.__name__} optimization with objective '
+                    f'{objective_repr!r} failed to converge: {msg}')
+
+        # bork if desired
+        if self.raise_on_failure:
+            raise UnconvergedOptimization(fail_msg)
 
         # emit warning for non-convergence
-        self.logger.warning('Fit did not converge! %s', msg)
-
-        # if not self._unconverged_None:
-        #      return result.x
-
-    def post_process(self, p, *args, **kws):
-        return p
+        self.logger.warning(fail_msg)
 
     def run_mcmc(self, data, nsamples, nburn, nwalkers=None, threads=None,
                  p0=None):
@@ -464,7 +497,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
         # locPar = '%s.par' % self.name  # locStd = '%s.std' % self.name
         dtype = self.get_dtype()
-        return make_shared_mem(loc, shape, dtype, fill, clobber)
+        return load_memmap(loc, shape, dtype, fill, clobber)
 
 
 class DataTransformBase(LoggingMixin):
@@ -502,7 +535,7 @@ class RescaleInternal(DataTransformBase):
         if self._yscale is None:
             self._yscale = self.get_scale(data)
 
-        self.logger.info('scale is %s', self._yscale)
+        self.logger.debug('scale is %s', self._yscale)
         return data / self._yscale
 
     def inverse_transform(self, p, **kws):
@@ -542,8 +575,8 @@ class CompoundModel(AttrReadItem, ListLike, Model):
     # base dict-like container for models
 
     # TODO: better to keep more pure dict that can be keyed on anything?
-    # TODO: then think of a consistent way of mapping to from semantic names
-    # in the event that you want structured
+    #  then think of a consistent way of mapping to from semantic names
+    #  in the event that you want structured
 
     def __init__(self, models=(), **kws):  #
         """

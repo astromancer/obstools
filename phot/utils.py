@@ -3,6 +3,9 @@ Miscellaneous utility functions
 """
 
 # builtin libs
+from IPython import embed
+from recipes.dict import AttrReadItem, ListLike
+
 import logging
 import numbers
 import itertools as itt
@@ -11,8 +14,6 @@ import itertools as itt
 import numpy as np
 import more_itertools as mit
 from scipy import ndimage
-from scipy.cluster.vq import kmeans
-from scipy.spatial.distance import cdist
 from scipy.stats import binned_statistic_2d
 
 # local libs
@@ -20,13 +21,13 @@ import motley
 from motley.table import Table
 from motley.progress import ProgressBar
 from recipes.logging import LoggingMixin
-from recipes.string import get_module_name
+from recipes.introspection.utils import get_module_name
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
 
 
-def null_func(*args):
+def null_func(*_):
     pass
 
 
@@ -168,58 +169,6 @@ def table_cdist(sdist, window, _print=False):
     return tbl  # , c
 
 
-class ImageSampler(object):
-    def __init__(self, data, sample_size=None):
-        assert data.ndim == 3
-        self.data = data
-        self.default_sample_size = sample_size
-        self._axis = 0
-
-    def sample(self, n=None, subset=None):
-        """
-        Select a sample of `n` images randomly in the interval `subset`
-
-        Parameters
-        ----------
-        n
-        subset
-
-        Returns
-        -------
-
-        """
-
-        if n is None and self.sample_size is None:
-            raise ValueError('Please give sample size (or initialize this '
-                             'class with a sample size')
-
-        if isinstance(subset, numbers.Integral):
-            subset = (0, subset)  # treat like a slice
-
-        #
-        i0, i1 = subset
-
-        # get frame indices
-        # nfirst = min(n, i1 - i0)
-        ix = np.random.randint(i0, i1, n)
-        # create median image for init
-        # logger.info('Selecting %i frames from amongst frames (%i->%i) for '
-        #             'sample image.', n, i0, i1)
-        return self.data[ix]
-
-    def max(self, n=None, subset=None):
-        return self.sample(n, subset).max(self._axis)
-
-    def mean(self, n=None, subset=None):
-        return self.sample(n, subset).mean(self._axis)
-
-    def std(self, n=None, subset=None):
-        return self.sample(n, subset).std(self._axis)
-
-    def median(self, n=None, subset=None):
-        return np.median(self.sample(n, subset), self._axis)
-
-
 def rand_median(cube, ncomb, subset, nchoose=None):
     """
     median combine `ncomb`` frames randomly from amongst `nchoose` in the interval
@@ -271,70 +220,40 @@ def duplicate_if_scalar(seq):
     return seq
 
 
-def id_stars_kmeans(images, segmentations):
-    # combine segmentation for sample images into global segmentation
-    # this gives better overall detection probability and yields more accurate
-    # optimization results
+def shift_combine(images, offsets, stat='mean', extend=False):
+    """
+    Statistics on shifted image stack
 
-    # this function also uses kmeans clustering to id stars within the overall
-    # constellation of stars across sample images.  This is fast but will
-    # mis-identify stars if the size of camera dither between frames is on the
-    # order of the distance between stars in the image.
+    Parameters
+    ----------
+    images
+    offsets
+    stat
+    extend
 
-    coms = []
-    snr = []
-    for image, segm in zip(images, segmentations):
-        coms.append(segm.com_bg(image))
-        snr.append(segm.snr(image))
+    Returns
+    -------
 
-    ni = len(images)
-    nstars = list(map(len, coms))
-    k = np.max(nstars)
-    features = np.concatenate(coms)
-    # rescale each feature dimension of the observation set by stddev across
-    # all observations
-    # whitened = whiten(features)
+    """
+    # convert to (masked) array
+    images = np.asanyarray(images)
+    offsets = np.asanyarray(offsets)
 
-    codebook, distortion = kmeans(features, k)
-    l = cdist(codebook, features).argmin(0)
+    # it can happen that `offsets` is masked (no stars in that frame)
+    if np.ma.is_masked(offsets):
+        # ignore images for which xy offsets are masked
+        bad = offsets.mask.any(1)
+        good = ~bad
 
-    iframe = []
-    for i, m in enumerate(nstars):
-        iframe.extend([i] * m)
+        logger.info(f'Removing {bad.sum()} images from stack due to null '
+                    f'detection')
+        images = images[good]
+        offsets = offsets[good]
 
-    cx = np.ma.empty((ni, k, 2))
-    cx.mask = True
-    w = np.ma.empty((ni, k))
-    w.mask = True
-    indices = np.split(l, np.cumsum(nstars[:-1]))
-    for ifr, ist in enumerate(indices):
-        cx[ifr, ist] = coms[ifr]
-        w[ifr, ist] = snr[ifr]
-
-    # shifts calculated as snr-weighted average
-    shifts = np.ma.average(cx - codebook, 1, np.dstack([w, w]))
-
-    return cx, codebook, np.asarray(shifts)
-
-
-def merge_segmentations(segmentations, shifts):
-    # shift each segmentation to the cluster centroid positions and
-    # merge masks (logical and)
-
-    ishape = segmentations[0].shape
-    counts = np.zeros(ishape, int)
-    for seg, off in zip(segmentations, shifts):
-        counts += ndimage.shift(seg.data, -off).astype(bool).astype(int)
-
-    mask = counts >= len(segmentations) / 2
-    seg, nl = ndimage.label(mask)
-    return seg
-
-
-def shift_combine(grid, images, shifts):
-    # shifted average
-    sy, sx = images.shape[1:]
-    gg = grid[:, None] - shifts[None, None].T
+    # get pixel grid ignoring masked elements
+    shape = sy, sx = images.shape[1:]
+    grid = np.indices(shape)
+    gg = grid[:, None] - offsets[None, None].T
     if np.ma.is_masked(images):
         y, x = gg[:, ~images.mask]
         sample = images.compressed()
@@ -342,7 +261,144 @@ def shift_combine(grid, images, shifts):
         y, x = gg.reshape(2, -1)
         sample = images.ravel()
 
-    yb, xb = np.ogrid[:sy + 1, :sx + 1]
-    bin_edges = (yb.ravel() - 0.5, xb.ravel() - 0.5)
+    # use maximal area coverage. returned image may be larger than input images
+    if extend:
+        y0, x0 = np.floor(offsets.min(0))
+        y1, x1 = np.ceil(offsets.max(0)) + shape + 1
+    else:
+        # returned image same size as original
+        y0 = x0 = 0
+        y1, x1 = np.add(shape, 1)
 
-    return binned_statistic_2d(y, x, sample, 'mean', bin_edges).statistic
+    # compute statistic
+    yb, xb = np.ogrid[y0:y1, x0:x1]
+    bin_edges = (yb.ravel() - 0.5, xb.ravel() - 0.5)
+    results = binned_statistic_2d(y, x, sample, stat, bin_edges)
+    image = results.statistic
+    # mask nans (empty bins (pixels))
+
+    # note: avoid downstream warnings by replacing np.nan with zeros and masking
+    nans = np.isnan(image)
+    image[nans] = 0
+    return np.ma.MaskedArray(image, nans)
+
+
+class ImageSampler(object):
+    def __init__(self, data, sample_size=None):
+        assert data.ndim == 3
+        self.data = data
+        self._axis = 0
+        self.sample_size = sample_size
+        # self.scaling_func = np.median
+        # self.scaling = False
+
+    def sample(self, n=None, subset=None):
+        """
+        Select a sample of `n` images randomly in the interval `subset`
+
+        Parameters
+        ----------
+        n
+        subset
+
+        Returns
+        -------
+
+        """
+
+        if n is None and self.sample_size is None:
+            raise ValueError('Please give sample size (or initialize this '
+                             'class with a sample size')
+
+        if isinstance(subset, numbers.Integral):
+            subset = (0, subset)  # treat like a slice
+
+        #
+        i0, i1 = subset
+
+        # get frame indices
+        # nfirst = min(n, i1 - i0)
+        ix = np.random.randint(i0, i1, n)
+        # create median image for init
+        logger.debug('Selecting %i frames from amongst frames (%i->%i) for '
+                     'sample image.', n, i0, i1)
+        return self.data[ix]
+
+    def max(self, n=None, subset=None):
+        return self.sample(n, subset).max(self._axis)
+
+    def mean(self, n=None, subset=None):
+        return self.sample(n, subset).mean(self._axis)
+
+    def std(self, n=None, subset=None):
+        return self.sample(n, subset).std(self._axis)
+
+    def median(self, n=None, subset=None):
+        return np.median(self.sample(n, subset), self._axis)
+
+    # def create_sample_image(self, interval, sample_size, statistic=np.median):
+    #     image = self.median(sample_size, interval)
+    #     # todo can add scaling into sampler ?
+    #     # scale = nd_sampler(image, np.median, 100)
+    #     # image_NORM = image / scale
+    #     mimage = np.ma.MaskedArray(image, BAD_PIXEL_MASK)
+    #     return mimage  # , scale
+
+
+class ImageSamplerHDUMixin(object):
+    def get_sample_image(self, size, interval=(None,), func='median',
+                         channel=...):
+        sampler = ImageSampler(self.data[slice(*interval), channel])
+        return getattr(sampler, func)(size)
+
+
+class Record(AttrReadItem, ListLike):
+    """
+    Ordered dict with key access via attribute lookup. Also has some
+    list-like functionality: indexing by int and appending new data.
+    Best of both worlds.
+    """
+    pass
+
+
+class LabelGroups(Record):
+    """
+    Makes sure values (labels) are always arrays.
+    """
+    _auto_name_fmt = 'group%i'
+
+    def _allow_item(self, item):
+        return bool(len(item))
+
+    def _convert_item(self, item):
+        return np.atleast_1d(item).astype(int)
+
+    @property
+    def sizes(self):
+        return list(map(len, self.values()))
+        # return [len(item) for item in self.values()]
+
+    # def inverse(self):
+    #     return {lbl: gid for gid, labels in self.items() for lbl in labels}
+
+
+class LabelGroupsMixin(object):
+    """Mixin class for grouping and labelling image segments"""
+
+    def __init__(self, groups=None):
+        self._groups = None
+        self.set_groups(groups)
+
+    @property
+    def groups(self):
+        return self._groups
+
+    @groups.setter
+    def groups(self, groups):
+        self.set_groups(groups)
+
+    def set_groups(self, groups):
+        self._groups = LabelGroups(groups)
+
+    # todo
+    # def remove_group()
