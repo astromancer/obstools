@@ -80,7 +80,8 @@ class GlobalSegmentation(SegmentationHelper):
         return np.abs((xy_offsets + self.zero_point).round().astype(int))
 
     def select_subset(self, start, shape):
-        return SegmentationHelper(select_rect_pad(self, self.data, start, shape))
+        return SegmentationHelper(
+                select_rect_pad(self, self.data, start, shape))
 
     def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
         sub = self.select_subset(llc, image.shape)
@@ -239,8 +240,6 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
     # mask nans
     xy = np.ma.MaskedArray(xy, nans)
 
-    embed()
-
     # any measure of centrality for cluster centers is only a good estimator of
     # the relative positions of stars when the camera offsets are taken into
     # account.
@@ -266,21 +265,26 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
     # Compute cluster centres as geometric median
     good = ~ignore_frames
     xyc = xy[good][:, use_stars]
-
+    nansc = nans[good][:, use_stars]
+    if nansc.any():
+        xyc[nansc] = 0  # prevent warning emit in _measure_positions_offsets
+        xyc[nansc] = np.ma.masked
     #
-    centres = np.ma.masked_all((n_stars, 2))
+    centres = np.empty((n_stars, 2))  # ma.masked_all
     for i, j in enumerate(i_use):
         centres[j] = geometric_median(xyc[:, i])
 
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
-    σxy = np.ma.masked_all((n_stars, 2))
+    σxy = np.empty((n_stars, 2))  # σxy = np.ma.masked_all((n_stars, 2))
     centres[use_stars], σxy[use_stars], δxy[good], out = \
         _measure_positions_offsets(xyc, centres[use_stars], d_cut)
 
-    # TODO: here we can actually compute centres of all stars with offsets
-    #  from best and brightest
-
+    # compute positions of all sources with offsets from best and brightest
+    for i in np.where(~use_stars)[0]:
+        recentred = xy[:, i].squeeze() - δxy
+        centres[i] = geometric_median(recentred)
+        σxy[i] = recentred.std()
 
     # fix outlier indices
     idxf, idxs = np.where(out)
@@ -804,12 +808,11 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(13.7, 2))   # shape for slotmode
+            fig, ax = plt.subplots(figsize=(13.7, 2))  # shape for slotmode
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
             display(fig)
-
 
         #
         logger.info('Measuring relative positions')
@@ -835,37 +838,16 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
                                            f_detect_accept,
                                            post_merge_dilate)
 
-        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        if plot:
-            im = seg_glb.display()
-            im.ax.set_title('Global segmentation 0')
-            display(im.figure)
-
         # since the merge process re-labels the stars, we have to ensure the
         # order of the labels correspond to the order of the clusters.
         # Do this by taking the label of the pixel nearest measured centers
         # removed masked points from coordinate measurement
-        use_stars = ~centres.mask.any(1)
-        cxx = np.ma.getdata(centres[use_stars] - seg_glb.zero_point)
+        # use_stars = ~centres.mask.any(1)
+        cxx = np.ma.getdata(centres - seg_glb.zero_point)
         indices = cxx.round().astype(int)
         cluster_labels = seg_glb.data[tuple(indices.T)]
         # `cluster_labels` maps cluster nr to label in image
-        try:
-            seg_glb.relabel_many(cluster_labels, seg_glb.labels)
-        except Exception as err:
-            from IPython import embed
-            import traceback
-            import textwrap
-            embed(header=textwrap.dedent(
-                """\
-                Caught the following %s:
-                ------ Traceback ------
-                %s
-                -----------------------
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % (err.__class__.__name__, traceback.format_exc()))
-            raise
-
+        seg_glb.relabel_many(cluster_labels, seg_glb.labels)
         ok = (cluster_labels != 0)
 
         # Measure fluxes here. bright objects near edges of the slot
@@ -905,6 +887,12 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             # print('relabel', old_labels, seg_glb.labels)
             # old_labels = brightness_order[ok] + 1
             # seg_glb.relabel_many(old_labels, seg_glb.labels)
+
+        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if plot:
+            im = seg_glb.display()
+            im.ax.set_title('Global segmentation 0')
+            display(im.figure)
 
         # initialize tracker
         use_star = (σ_xy < required_positional_accuracy).all(1)
