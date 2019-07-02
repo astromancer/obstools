@@ -62,41 +62,6 @@ logger = logging.getLogger(get_module_name(__file__))
 TABLE_STYLE = dict(txt='bold', bg='g')
 
 
-class GlobalSegmentation(SegmentationHelper):
-    @classmethod
-    def merge(cls, segmentations, xy_offsets, extend=True, f_accept=0.5,
-              post_dilate=1):
-        return cls(merge_segmentations(segmentations, xy_offsets,
-                                       extend,
-                                       f_accept,
-                                       post_dilate),
-                   np.floor(xy_offsets.min(0)))
-
-    def __init__(self, data, zero_point):
-        super().__init__(data)
-        self.zero_point = zero_point
-
-    def get_start_indices(self, xy_offsets):
-        return np.abs((xy_offsets + self.zero_point).round().astype(int))
-
-    def select_subset(self, start, shape):
-        return SegmentationHelper(
-                select_rect_pad(self, self.data, start, shape))
-
-    def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
-        sub = self.select_subset(llc, image.shape)
-        return sub.flux(image, labels, labels_bg, bg_stat)
-
-    def sort(self, measure, descend=False):
-        if len(measure) != self.nlabels:
-            raise ValueError('nope')
-
-        o = slice(None, None, -1) if descend else ...
-        order = np.ma.argsort(measure, endwith=False)[o]
-        self.relabel_many(order + 1, self.labels)
-        return order
-
-
 def id_stars_kmeans(images, segmentations):
     # TODO: method of tracker ????
 
@@ -581,27 +546,6 @@ class LabelUser(object):
 #
 
 
-class SegmentationMasksHelper(SegmentationGridHelper, LabelGroupsMixin):
-
-    def __init__(self, data, grid=None, domains=None, groups=None,
-                 **persistent_masks):
-        super().__init__(data, grid, domains)
-
-        LabelGroupsMixin.__init__(self, groups)
-        self._masks = None
-        self._persistent_masks = persistent_masks
-
-    def set_groups(self, groups):
-        LabelGroupsMixin.set_groups(self, groups)
-        del self.group_masks  #
-
-    @lazyproperty
-    # making group_masks a lazyproperty means it will get reset auto-magically when
-    # the segmentation data changes
-    def group_masks(self):
-        return MaskContainer(self, self.groups, **self._persistent_masks)
-
-
 class MaskContainer(AttrReadItem):
     def __init__(self, seg, groups, **persistent):
         assert isinstance(groups, dict)  # else __getitem__ will fail
@@ -659,6 +603,62 @@ class MaskContainer(AttrReadItem):
 
     def of_group(self, g):
         return self.segm.to_bool(self.groups[g])
+
+
+class SegmentationMasksHelper(SegmentationGridHelper, LabelGroupsMixin):
+
+    def __init__(self, data, grid=None, domains=None, groups=None,
+                 **persistent_masks):
+        super().__init__(data, grid, domains)
+
+        LabelGroupsMixin.__init__(self, groups)
+        self._masks = None
+        self._persistent_masks = persistent_masks
+
+    def set_groups(self, groups):
+        LabelGroupsMixin.set_groups(self, groups)
+        del self.group_masks  #
+
+    @lazyproperty
+    # making group_masks a lazyproperty means it will get reset auto-magically when
+    # the segmentation data changes
+    def group_masks(self):
+        return MaskContainer(self, self.groups, **self._persistent_masks)
+
+
+class GlobalSegmentation(SegmentationMasksHelper):
+    @classmethod
+    def merge(cls, segmentations, xy_offsets, extend=True, f_accept=0.5,
+              post_dilate=1):
+        return cls(merge_segmentations(segmentations, xy_offsets,
+                                       extend,
+                                       f_accept,
+                                       post_dilate),
+                   np.floor(xy_offsets.min(0)))
+
+    def __init__(self, data, zero_point):
+        super().__init__(data)
+        self.zero_point = zero_point
+
+    def get_start_indices(self, xy_offsets):
+        return np.abs((xy_offsets + self.zero_point).round().astype(int))
+
+    def select_subset(self, start, shape):
+        return SegmentationHelper(
+                select_rect_pad(self, self.data, start, shape))
+
+    def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
+        sub = self.select_subset(llc, image.shape)
+        return sub.flux(image, labels, labels_bg, bg_stat)
+
+    def sort(self, measure, descend=False):
+        if len(measure) != self.nlabels:
+            raise ValueError('nope')
+
+        o = slice(None, None, -1) if descend else ...
+        order = np.ma.argsort(measure, endwith=False)[o]
+        self.relabel_many(order + 1, self.labels)
+        return order
 
 
 DETECTION_DEFAULTS = dict(snr=3.,
