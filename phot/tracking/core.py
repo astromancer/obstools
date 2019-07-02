@@ -808,7 +808,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(13.7, 2))  # shape for slotmode
+            fig, ax = plt.subplots(figsize=(13.8, 2))  # shape for slotmode
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
