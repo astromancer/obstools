@@ -190,7 +190,7 @@ def id_stars_dbscan(xy, eps=0.1, min_samples=5):
     return db, n_clusters, n_noise
 
 
-def plot_clusters(ax, clf, features, cmap='Spectral'):
+def plot_clusters(ax, clf, features, cmap='tab20b'):
     from matplotlib.cm import get_cmap
 
     core_sample_indices_, = np.where(clf.labels_ != -1)
@@ -459,8 +459,10 @@ def report_measurements(xy, centres, σ_xy, counts=None,
 
     fmt = {}
     if counts is not None:
+        # TODO highlight counts?
         cn = 'counts (e⁻)'
-        fmt[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1)
+        fmt[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
+                              compact=False)
         columns.append(counts)  # pprint.numeric_array(counts, thousands=' ')
         col_headers += [cn]
 
@@ -799,11 +801,12 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(12.5, 2.25))
+            fig, ax = plt.subplots(figsize=(13.5, 2.25))
             plot_clusters(ax, clf, np.vstack(coms))
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
             display(fig)
+            
 
         #
         logger.info('Measuring relative positions')

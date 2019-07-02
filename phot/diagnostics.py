@@ -212,7 +212,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
 
     # add callback for drawing rectangle inset and rotating tick labels
     cid = fig.canvas.mpl_connect('draw_event', _on_first_draw)
-    fig.tight_layout()
+    # fig.tight_layout()
     return fig, axes
 
 
