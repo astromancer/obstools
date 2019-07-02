@@ -239,6 +239,8 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
     # mask nans
     xy = np.ma.MaskedArray(xy, nans)
 
+    embed()
+
     # any measure of centrality for cluster centers is only a good estimator of
     # the relative positions of stars when the camera offsets are taken into
     # account.
@@ -278,6 +280,7 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
 
     # TODO: here we can actually compute centres of all stars with offsets
     #  from best and brightest
+
 
     # fix outlier indices
     idxf, idxs = np.where(out)
@@ -801,12 +804,12 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(13.5, 2.25))
-            plot_clusters(ax, clf, np.vstack(coms))
+            fig, ax = plt.subplots(figsize=(13.7, 2))   # shape for slotmode
+            plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
             display(fig)
-            
+
 
         #
         logger.info('Measuring relative positions')
@@ -842,9 +845,27 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # order of the labels correspond to the order of the clusters.
         # Do this by taking the label of the pixel nearest measured centers
         # removed masked points from coordinate measurement
-        cxx = np.ma.getdata(centres) - seg_glb.zero_point
+        use_stars = ~centres.mask.any(1)
+        cxx = np.ma.getdata(centres[use_stars] - seg_glb.zero_point)
         indices = cxx.round().astype(int)
         cluster_labels = seg_glb.data[tuple(indices.T)]
+        # `cluster_labels` maps cluster nr to label in image
+        try:
+            seg_glb.relabel_many(cluster_labels, seg_glb.labels)
+        except Exception as err:
+            from IPython import embed
+            import traceback
+            import textwrap
+            embed(header=textwrap.dedent(
+                """\
+                Caught the following %s:
+                ------ Traceback ------
+                %s
+                -----------------------
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % (err.__class__.__name__, traceback.format_exc()))
+            raise
+
         ok = (cluster_labels != 0)
 
         # Measure fluxes here. bright objects near edges of the slot
@@ -856,14 +877,12 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         llcs = seg_glb.get_start_indices(xy_offsets)
 
         # ======================================================================
-        counts = worker_pool.starmap(
+        counts = np.ma.masked_all(xy.shape[:-1])
+        counts[:, ok] = worker_pool.starmap(
                 seg_glb.flux, ((image, ij0)
                                for i, (ij0, image) in
                                enumerate(zip(llcs, images))))
         # ======================================================================
-        # counts = np.ma.masked_all(xy.shape[:-1])
-        counts = np.array(counts)
-
         # ordering
         counts_med = np.ma.median(counts, 0)
         if flux_sort:

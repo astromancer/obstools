@@ -160,7 +160,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
     # align raw and shifted cluster centroids
     # yx -= shifts.mean(0)
     for i, ax_row in enumerate(axes):
-        scatter_density_grid(yx, None, ax_row, False, bool(i),
+        scatter_density_grid(yx, None, ax_row, False, False,
                              min_count=np.inf,
                              scatter_kws=dict(marker='.', color='maroon',
                                               label='recentred'),
@@ -194,7 +194,10 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
                     # ensure axes limits include pixel size
                     d = 0.05
                     xlim, ylim = np.transpose([xy - d, xy + d + 1])
-                    ax.set(xlim=xlim, ylim=ylim)
+                else:
+                    yxm = yx[j].mean(0)
+                    ylim, xlim = np.transpose([yxm - 0.5 - d, yxm + 0.5 + d])
+                ax.set(xlim=xlim, ylim=ylim)
 
             #     # FIXME: minor ticks not drawn if only one major tick
             #     axis = getattr(ax, f'{xy}axis')
