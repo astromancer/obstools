@@ -193,7 +193,22 @@ def plot_clusters(ax, clf, xy, cmap='Spectral'):
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
     ax.scatter(*X[core_sample_indices_].T, edgecolors=c,
                facecolors='none')
-    ax.plot(*X[clf.labels_ == -1].T, 'kx', alpha=0.3)
+    try:
+        ax.plot(*X[clf.labels_ == -1].T, 'kx', alpha=0.3)
+    except Exception as err:
+        from IPython import embed
+        import traceback
+        import textwrap
+        embed(header=textwrap.dedent(
+            """\
+            Caught the following %s:
+            ------ Traceback ------
+            %s
+            -----------------------
+            Exception will be re-raised upon exiting this embedded interpreter.
+            """) % (err.__class__.__name__, traceback.format_exc()))
+        raise
+
     ax.grid()
 
 
@@ -771,16 +786,9 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             def display(*_):
                 pass
 
-        # detect stars (initial)
-        # TODO: detec_loop here ??
-        #  segs, groups, info, result, residual = zip(*worker_pool.starmap(
-        #          detect_loop, ((im, mask, snr, npixels, deblend, dilate,
-        #                         edge_cutoff, max_iter, bg_model, opt_kws)
-        #                        for i, im in enumerate(images))))
-
+        #
         n, *ishape = images.shape
         # detect sources, measure locations
-        # detect stars (initial)
         _detect_measure = ftl.partial(detect_measure, **detect_kws)
         segmentations, coms = zip(
                 *worker_pool.map(_detect_measure, images))
