@@ -79,9 +79,11 @@ class GlobalSegmentation(SegmentationHelper):
     def get_start_indices(self, xy_offsets):
         return np.abs((xy_offsets + self.zero_point).round().astype(int))
 
+    def select_subset(self, start, shape):
+        return SegmentationHelper(select_rect_pad(self, self.data, start, shape))
+
     def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
-        sub = super(GlobalSegmentation, self).select_subset(llc, image.shape)
-        embed()
+        sub = self.select_subset(llc, image.shape)
         return sub.flux(image, labels, labels_bg, bg_stat)
 
     def sort(self, measure, descend=False):
@@ -826,7 +828,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
                                            True,  # extend
                                            f_detect_accept,
                                            post_merge_dilate)
-        return seg_glb
+
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             im = seg_glb.display()
