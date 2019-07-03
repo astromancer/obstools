@@ -30,7 +30,7 @@ from obstools.stats import geometric_median
 
 from scipy.cluster.vq import kmeans
 from scipy.spatial.distance import cdist
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import MeanShift  # DBSCAN
 from sklearn.preprocessing import StandardScaler
 from astropy.utils import lazyproperty
 
@@ -43,7 +43,7 @@ import more_itertools as mit
 
 # from IPython import embed
 
-# TODO: CameraTrackingModel / CameraOffset / CameraPosition
+# TODO: CameraTrackingModel / CameraOffset / CameraPositionModel
 
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
@@ -113,8 +113,14 @@ def id_stars_kmeans(images, segmentations):
 
 
 def cluster_id_stars(clf, xy):
+    #
     X = np.vstack(xy)
     n = len(X)
+    # stars_per_image = list(map(len, xy))
+    # no_detection = np.equal(stars_per_image, 0)
+    # scaler = StandardScaler()
+    # X = scaler.fit_transform(np.vstack(xy))
+
     logger.info('Grouping %i position measurements using:\n%s', n, clf)
     clf.fit(X)
 
@@ -129,31 +135,6 @@ def cluster_id_stars(clf, xy):
     logger.info('Identified %i stars using %i/%i points (%i noise)',
                 n_clusters, n - n_noise, n, n_noise)
     return n_clusters, n_noise
-
-
-def id_stars_dbscan(xy, eps=0.1, min_samples=5):
-    # todo: make this a more general method ???
-
-    # stars_per_image = list(map(len, xy))
-    # no_detection = np.equal(stars_per_image, 0)
-    scaler = StandardScaler()
-    X = scaler.fit_transform(np.vstack(xy))
-
-    # DBSCAN clustering
-    db = DBSCAN(eps, min_samples)
-    logger.info('Grouping %i position measurements using:\n%s',
-                len(X), db)
-    db.fit(X)
-    core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
-    core_samples_mask[db.core_sample_indices_] = True
-    labels = db.labels_
-
-    # Number of clusters in labels, ignoring noise if present.
-    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    n_noise = list(labels).count(-1)
-    # n_per_label = np.bincount(db.labels_[db.core_sample_indices_])
-
-    return db, n_clusters, n_noise
 
 
 def plot_clusters(ax, clf, features, cmap='tab20b'):
@@ -801,7 +782,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
         # clustering + relative position measurement
         logger.info('Identifying stars')
-        clf = OPTICS(min_samples=int(f_detect_accept * n))
+        # clf = OPTICS(min_samples=int(f_detect_accept * n))
+        clf = MeanShift(bandwidth=2, cluster_all=False)
         n_clusters, n_noise = cluster_id_stars(clf, coms)
         xy, = group_features(clf, coms)
 
@@ -838,6 +820,61 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
                                            f_detect_accept,
                                            post_merge_dilate)
 
+        # return
+
+        # try:
+        #     assert n_clusters == seg_glb.nlabels
+        # except Exception as err:
+        #     from IPython import embed
+        #     import traceback
+        #     import textwrap
+        #     embed(header=textwrap.dedent(
+        #             """\
+        #             Caught the following %s:
+        #             ------ Traceback ------
+        #             %s
+        #             -----------------------
+        #             Exception will be re-raised upon exiting this embedded interpreter.
+        #             """) % (err.__class__.__name__, traceback.format_exc()))
+        #     raise
+
+        return seg_glb, xy, centres, xy_offsets  # , counts, counts_med
+        if flux_sort:
+            # Measure fluxes here. bright objects near edges of the slot
+            # have lower detection probability and usually only partially
+            # detected merged segmentation usually more complete for these
+            # sources which leads to more accurate flux measurement and
+            # therefore better change of flagging bright partial sources for
+            # photon bleed
+            llcs = seg_glb.get_start_indices(xy_offsets)
+
+            # ======================================================================
+            counts = np.ma.masked_all(xy.shape[:-1])
+            ok = centres.mask.any(-1) if np.ma.is_masked(centres) else ...
+
+            counts[:, ok] = worker_pool.starmap(
+                    seg_glb.flux, ((image, ij0)
+                                   for i, (ij0, image) in
+                                   enumerate(zip(llcs, images))))
+            counts_med = np.ma.median(counts, 0)
+
+            # ======================================================================
+            # reorder star labels for descending brightness
+            order = seg_glb.sort(counts_med, descend=True)
+
+            # ensure we have the same number of stars as id'd by clustering
+            # (if not all detected sources accepted in `merge_segments`)
+            # if n_labels < n_clusters:
+            #     brightness_order = np.r_[brightness_order,
+            #                              np.arange(n_labels, n_clusters)]
+
+            old_labels = order[ok] + 1
+            seg_glb.relabel_many(old_labels, seg_glb.labels)
+
+            # reorder measurements
+            counts = counts[:, order]
+            counts_med = counts_med[order]
+
         # since the merge process re-labels the stars, we have to ensure the
         # order of the labels correspond to the order of the clusters.
         # Do this by taking the label of the pixel nearest measured centers
@@ -847,46 +884,11 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         indices = cxx.round().astype(int)
         cluster_labels = seg_glb.data[tuple(indices.T)]
         # `cluster_labels` maps cluster nr to label in image
-        seg_glb.relabel_many(cluster_labels, seg_glb.labels)
-        ok = (cluster_labels != 0)
-
-        # Measure fluxes here. bright objects near edges of the slot
-        # have lower detection probability and usually only partially
-        # detected merged segmentation usually more complete for these
-        # sources which leads to more accurate flux measurement and
-        # therefore better change of flagging bright partial sources for
-        # photon bleed
-        llcs = seg_glb.get_start_indices(xy_offsets)
-
-        # ======================================================================
-        counts = np.ma.masked_all(xy.shape[:-1])
-        counts[:, ok] = worker_pool.starmap(
-                seg_glb.flux, ((image, ij0)
-                               for i, (ij0, image) in
-                               enumerate(zip(llcs, images))))
-        # ======================================================================
-        # ordering
-        counts_med = np.ma.median(counts, 0)
-        if flux_sort:
-            # reorder star labels for descending brightness
-            brightness_order = seg_glb.sort(counts_med, descend=True)
-            # bright to faint
-            counts = counts[:, brightness_order]
-            counts_med = counts_med[brightness_order]
-            xy = xy[:, brightness_order]
-            σ_xy = σ_xy[brightness_order]
-
-            # ensure we have the same number of stars as id'd by clustering
-            # (if not all detected sources accepted in `merge_segments`)
-            # if n_labels < n_clusters:
-            #     brightness_order = np.r_[brightness_order,
-            #                              np.arange(n_labels, n_clusters)]
-
-            # reorder everything
-
-            # print('relabel', old_labels, seg_glb.labels)
-            # old_labels = brightness_order[ok] + 1
-            # seg_glb.relabel_many(old_labels, seg_glb.labels)
+        # reorder measurements to match order of labels in image
+        order = cluster_labels.argsort()
+        centres = centres[order]
+        xy = xy[:, order]
+        σ_xy = σ_xy[order]
 
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
@@ -1411,8 +1413,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
     def _measure_star_locations(self, image, mask, start_indices):
 
-        seg = self.get_segments(start_indices, image.shape)
-        xy = SegmentationHelper(seg).com_bg(image, self.use_labels, mask, None)
+        seg = self.segm.select_subset(start_indices, image.shape)
+        xy = seg.com_bg(image, self.use_labels, mask, None)
 
         # note this is ~2x faster than padding image and mask. can probably
         #  be made even faster by using __slots__
@@ -1553,11 +1555,6 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         i1, j1 = stop
         return self.masks.all[i0:i1, j0:j1] | self.masks.bad_pixels
 
-    # def get_segments(self, start, stop):
-    #     i0, j0 = start
-    #     i1, j1 = stop
-    #     return self.segm.data[i0:i1, j0:j1]
-
     def get_masks(self, start, shape):
         phot_masks = select_rect_pad(self.segm, self.masks.phot, start, shape)
         sky_mask = select_rect_pad(self.segm, self.masks.sky, start, shape)
@@ -1579,7 +1576,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         -------
 
         """
-        return self.select_overlap(self.segm.data, start, shape)
+        return self.segm.select_subset(start, shape)
 
     def flux_sort(self, fluxes):
 
