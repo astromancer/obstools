@@ -1,31 +1,31 @@
-import numbers
-
-from IPython import embed
-
+# std libs
 import logging
 import warnings
 import itertools as itt
-from pathlib import Path
 import multiprocessing as mp
+from pathlib import Path
 
-import more_itertools as mit
+# third-party libs
 import numpy as np
+import more_itertools as mit
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
 from matplotlib.cm import get_cmap
-from matplotlib import ticker
-
-from graphical.ts import TSplotter
-from graphical.imagine import ImageDisplay
-# from obstools.psf.psf import GaussianPSF
-# from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
-from obstools.phot.utils import duplicate_if_scalar
-from motley.profiler.timers import timer
-from motley.table import Table
-from recipes.misc import is_interactive
+from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+# local libs
+from recipes.misc import is_interactive
+from motley.table import Table
+from motley.profiler.timers import timer
+from obstools.aps import ApertureCollection
+from obstools.phot.utils import duplicate_if_scalar
+from graphical.ts import TSplotter
+from graphical.imagine import ImageDisplay
 from graphical.formatters import LinearRescaleFormatter
+
+# from obstools.psf.psf import GaussianPSF
+# from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
+
 
 SECONDS_PER_DAY = 86400
 DEFAULT_CMAP = 'jet'
@@ -204,14 +204,12 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
             #     axis.set_minor_locator(ticker.AutoMinorLocator())
             #     axis.set_minor_formatter(ticker.ScalarFormatter())
 
-    # TODO: better legend: 2 col?
     handles, labels = axes[0, 0].get_legend_handles_labels()
     # add proxy art for pixel size box
     handles.append(Line2D([], [], color='k', marker='s',
-                          mfc='none', mew=2, ls='', markersize=15,
-                          label='pixel size'))
-
-    fig.legend(handles, labels, loc='upper left')
+                          mfc='none', mew=2, ls='', markersize=15))
+    labels.append('pixel size')
+    fig.legend(handles, labels, loc='upper left', ncol=3)
 
     # add callback for drawing rectangle inset and rotating tick labels
     cid = fig.canvas.mpl_connect('draw_event', _on_first_draw)
@@ -974,9 +972,6 @@ def plot_lc_aps(apdata, labels):
     return figs
 
 
-from obstools.aps import ApertureCollection
-
-
 # ====================================================================================================
 def from_params(model, params, scale=3, **kws):
     converged = ~np.isnan(params).any(1)
@@ -1010,9 +1005,6 @@ def from_params(model, params, scale=3, **kws):
 #     return rcol
 
 # ====================================================================================================
-
-
-from graphical.imagine import VideoDisplayA
 
 
 # def foo(cube, coords, appars):
