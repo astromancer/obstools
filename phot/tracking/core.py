@@ -192,8 +192,9 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
 
     # Due to camera/telescope drift, some stars (those near edges of the frame)
     # may not be detected in many frames. Cluster centroids are not an accurate
-    # estimator of relative position for these stars. Only stars that are
-    # detected in most frames will be used to calculate camera xy_offset
+    # estimator of relative position for these stars since it's an incomplete
+    # sample. Only stars that are detected in `detect_frac_min` fraction of
+    # the frames will be used to calculate frame xy offset
 
     n_use = n - n_ignore
     n_detections_per_star = np.empty(n_stars, int)
@@ -242,6 +243,9 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
     return xy, centres, σxy, δxy, outlier_indices
 
 
+import warnings
+
+
 def _measure_positions_offsets(xy, centres, d_cut=None):
     # ensure we have at least some centres
     assert not np.all(np.ma.getmask(centres))
@@ -274,7 +278,24 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         # compute position residuals
         cxr = xy - centres - xy_offsets
         # flag outliers
-        d = np.sqrt((cxr * cxr).sum(-1))
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings('error')
+                d = np.sqrt((cxr * cxr).sum(-1))  # FIXME RuntimeWarning
+        except Exception as err:
+            from IPython import embed
+            import traceback
+            import textwrap
+            embed(header=textwrap.dedent(
+                """\
+                Caught the following %s:
+                ------ Traceback ------
+                %s
+                -----------------------
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % (err.__class__.__name__, traceback.format_exc()))
+            raise
+
         out_new = (d > d_cut)
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
 
@@ -634,7 +655,9 @@ class GlobalSegmentation(SegmentationMasksHelper):
 
     def sort(self, measure, descend=False):
         if len(measure) != self.nlabels:
-            raise ValueError('nope')
+            raise ValueError('Cannot reorder labels for measure with '
+                             'incompatable size %i. %s has %i labels' %
+                             (len(measure), self, self.nlabels))
 
         o = slice(None, None, -1) if descend else ...
         order = np.ma.argsort(measure, endwith=False)[o]
@@ -733,8 +756,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
     @classmethod
     def from_images(cls, images, mask=None, required_positional_accuracy=0.5,
-                    centre_distance_max=1, f_detect_accept=0.5,
-                    post_merge_dilate=1, flux_sort=True,
+                    centre_distance_max=1, f_detect_measure=0.5,
+                    f_detect_merge=0.2, post_merge_dilate=1, flux_sort=True,
                     worker_pool=None, report=None, plot=False, **detect_kws):
         """
 
@@ -744,7 +767,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         mask
         required_positional_accuracy
         centre_distance_max
-        f_detect_accept
+        f_detect_measure
+        f_detect_merge
         post_merge_dilate
         flux_sort
         worker_pool
@@ -791,6 +815,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if plot:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(13.8, 2))  # shape for slotmode
+            ax.set_title(f'Position Measurements (CoM) {n} frames',
+                         fontweight='bold')
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
@@ -799,7 +825,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         #
         logger.info('Measuring relative positions')
         _, centres, σ_xy, xy_offsets, outliers = \
-            measure_positions_offsets(xy, centre_distance_max, f_detect_accept)
+            measure_positions_offsets(xy, centre_distance_max, f_detect_measure)
 
         # zero point for tracker (slices of the extended frame) correspond
         # to minimum offset
@@ -817,28 +843,38 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # combine segmentation images
         seg_glb = GlobalSegmentation.merge(segmentations, xy_offsets,
                                            True,  # extend
-                                           f_detect_accept,
+                                           f_detect_merge,
                                            post_merge_dilate)
 
-        # return
+        # since the merge process re-labels the stars, we have to ensure the
+        # order of the labels correspond to the order of the clusters.
+        # Do this by taking the label of the pixel nearest measured centers
+        # This is also a useful metric for the success of the clustering
+        # step: Sometimes multiple stars are put in the same cluster,
+        # in which case the centroid will likely be outside the labelled
+        # regions in the segmented image (label 0). These stars will then
+        # fortuitously be ignored below.
 
-        # try:
-        #     assert n_clusters == seg_glb.nlabels
-        # except Exception as err:
-        #     from IPython import embed
-        #     import traceback
-        #     import textwrap
-        #     embed(header=textwrap.dedent(
-        #             """\
-        #             Caught the following %s:
-        #             ------ Traceback ------
-        #             %s
-        #             -----------------------
-        #             Exception will be re-raised upon exiting this embedded interpreter.
-        #             """) % (err.__class__.__name__, traceback.format_exc()))
-        #     raise
+        # clustering algorithm may also identify more stars than in `seg_glb`
+        # whether this happens will depend on the `f_detect_merge` parameter.
+        # The sources that are not in the segmentation image will get the
+        # label 0 in `cluster_labels`
+        cxx = np.ma.getdata(centres - seg_glb.zero_point)
+        indices = cxx.round().astype(int)
+        cluster_labels = seg_glb.data[tuple(indices.T)]
+        seg_lbl_omit = (cluster_labels == 0)
+        if seg_lbl_omit.any():
+            cls.logger.info('%i sources omitted from merged segmentation.' %
+                            seg_lbl_omit.sum())
 
-        return seg_glb, xy, centres, xy_offsets  # , counts, counts_med
+        # return seg_glb, xy, centres, σ_xy, xy_offsets, outliers, cluster_labels
+
+        # may also happen that stars that are close together get grouped in
+        # the same cluster by clustering algorithm.  This is bad, but can be
+        # probably be detected by checking labels in individual segmented images
+        # if n_clusters != seg_glb.nlabels:
+
+        # return seg_glb, xy, centres, xy_offsets  # , counts, counts_med
         if flux_sort:
             # Measure fluxes here. bright objects near edges of the slot
             # have lower detection probability and usually only partially
@@ -849,43 +885,30 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             llcs = seg_glb.get_start_indices(xy_offsets)
 
             # ======================================================================
-            counts = np.ma.masked_all(xy.shape[:-1])
-            ok = centres.mask.any(-1) if np.ma.is_masked(centres) else ...
+            counts = np.ma.empty(xy.shape[:-1])
+            ok = np.logical_not(seg_lbl_omit)
 
             counts[:, ok] = worker_pool.starmap(
                     seg_glb.flux, ((image, ij0)
                                    for i, (ij0, image) in
                                    enumerate(zip(llcs, images))))
+            counts[:, ~ok] = np.ma.masked
             counts_med = np.ma.median(counts, 0)
 
             # ======================================================================
             # reorder star labels for descending brightness
-            order = seg_glb.sort(counts_med, descend=True)
-
-            # ensure we have the same number of stars as id'd by clustering
-            # (if not all detected sources accepted in `merge_segments`)
-            # if n_labels < n_clusters:
-            #     brightness_order = np.r_[brightness_order,
-            #                              np.arange(n_labels, n_clusters)]
-
-            old_labels = order[ok] + 1
-            seg_glb.relabel_many(old_labels, seg_glb.labels)
+            order = np.ma.argsort(counts_med, endwith=False)[::-1]
+            # order = seg_glb.sort(np.ma.compressed(counts_med), descend=True)
+            seg_glb.relabel_many(order[ok] + 1, seg_glb.labels)
 
             # reorder measurements
             counts = counts[:, order]
             counts_med = counts_med[order]
 
-        # since the merge process re-labels the stars, we have to ensure the
-        # order of the labels correspond to the order of the clusters.
-        # Do this by taking the label of the pixel nearest measured centers
-        # removed masked points from coordinate measurement
-        # use_stars = ~centres.mask.any(1)
-        cxx = np.ma.getdata(centres - seg_glb.zero_point)
-        indices = cxx.round().astype(int)
-        cluster_labels = seg_glb.data[tuple(indices.T)]
         # `cluster_labels` maps cluster nr to label in image
         # reorder measurements to match order of labels in image
-        order = cluster_labels.argsort()
+        cluster_labels = seg_glb.data[tuple(indices.T)]
+        order = np.ma.MaskedArray(cluster_labels, cluster_labels == 0).argsort()
         centres = centres[order]
         xy = xy[:, order]
         σ_xy = σ_xy[order]
@@ -922,8 +945,11 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if report is None:
             report = cls.logger.getEffectiveLevel() <= logging.INFO
         if report:
+            # TODO: can probs also highlight large uncertainties
+            #  and bright targets!
+
             tracker.report_measurements(xy, centres, σ_xy, counts_med,
-                                        f_detect_accept)
+                                        f_detect_measure)
 
         return tracker, xy, centres, xy_offsets, counts, counts_med
 
