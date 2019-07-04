@@ -814,9 +814,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(13.8, 2))  # shape for slotmode
-            ax.set_title(f'Position Measurements (CoM) {n} frames',
-                         fontweight='bold')
+            fig, ax = plt.subplots(figsize=(13.9, 2))  # shape for slotmode
+            ax.set_title(f'Position Measurements (CoM) {n} frames') # fontweight='bold'
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
@@ -838,7 +837,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             from obstools.phot.diagnostics import plot_position_measures
 
             fig, axes = plot_position_measures(xy, centres, xy_offsets)
-            fig.suptitle('Position Measurements (CoM)', fontweight='bold')
+            fig.suptitle('Position Measurements (CoM)') # , fontweight='bold'
+            display(fig)
 
         # combine segmentation images
         seg_glb = GlobalSegmentation.merge(segmentations, xy_offsets,
