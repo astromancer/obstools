@@ -860,21 +860,26 @@ class Slices(list):  # rename Segments, integrate with photutils
 
 class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
-    Extends `photutils.SegmentationImage` functionality
+    Extends `photutils.segmentation.SegmentationImage` functionality
 
     Additions to the SegmentationImage class.
-        * classmethod for initializing from an image of stars
+        * classmethod for construction from an image of stars
         * support for iterating over segments / slices
         * support for calculations on masked arrays
-        * methods for calculating counts / flux in segments of image
-        * preparing masks for photometry
-        *
-        *
+        * methods for basic statistics on segments (mean, median etc)
+        * methods for calculating center of mass, counts, flux in segments
+        * re-ordering (sorting) labels by counts
+        * preparing masks for photometry (2d, 3d)
+        * dilating, eroding segments, transforming to annuli
+        * selecting subsets of the segmentation image
+        * adding segments from another instance / array
+        * displaying as an image with segments labelled
 
-    This class is a domain mapping layer that lives on top of images
+    In terms of modelling, this class is a domain mapping layer that lives on
+    top of images
     """
 
-    # _allow_negative = False       # TODO:
+    # _allow_negative = False       # TODO: maybe
 
     # Constructors
     # --------------------------------------------------------------------------
@@ -2094,6 +2099,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         im: `ImageDisplay` instance
 
         """
+        # TODO: disable sliders ....
+
         from scipy.cluster.vq import kmeans
         from graphical.imagine import ImageDisplay
 
@@ -2102,7 +2109,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         draw_rect = kws.pop('draw_rect', False)
 
         # use categorical colormap (random, muted colours)
-        cmap = 'gray' if (self.nlabels == 0) else self.cmap()
+        cmap = 'gray' if (self.nlabels == 0) else self.make_cmap()
         # conditional here prevents bork on empty segmentation image
         kws.setdefault('cmap', cmap)
 
