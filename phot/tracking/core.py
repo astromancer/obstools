@@ -409,7 +409,7 @@ def report_measurements(xy, centres, σ_xy, counts=None, detect_frac_min=None,
 
     col_headers = ['n (%)', 'x (px.)', 'y (px.)']
     fmt = {0: ftl.partial(pprint.decimal_with_percentage,
-                          total=n_points, precision=0)}  #  right_pad=1
+                          total=n_points, precision=0)}  # right_pad=1
 
     if detect_frac_min is not None:
         n_min = detect_frac_min * n_points
@@ -441,7 +441,6 @@ def report_measurements(xy, centres, σ_xy, counts=None, detect_frac_min=None,
                              number_rows=True,
                              total=[0],
                              formatters=fmt)
-
 
     logger.info('\n' + str(tbl) + extra)
     return tbl
@@ -796,23 +795,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         n, *ishape = images.shape
         # detect sources, measure locations
         _detect_measure = ftl.partial(detect_measure, **detect_kws)
-        try:
-            segmentations, coms = zip(
-                    *map(_detect_measure, images))
-        except Exception as err:
-            from IPython import embed
-            import traceback
-            import textwrap
-            embed(header=textwrap.dedent(
-                """\
-                Caught the following %s:
-                ------ Traceback ------
-                %s
-                -----------------------
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % (err.__class__.__name__, traceback.format_exc()))
-            raise
-
+        segmentations, coms = zip(
+                *map(_detect_measure, images))
 
         # clustering + relative position measurement
         logger.info('Identifying stars')
@@ -825,8 +809,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if plot:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(13.9, 2))  # shape for slotmode
-            ax.set_title(
-                    f'Position Measurements (CoM) {n} frames')  # fontweight='bold'
+            ax.set_title(f'Position Measurements (CoM) {n} frames')
+            # fontweight='bold'
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
