@@ -16,8 +16,8 @@ from operator import attrgetter
 import numpy as np
 from scipy import ndimage
 from astropy.utils import lazyproperty
-from photutils import SegmentationImage, Segment
-from photutils.segmentation import detect_sources
+from photutils.segmentation import SegmentationImage, Segment
+from photutils.segmentation.detect import detect_array
 from photutils.detection.core import detect_threshold
 
 # local libs
@@ -74,7 +74,7 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
     logger.debug('Running detect(snr=%.1f, npixels=%i)', snr, npixels)
 
     if mask is None:
-        mask = False
+        mask = False  # need this for logical operators below to work
 
     # calculate threshold without edges so that std accurately measured for
     # region of interest
@@ -95,25 +95,19 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
     threshold = detect_threshold(image, snr, background, mask=mask)
     if mask is False:
         mask = None  # annoying photutils #HACK
-    obj = detect_sources(image, threshold, npixels, mask=mask)
+    seg = detect_array(image, threshold, npixels, mask=mask)
 
-    #
-    if np.all(obj.data == 0):
+    # check if anything detected
+    no_sources = (np.sum(seg) == 0)
+    if no_sources:
         logger.debug('No objects detected')
-        return obj
 
-    # if border is not False:
-    #     obj.remove_masked_labels(border, partial_overlap=False)
-
-    if deblend:
+    if deblend and not no_sources:
         from photutils import deblend_sources
-        obj = deblend_sources(image, obj, npixels)
-        # returns altered copy of instance
+        seg = deblend_sources(image, seg, npixels).data
 
-    if logger.getEffectiveLevel() > logging.INFO:
-        logger.debug('Detected %i objects across %i pixels.', obj.nlabels,
-                     obj.data.astype(bool).sum())
-    return obj
+    # intentionally return an array
+    return seg
 
 
 def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
@@ -142,7 +136,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 
     `snr`, `npixels`, `dilate` can be sequences in which case the next value
     from each will be used in the next detection loop. If scalar, same value
-    during each iteration while mask in updated
+    during each iteration while mask is updated
 
     Parameters
     ----------
@@ -421,7 +415,6 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
 
     n_images = len(segmentations)
     n_accept = max(f_accept * n_images, 1)
-
 
     eim = shift_combine(segmentations.astype(bool), xy_offsets, 'sum',
                         extend=extend)
@@ -868,7 +861,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         * support for calculations on masked arrays
         * methods for basic statistics on segments (mean, median etc)
         * methods for calculating center of mass, counts, flux in segments
-        * re-ordering (sorting) labels by counts
+        * re-ordering (sorting) labels by counts in an image
         * preparing masks for photometry (2d, 3d)
         * dilating, eroding segments, transforming to annuli
         * selecting subsets of the segmentation image
@@ -935,17 +928,21 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
 
         # segmentation image based on sigma-clipping
-        obj = detect(image, mask, background, snr, npixels, edge_cutoff,
+        seg = detect(image, mask, background, snr, npixels, edge_cutoff,
                      deblend)
 
         # Initialize
-        new = cls(obj.data)
+        obj = cls(seg)
 
         #
         if dilate:
-            new.dilate(iterations=dilate)
-        #
-        return new
+            obj.dilate(iterations=dilate)
+
+        if cls.logger.getEffectiveLevel() > logging.INFO:
+            logger.debug('Detected %i objects across %i pixels.', obj.nlabels,
+                         obj.to_bool().sum())
+
+        return obj
 
     # # TODO:
     # @classmethod
@@ -1028,7 +1025,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # data = SegmentedArray(data, self)
         self.set_data(data)
 
-    def set_data(self, data):
+    def set_data(self, value):
         # now subclasses can over-write this function to implement stuff
         # without touching the property definition above. This should be in the
         # base class!
@@ -1040,7 +1037,15 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # TODO: manage through class method allow_negative
 
-        return SegmentationImage.data.fset(self, data)
+        if np.any(~np.isfinite(value)):
+            raise ValueError('data must not contain any non-finite values '
+                             '(e.g. NaN, inf)')
+
+        if '_data' in self.__dict__:
+            # needed only when data is reassigned, not on init
+            self._reset_lazy_properties()
+
+        self._data = value
 
     @lazyproperty
     def has_zero(self):
@@ -1122,9 +1127,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if labels is None:
             return self.slices
 
-        indices = self.has_labels(labels) - (not self.use_zero)
-        return [self.slices[_] for _ in indices]
-
+        return [self.slices[_] for _ in self.index(labels)]
+    #
     @lazyproperty
     def labels(self):
         # overwrite labels property to allow the use of zero label
@@ -1192,11 +1196,11 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if self.is_consecutive:
             return labels - (not self.use_zero)
         else:
-            return np.digitize(labels, self.labels)
+            return np.digitize(labels, self.labels) - (not self.use_zero)
 
     # --------------------------------------------------------------------------
     @lazyproperty
-    def masks(self):
+    def masks(self):    # todo: use photutils function?
         """
         For each (label, slice) pair: a boolean array of the cutout
         segmentation image containing False where
@@ -1855,30 +1859,45 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         counter = itt.count()
         com = np.empty((len(labels), 2))
-        for lbl, (seg, sub, msk, grd) in self.coslice(
-                self.data, image, mask, grid, labels=labels, enum=True):
+        try:
+            for lbl, (seg, sub, msk, grd) in self.coslice(
+                    self.data, image, mask, grid, labels=labels, enum=True):
 
-            # ignore whatever is in this slice and is not same label as well
-            # as any external mask
-            use = (seg == lbl)
-            if msk is not None:
-                use &= ~msk
+                # ignore whatever is in this slice and is not same label as well
+                # as any external mask
+                use = (seg == lbl)
+                if msk is not None:
+                    use &= ~msk
 
-            #
-            sub = bg_sub(sub)
-            grd = grd[:, use]
-            sub = sub[use]
+                #
+                sub = bg_sub(sub)
+                grd = grd[:, use]
+                sub = sub[use]
 
-            # compute sum
-            sum_ = sub.sum()
-            if sum_ == 0:
-                warnings.warn(f'Function `com_bg` encountered zero-valued '
-                              f'image segment at label {lbl}.')
-                # can skip next
+                # compute sum
+                sum_ = sub.sum()
+                if sum_ == 0:
+                    warnings.warn(f'Function `com_bg` encountered zero-valued '
+                                  f'image segment at label {lbl}.')
+                    # can skip next
 
-            # compute centre of mass
-            com[next(counter)] = (sub * grd).sum(axes_sum) / sum_
-            # may be nan / inf
+                # compute centre of mass
+                com[next(counter)] = (sub * grd).sum(axes_sum) / sum_
+                # may be nan / inf
+        except Exception as err:
+            from IPython import embed
+            import traceback
+            import textwrap
+            embed(header=textwrap.dedent(
+                """\
+                Caught the following %s:
+                ------ Traceback ------
+                %s
+                -----------------------
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % (err.__class__.__name__, traceback.format_exc()))
+            raise
+
         return com
 
     # def com_bg(self, image, labels=None, mask=None, bg_func=np.median):

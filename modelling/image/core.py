@@ -19,16 +19,9 @@ from graphical.imagine import VideoDisplay
 from ..parameters import Parameters
 from ...phot.utils import LabelGroupsMixin
 from ..utils import load_memmap, int2tup
-from ..core import Model, UnconvergedOptimization
+from ..core import Model, CompoundModel, UnconvergedOptimization
 from ...phot.segmentation import SegmentationGridHelper
 
-
-# from pprint import pprint
-
-# from recipes.array import neighbours
-
-
-# from IPython import embed
 
 # TODO: class that fits all stars simultaneously with MCMC. compare for speed
 # / accuracy etc...
@@ -36,79 +29,13 @@ from ...phot.segmentation import SegmentationGridHelper
 # idea: detect stars that share windows and fit simultaneously
 
 
-# def agro(dtypes, labels):
-#     if len(dtypes):
-#         dtypes.append((g, dtype, ()))
 #
 
-class ModelContainer(OrderedDict, LoggingMixin):
 
-    def __init__(self, *args, **kws):
-        super().__init__(*args, **kws)
-        self._names = None
-
-    @property
-    def dofs(self):
-        return self.attrgetter('dof')
-
-    @property
-    def dof(self):
-        """Total number of free parameters considering all constituent models"""
-        return sum(self.dofs)
-
-    @property
-    def names(self):
-        """unique model names"""
-        if self._names is None:
-            self._names = self.unique_names()
-            self.rename_models(self._names)
-        return self._names
-
-    def attrgetter(self, *attrs):
-        getter = operator.attrgetter(*attrs)
-        return list(map(getter, self.values()))
-
-    def unique_names(self, default_name='model'):
-        """
-        Get mapping from labels to a set of unique model names.  Names are
-        taken from component models where possible, substituting
-        `default_name` for unnamed models. Numbers are underscore appended to
-        ensure uniqueness of names. Useful for nested parameter construction.
-
-        Returns
-        -------
-        names: dict
-            model names keyed on segment labels
-        """
-        assert isinstance(default_name, str)
-        #
-        names = [getattr(m, 'name', None) or default_name
-                 for m in self.values()]
-
-        # check for duplicate names
-        unames = set(names)
-        if len(unames) != len(names):
-            # models have duplicate names
-            self.logger.info('Renaming %i models', len(unames))
-            new_names = []
-            for name, indices in tally(names).items():
-                fmt = '%s{:d}' % name
-                new_names.extend(
-                        map(fmt.format, range(len(indices))))
-            names = new_names
-        return names
-
-    def rename_models(self, names):
-        for model, name in zip(self.values(), names):
-            model.name = name
-
-
-class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
+class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
     """
-
-    # TODO: inherit from CompoundModel ???
 
     # TODO: refactor to use list of Segments  ListOfSegments from
     #  self.segm.segments / self.segmentation.segments
@@ -116,10 +43,7 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
 
     # TODO: mask_policy.  filter / set error to inf
 
-    # self.bg = bg  # TODO: many models - combinations of psf + bg models
-
     # FIXME: implement group stuff in different class HierarchicalImageModel
-    # LayeredImageModel
 
     # use record arrays for fit results (structured parameters)
     use_record = False
@@ -150,12 +74,13 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
         # add new detections to model ??
         return new
 
-    def __init__(self, segm, models=()):  # , label_groups=None
+    def __init__(self, seg, models=()):  # , label_groups=None
         """
 
         Parameters
         ----------
-        segm: SegmentationHelper
+        seg: np.ndarray, SegmentationHelper
+            The segmentation
         models: {sequence, dict}
             The sequence of models.
             If a sequence, assume the mapping from models to image sections is
@@ -163,55 +88,38 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             segmentation image. `models` can also be an empty sequence,
             in which case the object will initially not contain any models.
             The `add_model` method can be used to add models retro-actively
-            before compute.
+            before evaluation.
             If dict, keys correspond to labels in the segmentation image
-
-            if label_groups given, match labels
-        label_groups: dict, optional
-            Create one to many mapping between model and segments. i.e. The
-            same model will be used for multiple segments.
         """
 
-        # init segments
-        self.set_segments(segm)
         # init container
+        CompoundModel.__init__(self)
+
+        # init segments
+        self.set_segments(seg)
+
+        # add models
         self.set_models(models)
 
         # optional unique names for parameter construction
-        self._names = None
+        # self._names = None
 
         # probably check the labels in the groups
         # # optional named groups
         # LabelGroupsMixin.__init__(self, label_groups)
         # self.groups.info = Record()
 
-    # def __reduce__(self):
-    #     # helper method for unpickling.
-    #     return self.__class__, (self.segm, list(self.models))
-
-    # def __getattr__(self, key):
-    #     names = self.models.names
-    #     # FIXME RecursionError: maximum recursion depth exceeded
-    #     if key in names:
-    #         return self.names_to_models()[key]
-    #     return super().__getattribute__(key)
-
-    @property
-    def dof(self):
-        return self.models.dof
+    # def evaluate(self, model, labels, mask=False, extract=False):
+    #     # segmented = self.segm.coslice(self.segm.grid,
+    #     #                               labels=labels, mask=mask, extract=extract)
+    #     # for i, grid in enumerate(segmented):
+    #     for lbl in self.segm.resolve_labels(labels):
+    #         grid = self.segm.coord_grids[lbl]
+    # g = model.adapt_grid(grid)
 
     @property
     def nlabels(self):
         return self.segm.nlabels
-
-    # @property
-    # def ngroups(self):
-    #     return len(self.groups)
-
-    @property
-    def nmodels(self):
-        """number of segments with models"""
-        return len(self.models)
 
     def set_models(self, models):
         #
@@ -228,7 +136,7 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
             self.segm.check_labels(list(models.keys()))
 
         # init container
-        self.models = ModelContainer(models)
+        CompoundModel.set_models(self, models)
 
     def set_segments(self, seg):
         if isinstance(seg, SegmentationGridHelper):
@@ -242,128 +150,16 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
         else:
             self.segm = SegmentationGridHelper(seg)
 
-    def add_model(self, model, labels):  # group=None
-        """
-
-        Parameters
-        ----------
-        model:
-
-        labels: array-like
-            image segments for which the model will be used
-        group: str
-            the group to which this model segment belongs
-
-        Returns
-        -------
-
-        """
-        labels = self.segm.resolve_labels(labels)
-        # check if any models will be clobbered ?
-
-        for lbl in labels:
-            self.models[lbl] = model
-            # one model may be used for many labels
-
-        # if group is not None:
-        #     group_labels = self.groups.get(group, ())
-        #     group_labels = np.hstack([group_labels, labels])
-        #     self.groups[group] = group_labels
-
-        self._names = None
-
-    # @property
-    # def dtype(self):
-    #     if self._dtype in None:
-    #         self._dtype = self.get_dtype()
-    #     else:
-    #         return self._dtype
-
-    def models_to_labels(self, labels=None):
-        """Mapping from models to labels"""
-        #  Inverse of `self.models`
-
-        if labels is None:
-            labels = self.models.keys()
-        else:
-            labels_valid = set(self.models.keys())
-            labels_invalid = set(labels) - labels_valid  # maybe print these ???
-            labels = set(labels) - labels_invalid
-
-        m2l = defaultdict(list)
-        for lbl in labels:
-            m2l[self.models[lbl]].append(lbl)
-        return m2l
-
-    def names_to_models(self):
-        return dict(zip(self.models.names, self.models.values()))
-
-    # def get_dtype(self, labels=None):
-    #     dtype, _ = self._get_dtype(labels, groups)
-    #     # TODO: you can probably use some clever trickery to make
-    #     #  return_labels and optional
-    #     return dtype
-
-    def get_dtype(self, labels=None):
+    def get_dtype(self, labels=all):
         # build the structured np.dtype object for a particular set of labels.
         # default is to use the full set of models
 
         dtypes = []
-        for mdl, lbls in self.models_to_labels(labels).items():
+        for mdl, lbls in self.models.invert(labels).items():
             dtype = self._adapt_dtype(mdl, len(lbls))
             dtypes.append(dtype)
 
         return dtypes
-
-    def _adapt_dtype(self, model, out_shape):
-        # adapt the dtype of a component model so that it can be used with
-        # other dtypes in a (possibly nested) structured dtype. `out_shape`
-        # allows for results (optimized parameters) of models that are used in
-        # more than one segment to be represented by a 2D array.
-
-        # make sure size in a tuple
-        if out_shape == 1:
-            out_shape = ()
-        else:
-            out_shape = int2tup(out_shape)
-
-        dt = model.get_dtype()
-        if len(dt) == 1:  # simple 1 component model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, out_shape + dof
-        else:  # compound model
-            # structured dtype - nest!
-            return model.name, dt, out_shape
-
-    def _results_container(self, labels=None, dtype=None, fill=np.nan,
-                           shape=()):
-        # create the container `np.recarray` for the result of an
-        # optimization run on `models` in `groups`
-
-        # build model dtype
-        if dtype is None:
-            dtype = self.get_dtype(labels)
-
-        # create array
-        out = np.full(shape, fill, dtype)
-
-        if self.use_record:
-            return np.rec.array(out)
-
-        if self.use_params:
-            return Parameters(out)
-
-        return out
-
-    # def evaluate(self, model, labels, mask=False, extract=False):
-    #     # segmented = self.segm.coslice(self.segm.grid,
-    #     #                               labels=labels, mask=mask, extract=extract)
-    #     # for i, grid in enumerate(segmented):
-    #     for lbl in self.segm.resolve_labels(labels):
-    #         grid = self.segm.coord_grids[lbl]
-    # g = model.adapt_grid(grid)
 
     def fit(self, data, stddev=None, **kws):
         """
@@ -536,139 +332,6 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
 
         return ImageModelAnimation(self, shape)
 
-    # def _fit_model_simul(self, model, data, std, labels, results, **kws):
-
-    # def fit_model(self, *args, **kws):
-    #     """
-    #     call signature:
-    #         fit_model(model, data, std=None, labels=None)
-    #     or
-    #         fit_model(data, std=None, labels=None) if only one model
-    #
-    #     Fit this model for all segments
-    #     """
-    #     # For convenience, allow(data, std) signature if there is only 1 model
-    #     if isinstance(args[0], np.ndarray):
-    #         if self.nmodels == 1:
-    #             args = self.models[0], *args
-    #         else:
-    #             raise TypeError('Need model')
-    #
-    #     model, data, *rest = args
-    #     std, *labels = rest if len(rest) else None, *()
-    #     labels = labels[0] if len(labels) else None
-    #     labels = self.resolve_labels(labels)
-    #
-    #     shape = 1 if len(labels) == 1 else ()
-    #     dtype = self.get_dtype((model,), labels, squeeze=True)
-    #     results = np.full(shape, np.nan, dtype)
-    #     self._fit_model_sequential(model, data, std, labels, results, **kws)
-    #
-    #     return results[model.name].squeeze()
-
-    # def _fit_model_reduce(self, model, data, std, labels, results, **kws):
-    #     """
-    #     Get the minimized residual for model on labels, given data (and
-    #     uncertainties.
-    #
-    #     Fit this model for all segments
-    #     """
-    #     resi = data
-    #     extra = kws.pop('grow_segments', 0)
-    #     mask_bg = kws.pop('mask_bg', True)
-    #     flatten = kws.pop('flatten', False)
-    #     # labels = self.segm.groups[group]
-    #     segmented = self.segm.coslice(resi, std, labels=labels, mask_bg=mask_bg,
-    #                                   flatten=flatten, enum=True)
-    #     i = 0
-    #     if extra:
-    #         slices = self.segm.slices.grow(labels, extra)
-    #     else:
-    #         slices = self.segm.get_slices(labels)
-    #
-    #     for lbl, (sub, substd) in segmented:
-    #         grid = model.adapt_grid(self.segm.coord_grids[lbl])
-    #         r = model.fit(sub, grid, substd, **kws)
-    #
-    #         # resi[self.segm.slices[labels[i]]] -= model.residuals(r, sub, grid)
-    #
-    #         # resi.append( model.residuals(r, sub, grid) )
-    #
-    #         # print('III', resi[self.segm.slices[labels[i]]].shape)
-    #         # print('JJ', rr.shape)
-    #
-    #         if r is not None:
-    #             try:
-    #                 # print('results', model.name, r)
-    #                 results[i] = r
-    #                 slice = slices[i]
-    #                 resi[slice] = model.residuals(r, data[slice], grid)
-    #                 # foo.append(rr)
-    #                 # resi[slice] = rr
-    #             except Exception as err:
-    #                 from IPython import embed
-    #                 import traceback, textwrap
-    #                 header = textwrap.dedent(
-    #                         """\
-    #                         Caught the following %s:
-    #                         ------ Traceback ------
-    #                         %s
-    #                         -----------------------
-    #                         Exception will be re-raised upon exiting this embedded interpreter.
-    #                         """) % (
-    #                              err.__class__.__name__, traceback.format_exc())
-    #                 embed(header=header)
-    #                 raise
-    #
-    #         else:
-    #             'what to do with parameters here? Keep as nans? mask? bork!!?'
-    #         #     warnings.warn('Model fit for %r failed.' % model.name)
-    #         i += 1
-    #
-    #     return results, resi
-
-    #
-    # def _fit_segment(self, sub, sub_std, grid, models=None):
-    #     """
-    #     Fit various models for single segment
-    #     """
-    #     # this method is for convenience
-    #     models = models or self.models
-    #     gof = np.full((len(models), len(self.metrics)), np.nan)
-    #     par, paru = [], []  # parameter values and associated uncertainty
-    #     for m, r in enumerate(self._gen_fits(sub, sub_std, grid, models)):
-    #         if r is None:
-    #             continue
-    #
-    #         # aggregate results
-    #         p, pu, gof[m] = r
-    #         par.append(p)
-    #         paru.append(pu)
-    #
-    #         # convert here??
-    #         # if i:
-    #         #     p, _, gof[m] = r
-    #         #     model = models[m]
-    #         # self.save_params(i, j, model, r, sub)
-    #
-    #     # choose best fitting model and save those fluxes
-    #     # ix_bm, best_model = self.model_selection(i, j, gof, models)
-    #
-    #     # if i:
-    #     #     # save best fit flux
-    #     #     self.best.ix[i, j] = ix_bm
-    #     #     self.best.flux[i, j] = self.data[best_model].flux[i, j]
-    #     #     self.best.flux_std[i, j] = self.data[best_model].flux_std[i, j]
-    #
-    #     return par, paru, gof
-    #
-    # def _gen_fits(self, sub, sub_stddev, grid, models=None):
-    #     # TODO: use this task producer more efficiently
-    #     models = models or self.models
-    #     for model in models:
-    #         p0 = model.p0guess(sub, grid, sub_stddev)
-    #         yield model.fit(p0, sub, grid, sub_stddev)
-    #
     # def model_selection(self, gof):
     #     """
     #     Select best model based on goodness of fit metric(s)
@@ -702,6 +365,18 @@ class SegmentedImageModel(Model, LabelGroupsMixin, LoggingMixin):
 class HierarchicalImageModel(LabelGroupsMixin):  # CompoundModel ??
 
     def __init__(self, segm, groups=None):
+
+        """
+
+        Parameters
+        ----------
+        segm
+        groups
+                    if label_groups given, match labels
+        label_groups: dict, optional
+            Create one to many mapping between model and segments. i.e. The
+            same model will be used for multiple segments.
+        """
         LabelGroupsMixin.__init__(groups)
 
         self.groups.info = Record()
@@ -709,9 +384,9 @@ class HierarchicalImageModel(LabelGroupsMixin):  # CompoundModel ??
         for grp, labels in groups.items():
             SegmentedImageModel(segm, models)
 
-        @property
-        def ngroups(self):
-            return len(self.groups)
+    @property
+    def ngroups(self):
+        return len(self.groups)
 
     def add_model(self, model, group, labels):
         """

@@ -284,7 +284,7 @@ def shift_combine(images, offsets, stat='mean', extend=False):
 
 
 class ImageSampler(object):
-    def __init__(self, data, sample_size=None):
+    def __init__(self, data, sample_size=None):  # FIXME: sample_size --> subset
         assert data.ndim == 3
         self.data = data
         self._axis = 0
@@ -309,6 +309,9 @@ class ImageSampler(object):
         if n is None and self.sample_size is None:
             raise ValueError('Please give sample size (or initialize this '
                              'class with a sample size')
+
+        if subset is None:
+            subset = (0, len(self.data))
 
         if isinstance(subset, numbers.Integral):
             subset = (0, subset)  # treat like a slice
@@ -348,7 +351,8 @@ class ImageSampler(object):
 class ImageSamplerHDUMixin(object):
     def get_sample_image(self, size, interval=(None,), func='median',
                          channel=...):
-        sampler = ImageSampler(self.data[slice(*interval), channel])
+        sampler = ImageSampler(self.data[:, channel], interval)
+        # TODO: handle callable func
         return getattr(sampler, func)(size)
 
 

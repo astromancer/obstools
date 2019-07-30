@@ -277,24 +277,11 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
 
         # compute position residuals
         cxr = xy - centres - xy_offsets
+
         # flag outliers
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings('error')
-                d = np.sqrt((cxr * cxr).sum(-1))  # FIXME RuntimeWarning
-        except Exception as err:
-            from IPython import embed
-            import traceback
-            import textwrap
-            embed(header=textwrap.dedent(
-                """\
-                Caught the following %s:
-                ------ Traceback ------
-                %s
-                -----------------------
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % (err.__class__.__name__, traceback.format_exc()))
-            raise
+        with warnings.catch_warnings():  # catch RuntimeWarning for masked
+            warnings.filterwarnings('ignore')
+            d = np.sqrt((cxr * cxr).sum(-1))
 
         out_new = (d > d_cut)
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
@@ -388,11 +375,14 @@ def group_features(classifier, *features):
     return tuple(grouped)
 
 
-def report_measurements(xy, centres, σ_xy, counts=None,
-                        detect_frac_min=None, logger=logger):
+def report_measurements(xy, centres, σ_xy, counts=None, detect_frac_min=None,
+                        count_thresh=None, logger=logger):
     # report on relative position measurement
+    import operator as op
+
     from recipes import pprint
     from motley.table import Table, highlight
+    from motley.utils import ConditionalFormatter
 
     # TODO: probably mask nans....
 
@@ -417,27 +407,27 @@ def report_measurements(xy, centres, σ_xy, counts=None,
         points_per_star = np.tile(n_points, n_stars)
         extra = ''
 
-    f_detect = points_per_star / n_points
-    # f_detect
+    col_headers = ['n (%)', 'x (px.)', 'y (px.)']
+    fmt = {0: ftl.partial(pprint.decimal_with_percentage,
+                          total=n_points, precision=(0, 1), right_pad=1)}
 
-    col_headers = ['n', 'n (%)', 'x (px.)', 'y (px.)']
-    # get array with number ± std representations
-    pos_tbl = pprint.uarray(centres, σ_xy, 2)[:, ::-1]
     if detect_frac_min is not None:
-        f_detect = highlight(f_detect * 100, f_detect < detect_frac_min, 'y',
-                             precision=1, compact=False)
+        n_min = detect_frac_min * n_points
+        fmt[0] = ConditionalFormatter('y', op.lt, n_min, fmt[0])
 
-    columns = [points_per_star[:, None],
-               f_detect,
-               pos_tbl, ]
+    # get array with number ± std representations
+    columns = [points_per_star,
+               pprint.uarray(centres, σ_xy, 2)[:, ::-1]]
 
-    fmt = {}
     if counts is not None:
         # TODO highlight counts?
         cn = 'counts (e⁻)'
         fmt[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
                               compact=False)
-        columns.append(counts)  # pprint.numeric_array(counts, thousands=' ')
+        if count_thresh:
+            fmt[cn] = ConditionalFormatter('c', op.ge, count_thresh,
+                                           fmt[cn])
+        columns.append(counts)
         col_headers += [cn]
 
     # tbl = np.ma.column_stack(columns)
@@ -451,6 +441,7 @@ def report_measurements(xy, centres, σ_xy, counts=None,
                              number_rows=True,
                              total=[0],
                              formatters=fmt)
+
 
     logger.info('\n' + str(tbl) + extra)
     return tbl
@@ -632,11 +623,15 @@ class GlobalSegmentation(SegmentationMasksHelper):
     @classmethod
     def merge(cls, segmentations, xy_offsets, extend=True, f_accept=0.5,
               post_dilate=1):
+        # zero point correspond to minimum offset from initializer and serves as
+        # coordinate reference
+        # make int type to avoid `Cannot cast with casting rule 'same_kind'
+        # downstream
         return cls(merge_segmentations(segmentations, xy_offsets,
                                        extend,
                                        f_accept,
                                        post_dilate),
-                   np.floor(xy_offsets.min(0)))
+                   zero_point=np.floor(xy_offsets.min(0)).astype(int))
 
     def __init__(self, data, zero_point):
         super().__init__(data)
@@ -801,8 +796,23 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         n, *ishape = images.shape
         # detect sources, measure locations
         _detect_measure = ftl.partial(detect_measure, **detect_kws)
-        segmentations, coms = zip(
-                *worker_pool.map(_detect_measure, images))
+        try:
+            segmentations, coms = zip(
+                    *map(_detect_measure, images))
+        except Exception as err:
+            from IPython import embed
+            import traceback
+            import textwrap
+            embed(header=textwrap.dedent(
+                """\
+                Caught the following %s:
+                ------ Traceback ------
+                %s
+                -----------------------
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % (err.__class__.__name__, traceback.format_exc()))
+            raise
+
 
         # clustering + relative position measurement
         logger.info('Identifying stars')
@@ -815,7 +825,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if plot:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(13.9, 2))  # shape for slotmode
-            ax.set_title(f'Position Measurements (CoM) {n} frames') # fontweight='bold'
+            ax.set_title(
+                    f'Position Measurements (CoM) {n} frames')  # fontweight='bold'
             plot_clusters(ax, clf, np.vstack(coms)[:, ::-1])
             ax.set(**dict(zip(map('{}lim'.format, 'yx'),
                               tuple(zip((0, 0), ishape)))))
@@ -837,7 +848,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             from obstools.phot.diagnostics import plot_position_measures
 
             fig, axes = plot_position_measures(xy, centres, xy_offsets)
-            fig.suptitle('Position Measurements (CoM)') # , fontweight='bold'
+            fig.suptitle('Position Measurements (CoM)')  # , fontweight='bold'
             display(fig)
 
         # combine segmentation images
@@ -892,6 +903,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
                     seg_glb.flux, ((image, ij0)
                                    for i, (ij0, image) in
                                    enumerate(zip(llcs, images))))
+
             counts[:, ~ok] = np.ma.masked
             counts_med = np.ma.median(counts, 0)
 
@@ -1024,7 +1036,10 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # zero point for tracker (slices of the extended frame) correspond to
         # minimum offset
         xy_off_min = xy_offsets.min(0)
-        zero_point = np.floor(xy_off_min)
+        zero_point = np.floor(xy_off_min).astype(int)
+        # zero point int type avoids `Cannot cast with casting rule 'same_kind'
+        # downstream
+
         # δ = zero_point - xy_off_min
 
         # MEASURE FLUXES HERE. bright objects near edges of the slot
@@ -1511,7 +1526,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         self.report_measurements(xym, centres, σ_pos)
 
     def report_measurements(self, xy=None, centres=None, σ_xy=None,
-                            counts=None, detect_frac_min=None):
+                            counts=None, detect_frac_min=None,
+                            count_thresh=None):
 
         if xy is None:
             nans = np.isnan(self.measurements)
@@ -1525,7 +1541,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             σ_xy = self.sigma_rvec
 
         return report_measurements(xy, centres, σ_xy, counts, detect_frac_min,
-                                   logger=self.logger)
+                                   count_thresh, self.logger)
 
     def group_measurements(self, *measurement_sets):
         return group_features(self.clustering, *measurement_sets)

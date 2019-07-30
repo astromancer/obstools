@@ -77,6 +77,11 @@ def load_memmap(loc, shape=None, dtype=None, fill=None, clobber=False):
     #  amount of header info for easily loading the array
     mm = np.lib.format.open_memmap(str(loc), mode, dtype, shape)
 
+    if mm.shape != shape:
+        logger.warning(f'Loaded memmap has shape {mm.shape}, which is '
+                       f'different to that requested: {shape}. Overwrite: '
+                       f'{clobber}')
+
     # overwrite data
     if (new or clobber) and (fill is not None):
         logger.debug('Over-writing data with %g', fill)

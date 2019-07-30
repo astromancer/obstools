@@ -2,7 +2,7 @@
 import numbers
 # import json
 import operator
-from collections import OrderedDict as odict
+from collections import OrderedDict as odict, OrderedDict
 
 import numpy as np
 from IPython import embed
@@ -136,10 +136,42 @@ class Model(OptionallyNamed, LoggingMixin):
     raise_on_failure = False  # if minimize reports failure, should I raise?
     # warnings for nans / inf
     do_checks = True
-    # masked array handelling
+    # masked array handling
     compress_ma = None  # only if method == 'leastsq'
 
-    def __call__(self, p, grid=None):
+    def __call__(self, p, grid=None, *args, **kws):
+        """
+        Evaluate the model at the parameter (vector) `p`
+
+        Parameters
+        ----------
+        p
+        grid
+        args
+        kws
+
+        Returns
+        -------
+
+        """
+        p = self._check_params(p)
+        return self.eval(p, grid)
+
+    def eval(self, p, grid):
+        """
+        This is the main compute method, while __call__ handles variable
+        checks etc. Subclasses can overwrite both as needed, but must
+        overwrite `eval`
+
+        Parameters
+        ----------
+        p
+        grid
+
+        Returns
+        -------
+
+        """
         raise NotImplementedError
 
     def _check_params(self, p):
@@ -147,13 +179,10 @@ class Model(OptionallyNamed, LoggingMixin):
             raise ValueError('Parameter vector size (%i) does not match '
                              'degrees of freedom (%i) for model %r' %
                              (len(p), self.dof, self))
+        return p
 
     def p0guess(self, data, grid=None, stddev=None):
         raise NotImplementedError
-
-    # def get_name(self):
-    #     # ensure lower case names
-    #     return super().get_name().lower()
 
     def get_dtype(self):
         # todo: use p0guess to determine the dtype in pre_process?? / pre_fit
@@ -173,7 +202,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return np.square(self.residuals(p, data, grid))
 
     def frs(self, p, data, grid=None):
-        """squared residuals flattened"""
+        """squared residuals flattened to a vector"""
         return self.rs(p, data, grid).flatten()
 
     def rss(self, p, data, grid=None):
@@ -188,7 +217,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return self.rs(p, data, grid) / stddev
 
     def fwrs(self, p, data, grid=None, stddev=None):
-        """flattened weighted squared residuals"""
+        """weighted squared residuals vector"""
         return self.wrs(p, data, grid, stddev).ravel()
         # if np.ma.isMA(fwrs):
         #     return fwrs.compressed()
@@ -223,9 +252,8 @@ class Model(OptionallyNamed, LoggingMixin):
         rss = self.rss(p, data, grid)
         return 1 - rss / tss
 
-    coefficient_of_determination = rsq
-
     # FIXME: alias not inherited if overwritten in subclass
+    coefficient_of_determination = rsq
 
     def aic(self, p, data, grid, stddev):
         """
@@ -307,6 +335,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return self.logLikelihood(p, data, grid, stddev)
 
     def pre_process(self, p0, data, grid=None, stddev=None, *args, **kws):
+        # TODO: rename pre_fit
         """This will be run prior to the minimization routine"""
 
         if p0 is None:
@@ -336,6 +365,7 @@ class Model(OptionallyNamed, LoggingMixin):
         return p0, data, grid, stddev, args, kws
 
     def post_process(self, p, *args, **kws):
+        # TODO: rename post_fit
         return p
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
@@ -360,7 +390,7 @@ class Model(OptionallyNamed, LoggingMixin):
             self.objective = self.wrss  # fwrs for leastsq...
 
         # check for nan / inf
-        if self.do_checks:
+        if self.do_checks:  # TODO: move to pre_fit ???
             #  this may be slow for large arrays.
             if np.isnan(data).any():
                 self.logger.warning('Your data contains nans.')
@@ -569,98 +599,272 @@ class SummaryStatsMixin(object):
 #     pass
 
 
-# from collections import MutableMapping
+from collections import MutableMapping, defaultdict
 
-class CompoundModel(AttrReadItem, ListLike, Model):
-    # base dict-like container for models
 
-    # TODO: better to keep more pure dict that can be keyed on anything?
-    #  then think of a consistent way of mapping to from semantic names
-    #  in the event that you want structured
+def make_unique_names(names):
+    # check for duplicate names
+    unames = set(names)
+    if len(unames) != len(names):
+        # models have duplicate names
+        new_names = []
+        for name, indices in tally(names).items():
+            fmt = '%s{:d}' % name
+            new_names.extend(map(fmt.format, range(len(indices))))
+        names = new_names
+    return names
 
-    def __init__(self, models=(), **kws):  #
+
+class ModelContainer(OrderedDict, LoggingMixin):
+    """
+    dict-like container for models
+    """
+
+    def __init__(self, models=(), **kws):
         """
         Create model container from sequence of models and or keyword,
         model pairs. Model names will be made a unique set by appending
         integers.
-
-
-        Parameters
-        ----------
-        models
-        kws
         """
 
-        # if isinstance(models, MutableMapping):
+        self._names = None
 
         mapping = ()
-        if len(models):
-            mapping = self._rename_models(models)
+        if isinstance(models, MutableMapping):
+            mapping = models
+        elif len(models):
+            # ensure we have named models
+            names = [getattr(m, 'name', None) for m in models]
+            if None in names:
+                raise ValueError('All models passed to container must be '
+                                 'named. You can (re)name them implicitly by '
+                                 'initializing %r via keyword arguments: eg:'
+                                 '`%s(bg=model)`' %
+                                 self.__class__.__name__)
+            # ensure names are unique
+            new_names = make_unique_names(names)
+            mapping = zip(new_names, models)
 
         # load models into dict
         super().__init__(mapping)
         self.update(**kws)
 
-        # note init with kws can mean we loose order in python < 3.6
-
-    # def __repr__(self):
-    #     return object.__repr__(self)
+        # note init with kws can mean we may loose order in python < 3.6
 
     def __setitem__(self, key, model):
+
+        # if not isinstance(model, Model):
+        #     raise ValueError('Components models must inherit from `Model`')
+
         # make sure the model has the same name that it is keyed on in the dict
-        if key != model.name:
-            # set the model name (avoid duplicate names in dtype for models
-            # of the same class)
-            model.name = key
+        # if key != model.name:
+        #     # set the model name (avoid duplicate names in dtype for models
+        #     # of the same class)
+        #     model.name = key
 
         return super().__setitem__(key, model)
 
-    def _rename_models(self, models):
-        models = tuple(filter(None, models))
-        names = [m.name for m in models]
-        if None in names:
-            raise ValueError('All models passed to container must be '
-                             'named. You can rename them implicitly by '
-                             'initializing %s via keyword arguments: '
-                             '`%s(bg=model)`' %
-                             self.__class__.__name__)
-        # check for duplicate names
-        unames = set(names)
-        if len(unames) != len(names):
-            # models have duplicate names
-            self.logger.info('Renaming %i models', len(unames))
-            new_names = []
-            for name, indices in tally(names).items():
-                for i in range(len(indices)):
-                    new_names.append('%s_%i' % (name, i))
-            names = new_names
-        #
-        return zip(names, models)
-
-    @property
-    def models(self):
-        return self.values()
-
-    @property
-    def nmodels(self):
-        return len(self)
+    def __iter__(self):
+        """Iterate over the models *not* the keys"""
+        return iter(self.values())
 
     @property
     def names(self):
-        return tuple(self.attrgetter('name'))
+        """unique model names"""
+        return self.attr_getter('name')
+
+    def attr_getter(self, *attrs):
+        getter = operator.attrgetter(*attrs)
+        return list(map(getter, self.values()))
+
+    def invert(self, keys=all):
+        """
+        Mapping from models to list of keys.  Useful helper for
+        constructing dtypes for compound models.  This mapping is
+        intentionally not one-to-one if there are multiple keys pointing to
+        the same model.  If you would like a one-to-one inverted mapping do:
+        >>> dict(zip(m.values(), m.keys()))
+
+        Parameters
+        ----------
+        keys
+
+        Returns
+        -------
+        dict keyed on models containing lists of the keys (labels)
+        corresponding to that model.
+        """
+        if keys is all:
+            keys = self.keys()
+        else:
+            keys_valid = set(self.keys())
+            keys_invalid = set(keys) - keys_valid  # maybe print these ???
+            keys = set(keys) - keys_invalid
+
+        inverse = defaultdict(list)
+        for key in keys:
+            inverse[self[key]].append(key)
+        return inverse
+
+    # def unique_names(self, default_name='model'):
+    #     """
+    #     Get mapping from labels to a set of unique model names.  Names are
+    #     taken from component models where possible, substituting
+    #     `default_name` for unnamed models. Numbers are underscore appended to
+    #     ensure uniqueness of names. Useful for nested parameter construction.
+    #
+    #     Returns
+    #     -------
+    #     names: dict
+    #         model names keyed on segment labels
+    #     """
+    #     assert isinstance(default_name, str)
+    #     #
+    #     names = [getattr(m, 'name', None) or default_name
+    #              for m in self.values()]
+    #
+    #     # check for duplicate names
+    #     return make_unique_names(names)
+    #
+    # def rename_models(self, names):
+    #     for model, name in zip(self.values(), names):
+    #         model.name = name
+
+
+class CompoundModel(Model):
+
+    def __init__(self, *args, **kws):
+        self._models = ModelContainer(*args, **kws)
+
+    def eval(self, p, grid):
+        raise NotImplementedError
+
+    @property
+    def models(self):
+        return self._models
+
+    @models.setter
+    def models(self, models):
+        self.set_models(models)
+
+    def set_models(self, models):
+        self._models = ModelContainer(models)
+
+    def add_model(self, model, keys):
+        """
+        Add a model to the compound model. If keys is array-like, this model
+        will be added once for each key
+
+        Parameters
+        ----------
+        model: Model instance
+
+        keys: {str, int, array-like}
+            key (or keys if array-like) for which this model will be used
+
+        Returns
+        -------
+
+        """
+        if not isinstance(keys, (list, tuple, np.ndarray)):
+            keys = keys,
+
+        # check if any models will be clobbered ?
+        for key in keys:
+            self.models[key] = model
+            # one model may be used for many labels
+
 
     @property
     def dofs(self):
-        return self.attrgetter('dof')
+        """Number of free parameters for each of the component models"""
+        return self.models.attr_getter('dof')
 
     @property
     def dof(self):
         """Total number of free parameters considering all constituent models"""
         return sum(self.dofs)
 
-    def attrgetter(self, *attrs):
-        getter = operator.attrgetter(*attrs)
-        return list(map(getter, self.values()))
+
+
+    # @property
+    # def dtype(self):
+    #     if self._dtype in None:
+    #         self._dtype = self.get_dtype()
+    #     else:
+    #         return self._dtype
+
+    def get_dtype(self, keys=all):
+        """
+        Build the structured np.dtype object for a particular model or
+        set of models. default is to use the full set of models
+
+        Parameters
+        ----------
+        keys: list of keys
+
+        Returns
+        -------
+
+        """
+        if keys is all:
+            keys = self.models.keys()
+
+        dtype = []
+        for key in keys:
+            dtype.append(
+                    self._adapt_dtype(self.models[key], ())
+            )
+        return dtype
+
+    def _adapt_dtype(self, model, out_shape):
+        # adapt the dtype of a component model so that it can be used with
+        # other dtypes in a (possibly nested) structured dtype. `out_shape`
+        # allows for results (optimized parameter values) of models that are
+        # used for more than one key (label) to be represented by a 2D array.
+
+        # make sure size in a tuple
+        if out_shape == 1:
+            out_shape = ()
+        else:
+            out_shape = int2tup(out_shape)
+
+        dt = model.get_dtype()
+        if len(dt) == 1:  # simple model
+            name, base, dof = dt[0]
+            dof = int2tup(dof)
+            # extend shape of dtype
+            return model.name, base, out_shape + dof
+        else:  # compound model
+            # structured dtype - nest!
+            return model.name, dt, out_shape
+
+    def _results_container(self, keys=all, dtype=None, fill=np.nan,
+                           shape=(), type_=Parameters):
+        """
+        Create a container of class `type_` for the result of an optimization
+        run on models associated with `keys`
+
+        Parameters
+        ----------
+        keys
+        dtype
+        fill
+        shape
+        type_
+
+        Returns
+        -------
+
+        """
+
+        # build model dtype
+        if dtype is None:
+            dtype = self.get_dtype(keys)
+
+        # create array
+        out = np.full(shape, fill, dtype)
+        return type_(out)
 
     def p0guess(self, data, grid=None, stddev=None, **kws):
         #
@@ -678,38 +882,10 @@ class CompoundModel(AttrReadItem, ListLike, Model):
 
         # loop through models to fit
         p = np.empty_like(p0)
-        for name, mdl in self.items():
-            p[name] = mdl.fit(p0[name], *args, **kws)
+        for key, mdl in self.models.items():
+            p[key] = mdl.fit(p0[key], *args, **kws)
 
         return p
-
-    def get_dtype(self, models=None):
-        # build the structured np.dtype object for a particular model or
-        # set of models. default is to use the full set of models
-        if models is None:
-            models = self.models
-
-        dtype = []
-        for i, mdl in enumerate(models):
-            dt = self._adapt_dtype(mdl, ())
-            dtype.append(dt)
-        return dtype
-
-    def _adapt_dtype(self, model, out_shape):
-        # adapt the dtype of a component model so that it can be used with
-        # other dtypes in a structured dtype
-        # make sure size in a tuple
-        out_shape = int2tup(out_shape)
-        dt = model.get_dtype()
-        if len(dt) == 1:  # simple model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, out_shape + dof
-        else:  # compound model
-            # structured dtype - nest!
-            return model.name, dt, out_shape
-
 
 # class CompoundSequentialFitter(CompoundModel):
 # FIXME: not always appropriate
@@ -782,8 +958,3 @@ class StaticGridMixin(object):
 
     def set_grid(self, grid):
         self._static_grid = grid
-
-    # def adapt_grid(self, grid):  # adapt_grid_segment
-    #     return None
-
-    # def
