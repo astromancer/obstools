@@ -1690,8 +1690,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return flx
 
     def count_sort(self, image, labels=None):
+        # todo: sort_by_count / sort_by('sum')
         """
-        Re-label segments for highest per-pixel counts in descending order
+        Re-label segments such they are ordered counts (brightest source) in
+        `image` descending order
         """
         labels = self.resolve_labels(labels)
         unsorted_labels = np.setdiff1d(self.labels, labels)
@@ -1725,7 +1727,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if len(old_labels) != len(new_labels):
             raise ValueError('Unequal number of labels')
 
-        forward_map = np.hstack([0, self.labels])
+        # forward_map = np.hstack([0, self.labels])
+        # there may be labels missing
+        forward_map = np.arange(self.max_label + 1)
         forward_map[old_labels] = new_labels
         self.data = forward_map[self.data]
 

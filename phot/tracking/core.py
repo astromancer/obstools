@@ -409,7 +409,7 @@ def report_measurements(xy, centres, σ_xy, counts=None, detect_frac_min=None,
 
     col_headers = ['n (%)', 'x (px.)', 'y (px.)']
     fmt = {0: ftl.partial(pprint.decimal_with_percentage,
-                          total=n_points, precision=(0, 1), right_pad=1)}
+                          total=n_points, precision=0)}  #  right_pad=1
 
     if detect_frac_min is not None:
         n_min = detect_frac_min * n_points
