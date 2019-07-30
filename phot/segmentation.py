@@ -410,8 +410,11 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
                         post_merge_dilate=1):
     # merge detections masks by align, summation, threshold
-    if isinstance(segmentations[0], SegmentationImage):
+    if isinstance(segmentations, (list, tuple)) and \
+            isinstance(segmentations[0], SegmentationImage):
         segmentations = np.array([seg.data for seg in segmentations])
+    else:
+        segmentations = np.asarray(segmentations)
 
     n_images = len(segmentations)
     n_accept = max(f_accept * n_images, 1)
@@ -1128,6 +1131,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             return self.slices
 
         return [self.slices[_] for _ in self.index(labels)]
+
     #
     @lazyproperty
     def labels(self):
@@ -1200,7 +1204,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     # --------------------------------------------------------------------------
     @lazyproperty
-    def masks(self):    # todo: use photutils function?
+    def masks(self):  # todo: use photutils function?
         """
         For each (label, slice) pair: a boolean array of the cutout
         segmentation image containing False where
@@ -1894,13 +1898,13 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             import traceback
             import textwrap
             embed(header=textwrap.dedent(
-                """\
-                Caught the following %s:
-                ------ Traceback ------
-                %s
-                -----------------------
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % (err.__class__.__name__, traceback.format_exc()))
+                    """\
+                    Caught the following %s:
+                    ------ Traceback ------
+                    %s
+                    -----------------------
+                    Exception will be re-raised upon exiting this embedded interpreter.
+                    """) % (err.__class__.__name__, traceback.format_exc()))
             raise
 
         return com
