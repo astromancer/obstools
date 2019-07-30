@@ -1709,6 +1709,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     def relabel_many(self, old_labels, new_labels):
         """
+        Reassign multiple labels
 
         Parameters
         ----------
