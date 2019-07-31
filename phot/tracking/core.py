@@ -1260,7 +1260,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     return self.segm.nlabels
 
     @property
-    def rcoo(self):  # todo rename coords / xy_coords
+    def rcoo(self):  # todo rename coords / coords_yx
         """
         Reference coordinates (yx). Computed as initial coordinates + relative
         coordinates to allow updating the relative positions upon call
@@ -1271,6 +1271,10 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     def rcoo_xy(self):  # todo rename coords_xy
         """Reference coordinates (xy)"""
         return self.rcoo[:, ::-1]
+
+    # @property
+    # def xy_offset_max(self):
+    #     return self.xy_offsets.max(0)
 
     def run(self, data, indices=None, pool=None, njobs=mp.cpu_count(),
             start_offset=None):
