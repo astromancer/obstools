@@ -62,7 +62,8 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
     background
     snr
     npixels
-    edge_cutoff
+    edge_cutoff:
+        only used for threshold calculation
     deblend
     dilate
 
