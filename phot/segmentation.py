@@ -1292,7 +1292,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return np.ma.array(image, mask=self.to_bool(labels))
 
     # alias
-    mask_foreground = mask_segments
+    mask_sources = mask_segments
 
     def mask_background(self, image):
         """Mask background (label <= 0)"""
