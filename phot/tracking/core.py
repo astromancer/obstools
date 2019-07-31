@@ -637,11 +637,20 @@ class GlobalSegmentation(SegmentationMasksHelper):
         self.zero_point = zero_point
 
     def get_start_indices(self, xy_offsets):
+        if np.ma.is_masked(xy_offsets):
+            raise ValueError('Cannot get start indices for masked offsets')
+
         return np.abs((xy_offsets + self.zero_point).round().astype(int))
 
-    def select_subset(self, start, shape):
-        return SegmentationHelper(
-                select_rect_pad(self, self.data, start, shape))
+    def select_subset(self, start, shape, type_=SegmentationHelper):
+        return self.select_subset(start, shape, type_)
+
+    def for_offset(self, xy_offsets, shape, type_=SegmentationHelper):
+        if np.ma.is_masked(xy_offsets):
+            raise ValueError('Cannot get segmented image for masked offsets')
+
+        return self.select_subset(
+                self.get_start_indices(xy_offsets), shape, type_)
 
     def flux(self, image, llc, labels=None, labels_bg=(0,), bg_stat='median'):
         sub = self.select_subset(llc, image.shape)
@@ -1589,7 +1598,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
     def get_segments(self, start, shape):
         """
-        ensure that if the start indices implies that we are beyond the
+        Ensure that if the start indices implies that we are beyond the
         limits of the global segmentation array, we return only overlapping data
 
 

@@ -447,6 +447,9 @@ def select_rect_pad(segm, image, start, shape):
     -------
 
     """
+    if np.ma.is_masked(start):
+        raise ValueError('Cannot select image subset for masked `start`')
+
     hi = np.array(shape)
     δtop = segm.shape - hi - start
     over_top = δtop < 0
@@ -1304,8 +1307,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     # Data extraction
     # --------------------------------------------------------------------------
-    def select_subset(self, start, shape):
+    def select_subset(self, start, shape, type_=None):
         """
+        FIXME: this description not entirely accurate - padding happens
+
         Create a smaller version of the segmentation image starting at
         yx-indices `start` and having shape `shape`
 
@@ -1313,12 +1318,19 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         ----------
         start
         shape
+        type_:
+            The desired type of output.  Can be any class (or callable) that
+            accepts an array as initializer, but will typically be a subclass of
+            `SegmentationImage`, or an `np.ndarray`.  If None (default),
+            an instance of this class is returned.
 
         Returns
         -------
 
         """
-        return self.__class__(select_rect_pad(self, self.data, start, shape))
+        if type_ is None:
+            type_ = self.__class__
+        return type_(select_rect_pad(self, self.data, start, shape))
 
     @staticmethod
     def _select_labels(image, labels, mask0, masking_func):
@@ -1333,8 +1345,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
         Return segmentation data keeping only `labels` and zeroing / masking
         everything else. This is almost like `keep_labels`, except that here
-        the internal data remain unchanged and instead a modified copy is
-        returned.
+        the internal data remain unchanged and instead a modified copy of the
+        `SegmentationImage` returned.
 
         Parameters
         ----------
@@ -1352,7 +1364,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         Get data of labels from image keeping only labeled regions and
         zeroing / masking everything else. Returns a 3d array with first
         dimension the size of labels
-        """
+        """  # TODO: update for nd ?
         return self._select_labels(image, labels, mask0, self.to_bool_3d)
 
     def clone(self, keep_labels=all, remove=None):
@@ -1579,7 +1591,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     def mean(self, image, labels=None):
         """
-        Mean per-pixel counts in each segment, not counting masked pixels
+        Mean per-pixel counts in each segment, ignoring masked pixels
 
         Parameters
         ----------
@@ -2178,7 +2190,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return im
 
 
-class SegmentationGridHelper(SegmentationHelper):
+class SegmentationGridHelper(SegmentationHelper):  # SegmentationModelHelper
     """Mixin class for image models with piecewise domains"""
 
     # TODO: make this a SelfAware class
