@@ -379,7 +379,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 #             #  decide based on estimated star flux whether or not to add ft
 #             #  streak model.
 #             threshold = 500
-#             ft, segm, strkLbl = FrameTransferBleed.from_image(
+#             ft, segm, strkLbl = PhotonBleed.from_image(
 #                     image, sh, threshold)
 #             # The frame transfer bleed model might be None if we only have
 #             # faint stars in the image
