@@ -81,7 +81,7 @@ class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
         # probably check the labels in the groups
         # # optional named groups
-        # LabelGroupsMixin.__init__(self, label_groups)
+        LabelGroupsMixin.__init__(self)
         # self.groups.info = Record()
 
     # def evaluate(self, model, labels, mask=False, extract=False):

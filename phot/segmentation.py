@@ -129,6 +129,7 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
 
 
 class MultiThresholdBlobDetection(object):
+    # algorithm defaults
     snr = (10, 7, 5, 3)
     npixels = (7, 5, 3)
     deblend = (True, False)
@@ -196,9 +197,9 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
         report = lvl <= logging.INFO
 
     # make iterables
-    varnames = ('snr', 'npixels', 'dilate', 'deblend')
-    variters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
-    vargen = zip(*variters)
+    var_names = ('snr', 'npixels', 'dilate', 'deblend')
+    var_iters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
+    var_gen = zip(*var_iters)
 
     # original_mask = mask
     if mask is None:
@@ -231,9 +232,10 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
             break
 
         # detect on residual image
-        _snr, _npix, _dil, _debl = opts = next(vargen)
-        new_seg = seg.detect(residual, mask, None, _snr, _npix,
-                             edge_cutoff, _debl, _dil)
+        # noinspection PyTupleAssignmentBalance
+        _snr, _npix, _dil, _debl = opts = next(var_gen)
+        new_seg = seg.detect(residual, mask, None, _snr, _npix, edge_cutoff,
+                             _debl, _dil)
 
         if not new_seg.data.any():
             logger.debug('break: no new detections')
@@ -257,7 +259,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 
         # group info
         groups.append(new_labels)  # groups[opts].extend(new_labels) ??
-        info.append(dict(zip(varnames, opts)))
+        info.append(dict(zip(var_names, opts)))
 
         if bg_model:
             # fit model, get residuals
@@ -311,7 +313,8 @@ class SourceDetectionMixin(object):
     can be used to construct image models from images.
     """
 
-    def detect(self, image, detect_sources, **kws):
+    @classmethod
+    def detect(cls, image, detect_sources, **kws):
         """
 
         Parameters
@@ -336,10 +339,10 @@ class SourceDetectionMixin(object):
         if not ((detect_sources is True) or kws):
             kws['max_iter'] = 0  # short circuit
 
-        return self._detect(image, **kws)
+        return cls._detect(image, **kws)
 
-    @staticmethod
-    def _detect(image, *args, **kws):
+    @classmethod
+    def _detect(cls, image, *args, **kws):
         """
         Default blob detection algorithm.  Subclasses can override as needed
         """
@@ -1749,7 +1752,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return ndimage.median(image, seg_data, labels)
 
-    def flux(self, image, labels=None, labels_bg=(0,), bg_stat='median'):  #
+    def flux(self, image, labels=None, labels_bg=(0,),
+             statistic_bg='median'):  #
         """
         An estimate of the net (background subtracted) source counts
 
@@ -1757,9 +1761,11 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         ----------
         image: ndarray
         labels: sequence of int
-        labels_bg: sequence of int of shape 1 or same shape as `labels` or
-                    SegmentationImage
-        bg_stat
+        labels_bg: sequence of int, np.ndarray, SegmentationImage
+            if sequence, must be of length 1 or same length as `labels`
+            if array of dimensionality 2, must be same shape as image
+
+        statistic_bg
 
         Returns
         -------
@@ -1769,6 +1775,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         labels = self.resolve_labels(labels)
 
         # for convenience, allow `labels_bg` to be a SegmentedImage!
+        # todo: 3d array for overlapping bg regions?
         if isinstance(labels_bg, np.ndarray) and labels_bg.shape == image.shape:
             labels_bg = self.__class__(labels_bg)
 
@@ -1788,14 +1795,13 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             seg_bg = self
 
         # resolve background counts estimate function
-        bg_stat = bg_stat.lower()
+        statistic_bg = statistic_bg.lower()
         known_estimators = ('mean', 'median')
-        if isinstance(bg_stat, str) and (bg_stat in known_estimators):
-            counts_bg_pp = getattr(seg_bg, bg_stat)(image)
+        if isinstance(statistic_bg, str) and (statistic_bg in known_estimators):
+            counts_bg_pp = getattr(seg_bg, statistic_bg)(image)
             counts_bg = counts_bg_pp * self.sum(np.ones_like(image), labels)
-        else:
-            # TODO: allow callable?
-            raise ValueError('Invalid value for parameter `bg_stat`.')
+        else:  # TODO: allow callable?
+            raise ValueError('Invalid value for parameter `statistic_bg`.')
 
         # mean counts per binned pixel (src + bg)
         counts = self.sum(image, labels)
