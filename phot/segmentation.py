@@ -306,15 +306,21 @@ class SourceDetectionMixin(object):
         ----------
         image
         detect_sources: bool
-            Controls whether source detection algorithm is run
+            Controls whether source detection algorithm is run. This argument
+            provides a shortcut to the default source detection by setting
+            `True`, or alternatively to skip source detection by setting
+            `False`
         kws:
-            Keywords for source detection
+            Keywords for source detection algorithm
 
         Returns
         -------
 
         """
         # Detect objects & segment image
+        if isinstance(detect_sources, dict):
+            kws.update(detect_sources)
+
         if not ((detect_sources is True) or kws):
             kws['max_iter'] = 0  # short circuit
 
@@ -339,7 +345,7 @@ class SourceDetectionMixin(object):
         Parameters
         ----------
         image
-        detection
+        detect_sources
 
         detect_opts
 
