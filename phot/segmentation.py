@@ -128,6 +128,18 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
     return seg, seg.com_bg(image)  # , counts
 
 
+class MultiThresholdBlobDetection(object):
+    snr = (10, 7, 5, 3)
+    npixels = (7, 5, 3)
+    deblend = (True, False)
+    dilate = (4, 2, 1)
+    edge_cutoff = None
+    max_iter = np.inf
+
+    def __call__(self, *args, **kwargs):
+        assert False, 'TODO'
+
+
 def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
                 deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
                 max_iter=np.inf, bg_model=None, opt_kws=None, report=None):
