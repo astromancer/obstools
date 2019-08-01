@@ -171,6 +171,11 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
     residual
 
     """
+    # short circuit
+    if max_iter == 0:
+        # seg, groups, info, result, residual
+        return np.zeros(image.shape, int), [], [], None, image
+
     # log
     logger.info('Running detection loop')
     lvl = logger.getEffectiveLevel()
@@ -291,20 +296,39 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 class SourceDetectionMixin(object):
     """
     Provides the `from_image` classmethod and the `detect` staticmethod that
-    can be used to construct image models from images
+    can be used to construct image models from images.
     """
 
+    def detect(self, image, detect_sources, **kws):
+        """
+
+        Parameters
+        ----------
+        image
+        detect_sources: bool
+            Controls whether source detection algorithm is run
+        kws:
+            Keywords for source detection
+
+        Returns
+        -------
+
+        """
+        # Detect objects & segment image
+        if not ((detect_sources is True) or kws):
+            kws['max_iter'] = 0  # short circuit
+
+        return self._detect(image, **kws)
+
     @staticmethod
-    def detect(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
-               deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
-               max_iter=np.inf, bg_model=None, opt_kws=None, report=None):
-        """Default blob detection algorithm.  Subclasses can override."""
-        #
-        return detect_loop(image, mask, snr, npixels, deblend, dilate,
-                           edge_cutoff, max_iter, bg_model, opt_kws, report)
+    def _detect(image, *args, **kws):
+        """
+        Default blob detection algorithm.  Subclasses can override as needed
+        """
+        return detect_loop(image, *args, **kws)
 
     @classmethod
-    def from_image(cls, image, detection=True, **detect_opts):
+    def from_image(cls, image, detect_sources=True, **detect_opts):
         """
         Construct a instance of this class from an image.
         Sources in the image will be identified using `detect` method.
@@ -331,16 +355,13 @@ class SourceDetectionMixin(object):
         # models to the segments.
 
         # Detect objects & segment image
-        run_detection = (detection is True) or detect_opts
-        if run_detection:
-            seg, groups, info, result, residual = cls.detect(
-                    image, **detect_opts)
+        seg, groups, info, result, residual = cls.detect(image, detect_sources,
+                                                         **detect_opts)
 
         mdl = cls(seg)
 
         # add detected sources
-        if run_detection:
-            mdl.groups.update(groups)
+        mdl.groups.update(groups)
 
         return mdl
 
