@@ -131,30 +131,46 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
 def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
                 deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
                 max_iter=np.inf, bg_model=None, opt_kws=None, report=None):
-    # todo: min_iter=1
     """
-    Multi-threshold image blob detection, segmentation and grouping.
+    Multi-threshold image blob detection, segmentation and grouping. This
+    function runs multiple iterations of the blob detection algorithm on the
+    same image, masking new sources after each round so that progressively
+    fainter sources may be detected. By default the algorithm will continue
+    looping until no new sources are detected. the number of iterations in
+    the loop can also be controlled by specifying `max_iter`.  The arguments
+    `snr`, `npixels`, `deblend`, `dilate` can be sequences, in which case each
+    new detection round will use the next value in the sequence until the last
+    value which will then be repeated for subsequent iterations. If scalar,
+    this value will be used repeatedly for each round.
 
-    `snr`, `npixels`, `dilate` can be sequences in which case the next value
-    from each will be used in the next detection loop. If scalar, same value
-    during each iteration while mask is updated
+    A background model may also be provided.  This model will be fit to the
+    image background region after each round of detection.  Control model
+    optimization by passing `opt_kws` dict.
 
     Parameters
     ----------
     image
     mask
-    bg_model
     snr
     npixels
+    deblend
     dilate
     edge_cutoff
-    deblend
+    max_iter
+    min_iter
+    bg_model
+    opt_kws
+    report
 
     Returns
     -------
+    seg
+    groups
+    info
+    result
+    residual
 
     """
-
     # log
     logger.info('Running detection loop')
     lvl = logger.getEffectiveLevel()
@@ -240,8 +256,9 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
         # else:
         #     gof.append(None)
 
-    # log what you found
+    # def report_detection(groups, info, bg_model, gof):
     if report:
+        # log what you found
         from recipes import pprint
 
         seq_repr = functools.partial(seq_repr_trunc, max_items=3)
@@ -267,7 +284,25 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
                   total=(4,), minimalist=True)
         logger.info(f'\n{tbl_}')
         # print(logger.name)
+
     return seg, groups, info, result, residual
+
+
+class SourceDetectionMixin(object):
+    """
+    Provides the `detect` classmethod that can be used to run source
+    detection algorithms during the construction of image models
+    """
+
+    @classmethod
+    def detect(cls, image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
+               deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
+               max_iter=np.inf, bg_model=None, opt_kws=None, report=None):
+        #
+        return detect_loop(image, mask, snr, npixels, deblend, dilate,
+                           edge_cutoff, max_iter, bg_model, opt_kws, report)
+
+    # def report_detections(self):
 
 
 # def detect_loop(image, mask=None, snr=(10, 7, 5, 3),
