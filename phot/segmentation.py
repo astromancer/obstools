@@ -290,17 +290,59 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 
 class SourceDetectionMixin(object):
     """
-    Provides the `detect` classmethod that can be used to run source
-    detection algorithms during the construction of image models
+    Provides the `from_image` classmethod and the `detect` staticmethod that
+    can be used to construct image models from images
     """
 
-    @classmethod
-    def detect(cls, image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
+    @staticmethod
+    def detect(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
                deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
                max_iter=np.inf, bg_model=None, opt_kws=None, report=None):
+        """Default blob detection algorithm.  Subclasses can override."""
         #
         return detect_loop(image, mask, snr, npixels, deblend, dilate,
                            edge_cutoff, max_iter, bg_model, opt_kws, report)
+
+    @classmethod
+    def from_image(cls, image, detection=True, **detect_opts):
+        """
+        Construct a instance of this class from an image.
+        Sources in the image will be identified using `detect` method.
+        Segments for detected sources will be added to the segmented image.
+        Source groups will be added to `groups` attribute dict.
+
+
+        Parameters
+        ----------
+        image
+        detection
+
+        detect_opts
+
+        Returns
+        -------
+
+        """
+
+        # Basic constructor that initializes the model from an image. The
+        # base version here runs a detection algorithm to separate foreground
+        # objects and background, but doesn't actually include any physically
+        # useful models. Subclasses can overwrite this method to add useful
+        # models to the segments.
+
+        # Detect objects & segment image
+        run_detection = (detection is True) or detect_opts
+        if run_detection:
+            seg, groups, info, result, residual = cls.detect(
+                    image, **detect_opts)
+
+        mdl = cls(seg)
+
+        # add detected sources
+        if run_detection:
+            mdl.groups.update(groups)
+
+        return mdl
 
     # def report_detections(self):
 

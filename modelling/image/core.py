@@ -43,36 +43,11 @@ class SegmentedImageModel(CompoundModel, LabelGroupsMixin, LoggingMixin):
 
     # TODO: mask_policy.  filter / set error to inf
 
-    # FIXME: implement group stuff in different class HierarchicalImageModel
+    # FIXME: implement group stuff in different class HierarchicalImageModel ?
 
     # use record arrays for fit results (structured parameters)
     use_record = False
     use_params = True
-
-    # @classmethod
-    # def from_image(cls, image, snr=3, npixels=5, edge_cutoff=None,
-    #                deblend=False, dilate=1):
-    #     """
-    #     Basic constructor that initializes the model from an image. The
-    #     base version here runs a detection algorithm to separate foreground
-    #     objects and background, but doesn't actually include any physically
-    #     useful models. Subclasses can overwrite this method to add useful
-    #     models to the segments."""
-    #
-    #     seg = SegmentationGridHelper.detect(image, False, None, snr, npixels,
-    #                                         edge_cutoff, deblend)
-    #     return cls(seg), seg
-
-    def detect(self, image, mask=False, background=None, snr=3., npixels=7,
-               edge_cutoff=None, deblend=False, dilate=0):
-        """
-        Object detection to update segmentation image.
-        """
-
-        new = self.segm.detect(image, mask, background, snr, npixels,
-                               edge_cutoff, deblend, dilate)
-        # add new detections to model ??
-        return new
 
     def __init__(self, seg, models=()):  # , label_groups=None
         """
