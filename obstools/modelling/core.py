@@ -17,6 +17,10 @@ from .utils import load_memmap, int2tup
 from .parameters import Parameters
 
 
+def echo(*_):
+    return _
+
+
 def _sample_stat(data, statistic, sample_size, replace=True):
     return statistic(
             np.random.choice(np.ma.compressed(data), sample_size, replace)
@@ -139,7 +143,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # masked array handling
     compress_ma = None  # only if method == 'leastsq'
 
-    def __call__(self, p, grid=None, *args, **kws):
+    def __call__(self, p, grid, *args, **kws):
         """
         Evaluate the model at the parameter (vector) `p`
 
@@ -154,14 +158,16 @@ class Model(OptionallyNamed, LoggingMixin):
         -------
 
         """
-        p = self._check_params(p)
+        p, grid = self._checks(p, grid, *args, **kws)
         return self.eval(p, grid)
 
-    def eval(self, p, grid):
+    def eval(self, p, grid, *args, **kws):
         """
         This is the main compute method, while __call__ handles variable
         checks etc. Subclasses can overwrite both as needed, but must
-        overwrite `eval`
+        overwrite `eval`.  Important that `eval` has same signature as
+        `__call__` since they will be dynamically swapped during `fit` for
+        improving optimization performance.
 
         Parameters
         ----------
@@ -174,6 +180,9 @@ class Model(OptionallyNamed, LoggingMixin):
         """
         raise NotImplementedError
 
+    def _checks(self, p, grid, *args, **kws):
+        return self._check_params(p), grid
+
     def _check_params(self, p):
         if len(p) != self.dof:
             raise ValueError('Parameter vector size (%i) does not match '
@@ -185,7 +194,7 @@ class Model(OptionallyNamed, LoggingMixin):
         raise NotImplementedError
 
     def get_dtype(self):
-        # todo: use p0guess to determine the dtype in pre_process?? / pre_fit
+        # todo: use p0guess to determine the dtype in pre_fit?? / pre_fit
         # todo: eliminate this method
 
         if self.dof is None:
@@ -194,8 +203,13 @@ class Model(OptionallyNamed, LoggingMixin):
         return [(self.get_name(), self.base_dtype, self.dof)]
 
     def residuals(self, p, data, grid=None):
-        """Difference between data (observations) and model. a.k.a. deviation"""
-        return data - self(p, grid)
+        """
+        Difference between data (observations) and model. a.k.a. deviation
+        """
+        return data - self.__call__(p, grid)
+        # note explicit lookup for `__call__` since dynamically setting this
+        #  during `fit` will not work for `self(p, grid)`:
+        # see: https://docs.python.org/3/reference/datamodel.html#special-lookup
 
     def rs(self, p, data, grid=None):
         """squared residuals"""
@@ -324,6 +338,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
         """
 
+        # TODO: maybe manage through property ??
         if logPrior:
             log_prior = logPrior(p, *prior_args)
 
@@ -334,10 +349,11 @@ class Model(OptionallyNamed, LoggingMixin):
 
         return self.logLikelihood(p, data, grid, stddev)
 
-    def pre_process(self, p0, data, grid=None, stddev=None, *args, **kws):
-        # TODO: rename pre_fit
+    def pre_fit(self, p0, data, grid=None, stddev=None, *args, **kws):
         """This will be run prior to the minimization routine"""
 
+        # Parameter checks
+        # ----------------
         if p0 is None:
             p0 = self.p0guess(data, grid)
             self.logger.debug('p0 guess: %s', p0)
@@ -349,24 +365,43 @@ class Model(OptionallyNamed, LoggingMixin):
         if isinstance(p0, Parameters):
             p0 = p0.flattened
 
+        # check that call works.  This check here so that we can identify
+        # potential problems with the function call / arguments before
+        # entering the optimization routine.  Potential traceback here will
+        # be more readable.  This is also done here so we can check initially
+        # and then let the fitting run through `eval` instead of `__call__`
+        # and skip all the checks during optimization for performance gain.
+        self.eval(p0, grid, *args, **kws)
+
+        # Data checks
+        # -----------
+        # check for nan / inf
+        if self.do_checks:
+            #  this may be slow for large arrays.
+            if np.isnan(data).any():
+                self.logger.warning('Your data contains nans.')
+            # check for inf
+            if np.isinf(data).any():
+                self.logger.warning('Your data contains non-finite elements.')
+
+            # # check for masked data
+            # if np.ma.is_masked(data):
+            #     self.logger.warning('Your data has masked elements.')
+
+        # Remove masked data
         compress_ma = self.compress_ma
         if compress_ma is None:
             compress_ma = (kws.get('method') == 'leastsq')
 
         if compress_ma:
-            # remove masked data points
             if np.ma.is_masked(data):
                 use = ~data.mask
-                grid = grid[..., use]
+                grid = grid[..., use]  # FIXME: may still be None at this point
                 if stddev is not None:
                     stddev = stddev[use]
                 data = data.compressed()
 
         return p0, data, grid, stddev, args, kws
-
-    def post_process(self, p, *args, **kws):
-        # TODO: rename post_fit
-        return p
 
     def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
         """
@@ -386,44 +421,48 @@ class Model(OptionallyNamed, LoggingMixin):
 
         """
 
+        # set default objective
         if self.objective is None:
             self.objective = self.wrss  # fwrs for leastsq...
-
-        # check for nan / inf
-        if self.do_checks:  # TODO: move to pre_fit ???
-            #  this may be slow for large arrays.
-            if np.isnan(data).any():
-                self.logger.warning('Your data contains nans.')
-            # check for inf
-            if np.isinf(data).any():
-                self.logger.warning('Your data contains non-finite elements.')
-
-            # # check for masked data
-            # if np.ma.is_masked(data):
-            #     self.logger.warning('Your data has masked elements.')
 
         # post-processing args
         post_args = kws.pop('post_args', ())
         post_kws = kws.pop('post_kws', {})
 
         # pre-processing
-        p0, data, grid, stddev, args, kws = self.pre_process(
+        p0, data, grid, stddev, args, kws = self.pre_fit(
                 p0, data, grid, stddev, *args, **kws)
 
         # TODO: move to HandleParameters Mixin??
         type_, dtype = type(p0), p0.dtype
 
-        # minimization
-        p = self._fit(p0, data, grid, stddev=None, *args, **kws)
+        # dynamically set the '__call__` method to be `eval`: avoids  checks at
+        # every iteration of fit and speed the optimization process up a bit.
+        # note that the line below sets the `__call__` attribute on the
+        #  instance of this class, while the special __call__ method on the
+        #  class remains untouched, so `self(p, grid)` will still invoke the
+        #  original call method with all checks, but `self.__call__(p, grid)`
+        #  will invoke `self.eval` during the parameter optimization
+        # see: https://docs.python.org/3/reference/datamodel.html#special-lookup
+        self.__call__ = self.eval
+        # TODO: is it worth doing this HACK
+        try:
+            # minimization
+            p = self._fit(p0, data, grid, stddev=None, *args, **kws)
+
+        except Exception as err:
+            # restore `__call__` before raising
+            del self.__call__  # deletes temp attribute on instance.
+            raise err from None
 
         # post-processing
-        p = self.post_process(p, *post_args, **post_kws)
+        p = self.post_fit(p, *post_args, **post_kws)
 
         # TODO: move to HandleParameters Mixin??
         if p is not None:
             # get back structured view if required
             # for some strange reason `result.x.view(dtype, type_)` ends up
-            # with higher dimensionality. weird. #TODO BUG REPORT??
+            # with higher dimensionality. weird. # TODO BUG REPORT??
             return p.view(dtype, type_)
 
     def _fit(self, p0, data, grid, stddev=None, *args, **kws):
@@ -466,12 +505,15 @@ class Model(OptionallyNamed, LoggingMixin):
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
                     f'{objective_repr!r} failed to converge: {msg}')
 
-        # bork if desired
+        # bork if needed
         if self.raise_on_failure:
             raise UnconvergedOptimization(fail_msg)
 
-        # emit warning for non-convergence
+        # else emit warning for non-convergence
         self.logger.warning(fail_msg)
+
+    def post_fit(self, p, *args, **kws):
+        return p
 
     def run_mcmc(self, data, nsamples, nburn, nwalkers=None, threads=None,
                  p0=None):
@@ -653,8 +695,8 @@ class ModelContainer(OrderedDict, LoggingMixin):
 
     def __setitem__(self, key, model):
 
-        # if not isinstance(model, Model):
-        #     raise ValueError('Components models must inherit from `Model`')
+        if not isinstance(model, Model):
+            raise ValueError('Components models must inherit from `Model`')
 
         # make sure the model has the same name that it is keyed on in the dict
         # if key != model.name:
@@ -774,7 +816,6 @@ class CompoundModel(Model):
             self.models[key] = model
             # one model may be used for many labels
 
-
     @property
     def dofs(self):
         """Number of free parameters for each of the component models"""
@@ -784,8 +825,6 @@ class CompoundModel(Model):
     def dof(self):
         """Total number of free parameters considering all constituent models"""
         return sum(self.dofs)
-
-
 
     # @property
     # def dtype(self):
@@ -887,6 +926,7 @@ class CompoundModel(Model):
 
         return p
 
+
 # class CompoundSequentialFitter(CompoundModel):
 # FIXME: not always appropriate
 
@@ -907,23 +947,61 @@ class CompoundModel(Model):
 #     def __getitem__(self, key):
 
 
-class StaticGridMixin(object):
+class FixedGrid(object):
     """
-    Mixin class that eliminated the need to pass a coordinate grid to every
-    model evaluation call. This is convenience when fitting the same model
+    Mixin class that allows optional static grid to be set.  This makes the
+    `grid` argument an optional is the model evaluation call and checks for
+    the presence of the `grid` attribute which it falls back to if available.
+    This allows for some convenience when fitting the same model
     repeatedly on the same grid for different data (of the same shape).
-    Subclasses must implement the `set_grid` method will be used to construct
-    an evaluation grid
+    Subclasses must implement the `set_grid` method will be used to set the
+    default grid.
+
+    It's important that this class comes before `Model` in order of
+    inheritance so that the `__call__` and `fit` methods intercept that of
+    `Model`. eg.:
+
+    class MyModel(FixedGrid, Model):
+        'whatever'
     """
     # based on the shape of the data upon the first call to `residuals`.
 
     # default value for static grid. Having this as a class variable avoids
     # having to initialize this class explicitly in inheritors
-    _static_grid = None
+    _grid = None
 
-    def __call__(self, p, grid=None):
-        grid = self._check_grid(grid)
-        return super().__call__(p, grid)
+    def __call__(self, p, grid=None, *args, **kws):
+        # this just for allowing call without grid
+        return super().__call__(p, grid, *args, **kws)
+
+    def _checks(self, p, grid, *args, **kws):
+        return self._check_params(p), self._check_grid(grid)
+
+    # def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
+    #     grid = self._check_grid(grid)  # set default grid before fit
+    #     return super().fit(data, grid, stddev, p0, *args, **kws)
+
+    @property
+    def grid(self):
+        return self._grid
+
+    @grid.setter
+    def grid(self, grid):
+        self.set_grid(grid)
+
+    def set_grid(self, grid):
+        # TODO: probably check that it's an array etc
+        self._grid = grid
+
+    def _check_grid(self, grid):
+        if grid is None:
+            grid = self.grid
+        if grid is None:
+            raise ValueError(
+                    'Please specify the coordinate grid for evaluation, '
+                    'or use the `set_grid` method prior to the first call to '
+                    'assign a coordinate grid.')
+        return grid
 
     # def residuals(self, p, data, grid=None):
     #     if grid is None and self.static_grid is None:
@@ -933,28 +1011,3 @@ class StaticGridMixin(object):
     #     grid = self._check_grid(grid)
     #     # can you set the method as super method here dynamically for speed?
     #     return super().residuals(p, data, grid)
-
-    @property
-    def static_grid(self):
-        return self._static_grid
-
-    @static_grid.setter
-    def static_grid(self, grid):
-        self.set_grid(grid)
-
-    @static_grid.getter
-    def static_grid(self):
-        return self._static_grid
-
-    def _check_grid(self, grid):
-        if grid is None:
-            grid = self.static_grid
-        if grid is None:
-            raise ValueError(
-                    'Please specify the coordinate grid for evaluation, '
-                    'or use the `set_grid` method prior to the first call to '
-                    'assign a coordinate grid.')
-        return grid
-
-    def set_grid(self, grid):
-        self._static_grid = grid

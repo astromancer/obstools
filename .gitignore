@@ -1,65 +1,15 @@
-# pycharm
 .idea/
 
-# tmp files
-*swp
+*.kate-swp
 *~
 
-# python files
-__pycache__
+# Byte-compiled / optimized / DLL files
+__pycache__/ # at any depth
+*.py[cod]
+.ipynb_checkpoints/
 
-# libre office
-*.~*#
+*.bak
+test.py
 
-# backups
-*.bak*
-
-# devs
 dev/
-*/dev/
-*dev*
-
-EMvsCON_*.py
-CVs.py
-fitshead.py
-grab_env.py
-
-lc/
-
-psf/gui.*.py
-psf/psf+find.*.py
-psf/psf_working.py
-psf/stars.*.py
-psf/psffit.*py
-psf/psffind.py
-
-modelling/ImSegMdl_pickle_test.py
-
-
-plan/.coordcache
-plan/.sitecache
-plan/.ipynb_checkpoints
-plan/.legend.fix
-plan/viz.ipynb
-plan/visibilities.py
-plan/viz.[01].py
-plan/viz.py.bak
-plan/viztest.py
-plan/plan.py
-
-
-
-transients/gaia/alerts.csv
-spectra
-
-phot/find.test.py
-phot/phot.scaled*.py
-phot/phot.MWE.test.py
-phot/phot.leak.py
-phot/proc2.py
-phot/main.dev.py
-phot/slotmain.py
-phot/phot_setup.py
-phot/trackers/test_mp.py 
-phot/modelling.py
-
+spectra/

@@ -728,7 +728,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         data = segm.data
         outlines = []
 
-        # trk.segm.thumbnails(labels=trk.use_labels)
+        # trk.seg.thumbnails(labels=trk.use_labels)
         ix = trk.segm.indices(trk.use_labels)
         slices = np.take(segm.slices, ix, 0)
 
@@ -1052,7 +1052,7 @@ class LegendGuiBase(ConnectionMixin):
 #         # a quantity is needed for photutils
 #         udata = u.Quantity(data, copy=False)
 #
-#         m3d = self.tracker.segm.to_boolean_3d()
+#         m3d = self.tracker.seg.to_boolean_3d()
 #         masks = m3d.any(0, keepdims=True) & ~m3d
 #         masks |= self.bad_pixel_mask
 #

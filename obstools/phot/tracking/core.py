@@ -565,7 +565,7 @@ class MaskContainer(AttrReadItem):
         """
         labels = self.segm.resolve_labels(labels)
         # np.setdiff1d(labels, ignore_labels)
-        # indices = np.digitize(labels, self.segm.labels) - 1
+        # indices = np.digitize(labels, self.seg.labels) - 1
         kept_labels = np.setdiff1d(labels, ignore_labels)
         indices = np.digitize(labels, kept_labels) - 1
 
@@ -1212,7 +1212,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # them independently
 
         # algorithmic details
-        # self._measure_star_locations = self.segm.com_bg
+        # self._measure_star_locations = self.seg.com_bg
         self._update_rvec_every = int(update_rvec_every)
         self._update_weights_every = int(update_weights_every)
 
@@ -1229,12 +1229,12 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # self.bad_pixel_mask = bad_pixel_mask
 
         # if edge_cutoffs is not None:
-        #     self.edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
+        #     self.edge_mask = make_border_mask(self.seg.data, edge_cutoffs)
         # else:
         #     self.edge_mask = None
 
         # extended masks
-        # self.masks = MaskContainer(self.segm, self.groups,
+        # self.masks = MaskContainer(self.seg, self.groups,
         #                            bad_pixels=bad_pixel_mask)
 
         # label logic
@@ -1249,7 +1249,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     return len(self.groups)
 
     # def _com_use_labels(self):
-    #     return self.segm.com(self, self.use_labels)
+    #     return self.seg.com(self, self.use_labels)
 
     @property
     def masks(self):  # extended masks
@@ -1257,7 +1257,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
     # @property
     # def nsegs(self):
-    #     return self.segm.nlabels
+    #     return self.seg.nlabels
 
     @property
     def rcoo(self):  # todo rename coords / coords_yx
@@ -1558,16 +1558,16 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #
     #     istart = -np.min([start_indices, (0, 0)], 0)
     #     istop = np.array([None, None])
-    #     thing = np.subtract(self.segm.shape, stop_indices)
+    #     thing = np.subtract(self.seg.shape, stop_indices)
     #     l = thing < 0
     #     istop[l] = thing[l]
     #     islice = tuple(map(slice, istart, istop))
     #
     #     start_indices = np.clip(start_indices, 0, None)
-    #     stop_indices = np.clip(stop_indices, None, self.segm.shape)
+    #     stop_indices = np.clip(stop_indices, None, self.seg.shape)
     #
     #     section = tuple(map(slice, start_indices, stop_indices))
-    #     im = np.full(self.segm.shape, zero)
+    #     im = np.full(self.seg.shape, zero)
     #     im[section] = image[islice]
     #
     #     return im
@@ -1679,7 +1679,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #         mask = self.bad_pixel_mask  # may be None
     #
     #     # calculate CoM
-    #     com = self.segm.com_bg(image, self.use_labels, mask, self.bg)
+    #     com = self.seg.com_bg(image, self.use_labels, mask, self.bg)
     #     return com
 
     def pprint(self):
@@ -1711,7 +1711,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     else
     #     """
     #     # mask stars
-    #     imbg = self.segm.mask_segments(image)
+    #     imbg = self.seg.mask_segments(image)
     #     if mask is not None:
     #         imbg.mask |= mask
     #
@@ -1726,21 +1726,21 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     Select sub-regions of the image that will be used for photometry
     #     """
     #     if labels is None:
-    #         labels = self.segm.labels
-    #         indices = np.arange(self.segm.nlabels)
+    #         labels = self.seg.labels
+    #         indices = np.arange(self.seg.nlabels)
     #         # note `resolve_labels` only uses the labels in `use_labels`,
     #         #  which is NOT what we want since we want all stars to be masked
     #         #  not just those which are being used for tracking
     #     else:
-    #         indices = np.digitize(labels, self.segm.labels) - 1
+    #         indices = np.digitize(labels, self.seg.labels) - 1
     #
     #     #
-    #     m3d = self.segm.to_bool_3d()
+    #     m3d = self.seg.to_bool_3d()
     #     all_masked = m3d.any(0)
     #
-    #     sky_regions = self.segm.to_annuli(sky_buffer, sky_width, labels)
+    #     sky_regions = self.seg.to_annuli(sky_buffer, sky_width, labels)
     #     if edge_cutoffs is not None:
-    #         edge_mask = make_border_mask(self.segm.data, edge_cutoffs)
+    #         edge_mask = make_border_mask(self.seg.data, edge_cutoffs)
     #         sky_regions &= ~edge_mask
     #
     #     phot_masks = all_masked & ~m3d[indices]
@@ -1755,7 +1755,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     seg.sum(image) - seg.median(image, [0]) * seg.areas
 
     # def flux_estimate_annuli(self, image, sky_buffer=2, sky_width=10):
-    #     sky_masks = self.segm.to_annuli(sky_buffer, sky_width)
+    #     sky_masks = self.seg.to_annuli(sky_buffer, sky_width)
     #     # sky_masks &= ~self.streak_mask
 
     def _flux_estimate_annuli(self, image, ij, edge_cutoffs=None):
@@ -1894,7 +1894,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         self.rvec[ix] += inc
 
     # def get_shift(self, image):
-    #     com = self.segm.com_bg(image)
+    #     com = self.seg.com_bg(image)
     #     l = ~self.is_outlier(com)
     #     shift = np.median(self.rcoo[l] - com[l], 0)
     #     return shift
@@ -1953,7 +1953,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
 # def get_streakmasks(self, image, flx_thresh=2.5e3, width=6):
 #     # Mask streaks
-#     flx = self.segm.flux(image)
+#     flx = self.seg.flux(image)
 #     strkCoo = self.rcoo[flx > flx_thresh]
 #     w = np.multiply(width / 2, [-1, 1])
 #     strkRng = strkCoo[:, None, 1] + w
@@ -2061,11 +2061,11 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 #         image = self.data[i]
 #         trk = self.tracker
 #         if (tr and d):
-#             mask = trk.segm.to_bool(trk.use_labels)
+#             mask = trk.seg.to_bool(trk.use_labels)
 #             data = np.ma.masked_array(image, mask=mask)
 #             return data
 #         elif tr:  # and not d
-#             return trk.segm.data
+#             return trk.seg.data
 #         else:
 #             return image
 #
@@ -2094,10 +2094,10 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 #         from matplotlib.collections import LineCollection
 #         from matplotlib._contour import QuadContourGenerator
 #
-#         segm = self.tracker.segm
-#         data = segm.data
+#         seg = self.tracker.seg
+#         data = seg.data
 #         outlines = []
-#         for s in segm.slices:
+#         for s in seg.slices:
 #             sy, sx = s
 #             e = np.array([[sx.start - 1, sx.stop + 1],
 #                           [sy.start - 1, sy.stop + 1]])

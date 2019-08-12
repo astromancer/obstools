@@ -12,7 +12,7 @@ from graphical.imagine import ImageDisplay
 from recipes import pprint
 
 
-def plot_modelled_image(model, image, params, segm=None):
+def plot_modelled_image(model, image, params, seg=None):
     # Plot!!
     fig, axes = plt.subplots(4, 1, figsize=(13, 6),
                              sharex='all', sharey='all',
@@ -27,9 +27,9 @@ def plot_modelled_image(model, image, params, segm=None):
     ImageDisplay(image, ax=axes[0], title='Image')
 
     # segmentation
-    if segm is None:
-        segm = model.segm
-    segm.display(ax=axes[1], label=True, title='Segmentation')
+    if seg is None:
+        seg = model.seg
+    seg.display(ax=axes[1], label=True, title='Segmentation')
 
     if params is not None:
         # model

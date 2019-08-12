@@ -404,7 +404,7 @@ def update_model_segments(tracker, models, ij_start, ishape):
 
     # update segmentation for objects (camera offset)
     seg = tracker.get_segments(ij_start, ishape)
-    # FIXME: ftb regions may be wrong if over global segm boundary ....
+    # FIXME: ftb regions may be wrong if over global seg boundary ....
 
     _, new_labels = spline.segm.add_segments(seg)
 
@@ -585,7 +585,7 @@ def deep_detect(images, tracker, xy_offsets, indices_use, bad_pixels,
 
     # return seg_deep, mean_residuals
 
-    # xy_track = tracker.segm.com(labels=tracker.use_labels)
+    # xy_track = tracker.seg.com(labels=tracker.use_labels)
     # # ix_track = tuple(xy_track.round().astype(int).T)
     # ix_track = tuple(np.round(xy_track + indices_start.min(0)).astype(int).T)
     # old_labels = seg_deep.data[ix_track]
@@ -925,7 +925,7 @@ if __name__ == '__main__':
     # models = EllipticalGaussianPSF(),
     # models = ()
     # create image modeller
-    # mdlr = ImageModeller(tracker.segm, models, mdlBG,
+    # mdlr = ImageModeller(tracker.seg, models, mdlBG,
     #                      use_labels=tracker.use_labels)
 
     # create object that generates the apertures from modelling results
@@ -1044,7 +1044,7 @@ if __name__ == '__main__':
                                    sample_dims,
                                    int, 0,
                                    clobber=clobber)
-            # FIXME: this doesn't really need to persist if you have global segm
+            # FIXME: this doesn't really need to persist if you have global seg
             # ᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏᨏ
 
             # //////////////////////////////////////////////////////////////////////
@@ -1150,7 +1150,7 @@ if __name__ == '__main__':
             # add object detections
             ext_image_section = tuple(
                     map(slice, indices_start[0], indices_stop[0]))
-            # seg_data = tracker.segm.data[ext_image_section]
+            # seg_data = tracker.seg.data[ext_image_section]
             _, new_labels = model.segm.add_segments(
                     tracker.segm.data[ext_image_section])
             new_groups = {g: l + model.nmodels for g, l in
