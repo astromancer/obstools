@@ -3,8 +3,6 @@ Module for parsing astronomical object names to extract embedded coordinates
 eg: '2MASS J06495091-0737408'
 """
 
-
-
 # std libs
 import re
 
@@ -13,17 +11,14 @@ import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
-
-
-
-RA_REGEX = '()([0-2]\d)([0-5]\d)([0-5]\d)\.?(\d{0,3})'
-DEC_REGEX = '([+-])(\d{1,2})([0-5]\d)([0-5]\d)\.?(\d{0,3})'
+RA_REGEX = r'()([0-2]\d)([0-5]\d)([0-5]\d)\.?(\d{0,3})'
+DEC_REGEX = r'([+-])(\d{1,2})([0-5]\d)([0-5]\d)\.?(\d{0,3})'
 JCOORD_REGEX = '(.*?J)' + RA_REGEX + DEC_REGEX
 JPARSER = re.compile(JCOORD_REGEX)
 
 
 def _sexagesimal(g):
-    # convert matched regex groups to sexigesimal array
+    # convert matched regex groups to sexagesimal array
     sign, h, m, s, frac = g
     sign = -1 if (sign == '-') else 1
     s = '.'.join((s, frac))
@@ -78,12 +73,12 @@ def shorten(name, drop_prefix=False):
 
 if __name__ == '__main__':
     # a few test cases:
-    for name in ['CRTS SSS100805 J194428-420209',
-                 'MASTER OT J061451.7-272535.5',
-                 '2MASS J06495091-0737408',
-                 '1RXS J042555.8-194534',
-                 'SDSS J132411.57+032050.5',
-                 'DENIS-P J203137.5-000511',
-                 '2QZ J142438.9-022739',
-                 'CXOU J141312.3-652013']:
-        print(name, to_skycoord(name))
+    for _ in ['CRTS SSS100805 J194428-420209',
+              'MASTER OT J061451.7-272535.5',
+              '2MASS J06495091-0737408',
+              '1RXS J042555.8-194534',
+              'SDSS J132411.57+032050.5',
+              'DENIS-P J203137.5-000511',
+              '2QZ J142438.9-022739',
+              'CXOU J141312.3-652013']:
+        print(_, to_skycoord(_))
