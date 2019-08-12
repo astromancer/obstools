@@ -1,20 +1,29 @@
 # from pathlib import Path
-import numbers
-# import json
-import operator
-from collections import OrderedDict as odict, OrderedDict
 
+
+# std libs
+import numbers
+import operator
+from collections import OrderedDict, MutableMapping, defaultdict
+
+# third-party libs
 import numpy as np
-from IPython import embed
 from scipy.optimize import minimize, leastsq
 
-# from recipes.oop import ClassProperty
-from recipes.logging import LoggingMixin
-from recipes.dict import AttrReadItem, ListLike
+# local libs
 from recipes.list import tally
+from recipes.logging import LoggingMixin
 
+# relative libs
 from .utils import load_memmap, int2tup
-from .parameters import Parameters
+
+
+
+# import json
+
+
+# from recipes.oop import ClassProperty
+
 
 
 def echo(*_):
@@ -641,7 +650,6 @@ class SummaryStatsMixin(object):
 #     pass
 
 
-from collections import MutableMapping, defaultdict
 
 
 def make_unique_names(names):

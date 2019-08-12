@@ -1,10 +1,14 @@
-import io
-import os
-import urllib.request
-from datetime import datetime, timedelta
-from pathlib import Path
 
+
+# std libs
+import io
+from pathlib import Path
+from datetime import datetime, timedelta
+
+# third-party libs
 from PIL import Image
+
+
 
 
 def get_suth_weather_png(path):

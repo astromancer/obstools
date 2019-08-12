@@ -1,23 +1,23 @@
+
+
+# std libs
 import os
 import re
 import mmap
-import warnings
-import functools
 import itertools as itt
-import collections as coll
-from io import BytesIO
+
+# third-party libs
+import numpy as np
+from astropy.io import fits as pyfits
+
 # from pathlib import Path
 
 
 # import scipy as sp
-import numpy as np
-from astropy.io import fits as pyfits
 # import pylab as plt
 # from matplotlib.transforms import  blended_transform_factory as btf
 
-from recipes.io import parse
 # from decor import path      #profile
-from motley.progress import ProgressBar
 
 
 # from IPython import embed

@@ -3,12 +3,18 @@ Module for parsing astronomical object names to extract embedded coordinates
 eg: '2MASS J06495091-0737408'
 """
 
+
+
+# std libs
 import re
 
+# third-party libs
 import numpy as np
-
 import astropy.units as u
 from astropy.coordinates import SkyCoord
+
+
+
 
 RA_REGEX = '()([0-2]\d)([0-5]\d)([0-5]\d)\.?(\d{0,3})'
 DEC_REGEX = '([+-])(\d{1,2})([0-5]\d)([0-5]\d)\.?(\d{0,3})'

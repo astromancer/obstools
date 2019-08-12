@@ -1,16 +1,25 @@
+
+
+# std libs
 import operator
-from pathlib import Path
 import itertools as itt
+import collections as col
+from pathlib import Path
 
+# third-party libs
 import numpy as np
+from astropy.io.fits.hdu.base import _BaseHDU
 
-from recipes.logging import LoggingMixin
+# local libs
 from recipes.dict import pformat
+from recipes.set import OrderedSet
+from recipes.logging import LoggingMixin
+
+
+
+
 
 # from astropy.io.fits.hdu import HDUList
-from astropy.io.fits.hdu.base import _BaseHDU
-from recipes.set import OrderedSet
-import collections as col
 
 
 class SelfAwareContainer(object):

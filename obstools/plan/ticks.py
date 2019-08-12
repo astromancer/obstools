@@ -1,10 +1,13 @@
+
+# std libs
 import warnings
 
+# third-party libs
 import numpy as np
-
 from matplotlib import ticker
-from matplotlib.transforms import (Transform,
-                                   IdentityTransform)
+from matplotlib.transforms import Transform, IdentityTransform
+
+
 
 
 class TransFormatter(ticker.ScalarFormatter):

@@ -1,27 +1,30 @@
+
+
 # std libs
 import time
-import operator
 import itertools as itt
 from pathlib import Path
-from collections import defaultdict, MutableMapping, OrderedDict
+from collections import defaultdict, MutableMapping
 
 # third-party libs
 import numpy as np
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 
 # local libs
-from recipes.list import tally
 from recipes.logging import LoggingMixin
 from recipes.dict import Record, AttrDict
 from graphical.imagine import VideoDisplay
 
-# relative
-from ..parameters import Parameters
+# relative libs
+from ..utils import load_memmap
 from ...phot.utils import LabelGroupsMixin
-from ..utils import load_memmap, int2tup
-from ..core import Model, CompoundModel, UnconvergedOptimization
-from ...phot.segmentation import SegmentationGridHelper
-from .. import FixedGrid
+
+
+
+
+
+
+# relative
 
 
 class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,

@@ -1,18 +1,27 @@
-import numpy as np
-from matplotlib._contour import QuadContourGenerator
-from matplotlib.collections import LineCollection, PatchCollection
-from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle, Ellipse as _Ellipse  # , Annulus
-from matplotlib.widgets import RadioButtons, CheckButtons
-from obstools.aps import ApertureCollection, SkyApertures
 
+
+# std libs
+import logging
+from collections import namedtuple, defaultdict
+
+# third-party libs
+import numpy as np
+from matplotlib.lines import Line2D
+from matplotlib._contour import QuadContourGenerator
+from matplotlib.widgets import RadioButtons, CheckButtons
+from matplotlib.patches import Rectangle, Ellipse as _Ellipse
+from matplotlib.collections import LineCollection, PatchCollection
+
+# local libs
 from recipes.list import flatten
-from recipes.logging import LoggingMixin
 from recipes.dict import AttrReadItem
+from recipes.logging import LoggingMixin
+from obstools.aps import ApertureCollection, SkyApertures
 from graphical.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
 
-import logging
-from collections import namedtuple, defaultdict  # Callable
+
+
+
 
 
 # TODO: better spacing between legend entries
@@ -839,7 +848,6 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
     # def
 
 
-from graphical.interactive import ConnectionMixin, mpl_connect
 
 
 class LegendGuiBase(ConnectionMixin):

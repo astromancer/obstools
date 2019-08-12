@@ -2,10 +2,8 @@
 Miscellaneous utility functions
 """
 
-# builtin libs
-from IPython import embed
-from recipes.dict import AttrReadItem, ListLike
 
+# std libs
 import logging
 import numbers
 import itertools as itt
@@ -13,7 +11,6 @@ import itertools as itt
 # third-party libs
 import numpy as np
 import more_itertools as mit
-from scipy import ndimage
 from scipy.stats import binned_statistic_2d
 
 # local libs
@@ -21,7 +18,11 @@ import motley
 from motley.table import Table
 from motley.progress import ProgressBar
 from recipes.logging import LoggingMixin
+from recipes.dict import AttrReadItem, ListLike
 from recipes.introspection.utils import get_module_name
+
+
+
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))

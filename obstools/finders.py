@@ -1,13 +1,15 @@
-from io import BytesIO
+
+
+# std libs
 import textwrap
-import os
-import sys
-import base64
-import urllib.request, urllib.error, urllib.parse
+from io import BytesIO
+
+# third-party libs
+import aplpy
 import pyfits
 import numpy as np
-import aplpy
 import astropy.coordinates as astcoo
+
 
 
 def get_coords( obj_name ):

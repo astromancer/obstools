@@ -1,23 +1,26 @@
-import os
-import textwrap
 
-import numpy as np
 
-# write oflag data to file
-from collections import OrderedDict as odict
-import itertools as itt
+# std libs
 import re
+import textwrap
+from pathlib import Path
+from collections import OrderedDict as odict, Callable
 
-from collections import Callable
-
-from IPython import embed
-from addict import Dict
+# third-party libs
+import numpy as np
 import more_itertools as mit
+
+# local libs
 from recipes.dict import pformat
 
-from pathlib import Path
 
-import more_itertools as mit
+
+
+# write oflag data to file
+
+
+
+
 
 #
 FORMATSPEC_SRE = re.compile('%(\d{0,2})\.?(\d{0,2})([if])')

@@ -1,9 +1,18 @@
 # coding: utf-8
 
+
+
+# std libs
 from functools import partial
+
+# third-party libs
 import numpy as np
 
+# local libs
 from recipes.list import sortmore
+
+
+
 
 
 class Ephemeris():

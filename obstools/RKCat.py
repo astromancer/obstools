@@ -2,7 +2,9 @@
 Read the Ritter-Kolb catalogue for Cataclysmic Variables and related objects.
 """
 
-# builtin libs
+
+
+# std libs
 import re
 import logging
 import functools
@@ -17,6 +19,10 @@ from astropy.coordinates import SkyCoord
 # local libs
 from recipes import pprint
 from recipes.introspection.utils import get_module_name
+
+
+
+
 
 
 # TODO: check coordinates are correct?  UPDATE WITH DATA FROM ALADIN?

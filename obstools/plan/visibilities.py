@@ -2,48 +2,53 @@
 Tools for visualising object tracks across the night sky
 """
 
+
+# std libs
 import time
 import inspect
 import logging
 import threading
 import itertools as itt
-from functools import partial
-from collections import OrderedDict, defaultdict
-from datetime import datetime, timedelta
 from pathlib import Path
+from functools import partial
+from datetime import datetime, timedelta
+from collections import OrderedDict, defaultdict
 
+# third-party libs
 import numpy as np
-from scipy.interpolate import interp1d
-from scipy.optimize import brentq
-
-# Import the packages necessary for finding coordinates and making coordinate transformations
 import astropy.units as u
 from astropy.time import Time
-from astropy.coordinates import (SkyCoord, EarthLocation, AltAz,
-                                 get_sun, get_moon)
 from astropy.coordinates.name_resolve import NameResolveError
-
-from obstools.jparser import jparser
-
-import matplotlib.pyplot as plt
+from astropy.coordinates import (SkyCoord, EarthLocation, AltAz, get_sun,
+                                 get_moon)
 from matplotlib import rcParams
-# from matplotlib.lines import Line2D
+import matplotlib.pyplot as plt
 from matplotlib.path import Path as mplPath
 from matplotlib.ticker import AutoMinorLocator
 from matplotlib.dates import AutoDateFormatter, AutoDateLocator, num2date
 from matplotlib.transforms import (Transform, IdentityTransform, Affine2D,
                                    blended_transform_factory as btf)
+from addict.addict import Dict
+from scipy.optimize import brentq
+from scipy.interpolate import interp1d
+from decor.misc import persistent_memoizer
+from grafico.ticks import DegreeFormatter, TransFormatter
 from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
-# dynamic database construction
-from addict.addict import Dict
-
 # local libs
-from grafico.ticks import DegreeFormatter, TransFormatter
-from recipes.list import sorter
-
-from decor.misc import persistent_memoizer
 from motley import profiler
+from recipes.list import sorter
+from obstools.jparser import jparser
+
+
+# Import the packages necessary for finding coordinates and making coordinate transformations
+
+
+# from matplotlib.lines import Line2D
+
+# dynamic database construction
+
+
 
 
 # TODO: enable differnt projections, like Mercator etc...

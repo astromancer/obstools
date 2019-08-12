@@ -1,28 +1,38 @@
 # TODO: UPDATE ALL DOCSTRINGS (once stable)
 # TODO: unit tests
 
+
+
+# std libs
 import re
 from copy import copy
+
+# third-party libs
+import numpy as np
+from IPython import embed
+from scipy.spatial.distance import cdist
+from matplotlib.colors import colorConverter
+from matplotlib.collections import EllipseCollection, LineCollection
+from matplotlib.transforms import (IdentityTransform,
+                                   blended_transform_factory as btf)
+
+# local libs
+from recipes.io import warn as Warn
+from recipes.iter import as_sequence
+from recipes.oo.meta import altflaggerFactory
+from recipes.dict import TransDict, Many2OneMap
+
+
 # from pprint import pprint
 
-import numpy as np
-from scipy.spatial.distance import cdist
 
-from matplotlib.collections import EllipseCollection  # as  _EllipseCollection
-from matplotlib.transforms import IdentityTransform
-from matplotlib.colors import colorConverter
 
-from recipes.iter import as_sequence, cyclic
-from recipes.io import warn as Warn
-from recipes.dict import TransDict, Many2OneMap
-from recipes.oo.meta import altflaggerFactory
 # from motley import banner
 
 # from decor import expose, profile
 # from decor.misc import unhookPyQt
 
 # from PyQt4.QtCore import pyqtRemoveInputHook, pyqtRestoreInputHook
-from IPython import embed
 
 # alias
 rgba_array = colorConverter.to_rgba_array
@@ -860,8 +870,6 @@ class SkyApertures(ApertureCollection):
 
 
 #################################################################################################################################################################################################################
-from matplotlib.collections import LineCollection
-from matplotlib.transforms import blended_transform_factory as btf
 
 
 class ApLineCollection(LineCollection):

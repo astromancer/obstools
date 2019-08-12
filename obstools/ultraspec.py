@@ -1,12 +1,15 @@
+
+# std libs
 import re
-# import warnings
 import itertools as itt
-# from pathlib import Path
 from collections import defaultdict
 
-import numpy as np
-from astropy.io.ascii import read
+# third-party libs
 from astropy.table import vstack
+from astropy.io.ascii import read
+# import warnings
+# from pathlib import Path
+
 
 # from recipes.io import read_file_line
 

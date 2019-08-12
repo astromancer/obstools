@@ -2,6 +2,7 @@
 Extensions for segmentation images
 """
 
+
 # std libs
 import types
 import inspect
@@ -9,25 +10,27 @@ import logging
 import warnings
 import functools
 import itertools as itt
-import operator
 from operator import attrgetter
 
 # third-party libs
 import numpy as np
 from scipy import ndimage
 from astropy.utils import lazyproperty
-from photutils.segmentation import SegmentationImage, Segment
-from photutils.segmentation.detect import detect_array
 from photutils.detection.core import detect_threshold
+from photutils.segmentation.detect import detect_array
+from photutils.segmentation import SegmentationImage, Segment
 
 # local libs
 from motley.table import Table
 from recipes.logging import LoggingMixin
 from recipes.pprint.misc import seq_repr_trunc
 from recipes.introspection.utils import get_module_name
-from obstools.phot.utils import iter_repeat_last
 from obstools.modelling import UnconvergedOptimization
-from obstools.phot.utils import duplicate_if_scalar, shift_combine
+from obstools.phot.utils import (iter_repeat_last, duplicate_if_scalar,
+                                 shift_combine,
+                                 LabelGroupsMixin)
+
+
 
 # from obstools.modelling.image import SegmentedImageModel
 # from collections import namedtuple
@@ -2116,7 +2119,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return im
 
 
-from obstools.phot.utils import LabelGroupsMixin
 
 
 class SegmentationGroups(SegmentationHelper, LabelGroupsMixin):

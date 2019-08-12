@@ -2,16 +2,25 @@
 Classes for implementing prior probabilities in the context of Bayesian
 modelling and inference.
 """
-import functools
-import numbers
 
+
+# std libs
+import numbers
+import functools
+
+# third-party libs
 import numpy as np
-from IPython import embed
 from scipy import stats
 from scipy.stats._distn_infrastructure import rv_frozen
 
+# local libs
 from obstools.modelling.utils import prod
+from recipes import pprint
 from recipes.dict import AttrReadItem, pformat as pformat_dict
+
+
+
+
 
 
 #
@@ -50,7 +59,6 @@ def _walk_dtype_adapt(obj, new_base):
         yield new_base
 
 
-from recipes import pprint
 
 
 def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
@@ -497,7 +505,6 @@ Uniform = _Uniform(a=0.0, b=1.0, name='uniform')
 #     #     ParameterBase.__setitem__(self, key, values)
 
 
-from functools import singledispatch
 
 
 @singledispatch  # probably overkill to use single dispatch, but hey!

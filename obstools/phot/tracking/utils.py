@@ -2,15 +2,19 @@
 Utilities for finding / tracking star positions in CCD data
 """
 
-from functools import partial
-import multiprocessing as mp
 
+# std libs
+import multiprocessing as mp
+from functools import partial
+
+# third-party libs
 import numpy as np
+from photutils.detection import detect_threshold
+from photutils.segmentation import detect_sources
 from scipy.ndimage import binary_dilation
 from scipy.ndimage.measurements import center_of_mass as CoM
 
-from photutils.detection import detect_threshold
-from photutils.segmentation import detect_sources
+
 
 
 def sourceFinder(data, snr=3., npixels=12, edge_cutoff=3, deblend=False,

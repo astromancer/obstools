@@ -2,18 +2,26 @@
 Utility functions for statistical modelling
 """
 
-import functools
+
+
+# std libs
+import logging
 import numbers
 import operator
-
-from IPython import embed
-
-import logging
+import functools
 from pathlib import Path
 
+# third-party libs
 import numpy as np
 
+# local libs
 from recipes.introspection.utils import get_module_name
+
+
+
+
+
+
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__, 2))

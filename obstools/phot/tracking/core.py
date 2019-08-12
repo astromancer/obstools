@@ -2,42 +2,43 @@
 Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
+
 # std libs
-from typing import Any
-
-from IPython import embed
-
 import logging
+import warnings
 import functools as ftl
 import itertools as itt
 import multiprocessing as mp
 
 # third-party libs
 import numpy as np
-from scipy import ndimage
+import more_itertools as mit
+from sklearn.cluster import MeanShift
+from scipy.stats import mode
+from scipy.cluster.vq import kmeans
 from scipy.spatial.distance import cdist
+from astropy.utils import lazyproperty
 from astropy.stats import median_absolute_deviation as mad
 
 # local libs
+from recipes.dict import AttrReadItem
 from recipes.logging import LoggingMixin
 from recipes.introspection.utils import get_module_name
+from recipes.parallel.synced import SyncedCounter, SyncedArray
+from obstools.stats import geometric_median
 from obstools.phot.utils import LabelGroupsMixin
 from obstools.phot.segmentation import (SegmentationHelper,
                                         SegmentationGridHelper,
                                         make_border_mask,
-                                        merge_segmentations, select_rect_pad)
-from obstools.stats import geometric_median
+                                        merge_segmentations,
+                                        select_rect_pad)
 
-from scipy.cluster.vq import kmeans
-from scipy.spatial.distance import cdist
-from sklearn.cluster import MeanShift  # DBSCAN
-from sklearn.preprocessing import StandardScaler
-from astropy.utils import lazyproperty
 
-from recipes.dict import AttrReadItem
-from recipes.parallel.synced import SyncedCounter, SyncedArray
 
-import more_itertools as mit
+
+
+
+
 
 # from obstools.phot.utils import id_stars_dbscan, group_features
 
@@ -47,8 +48,6 @@ import more_itertools as mit
 
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
-from sklearn.cluster import OPTICS
-from scipy.stats import mode
 
 # TODO
 #  simulate how different centre measures performs for stars with decreasing snr
@@ -243,7 +242,6 @@ def measure_positions_offsets(xy, d_cut=None, detect_frac_min=0.9):
     return xy, centres, σxy, δxy, outlier_indices
 
 
-import warnings
 
 
 def _measure_positions_offsets(xy, centres, d_cut=None):
@@ -674,7 +672,6 @@ DETECTION_DEFAULTS = dict(snr=3.,
                           deblend=False,
                           dilate=1)
 
-from obstools.phot.tracking.core import GlobalSegmentation
 
 
 class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):

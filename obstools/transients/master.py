@@ -2,17 +2,22 @@
 Functions to read and parse the MASTER transient alert website: http://observ.pereplet.ru/MASTER_OT.html
 """
 
+
+# std libs
 import re
-import urllib.request
 import itertools as itt
 from datetime import datetime
 from html.parser import HTMLParser
 from collections import OrderedDict
 
+# third-party libs
 import numpy as np
 from astropy.time import Time, TimeDelta
 
+# local libs
 from recipes.iter import first_true_idx
+
+
 
 
 # from obstools.jparser import Jparser

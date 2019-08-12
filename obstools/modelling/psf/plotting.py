@@ -1,7 +1,13 @@
+
+
+# third-party libs
 from grafico.multitab import MplMultiTab
 from grafico.imagine import Compare3DImage
 
+# local libs
 from recipes.dict import TransDict
+
+
 
 #****************************************************************************************************
 class NullPSFPlot():

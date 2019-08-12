@@ -4,15 +4,23 @@ are picklably and can therefore be used in parallelized applications via
 multiprocessing
 """
 
+
+
+# std libs
 import inspect
-import logging
 import functools
 import itertools as itt
 
+# third-party libs
+import lmfit as lm
 import numpy as np
-import lmfit as lm  # TODO: is this slow??
 
+# local libs
 from recipes.pprint import decimal_repr
+
+
+
+
 # from recipes.logging import LoggingMixin
 
 

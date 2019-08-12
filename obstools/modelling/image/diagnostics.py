@@ -2,14 +2,23 @@
 Diagnostic tools for modelling images
 """
 
+
+
+# std libs
 import time
 
-import matplotlib.pyplot as plt
+# third-party libs
 import numpy as np
+import matplotlib.pyplot as plt
 
+# local libs
+from recipes import pprint
 from graphical.imagine import ImageDisplay
 
-from recipes import pprint
+
+
+
+
 
 
 def plot_modelled_image(model, image, params, seg=None):

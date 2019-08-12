@@ -1,7 +1,10 @@
-from IPython import embed
+
+# third-party libs
 from scipy import stats
 
-from obstools.modelling.parameters import Parameters, Priors
+# local libs
+from obstools.modelling.parameters import Priors
+
 
 if __name__ == '__main__':
     # some tests for `Parameters`

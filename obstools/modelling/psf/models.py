@@ -1,14 +1,25 @@
 
+
+
+# std libs
 from warnings import warn
 from collections import Callable
 
+# third-party libs
 import numpy as np
+import numpy.linalg as la
+from scipy.special import erf
 from scipy.optimize import leastsq
 
+# local libs
+from obstools.modelling.core import Model
 from recipes.list import find_missing_numbers
+
+
+
+
 # from recipes.logging import LoggingMixin
 
-from obstools.modelling.core import Model
 
 # TODO:  use astropy.models!!!!??? // lmfit.models
 # ****************************************************************************************************
@@ -580,8 +591,6 @@ class GaussianPSF(CircularGaussianPSF):
 EllipticalGaussianPSF = GaussianPSF
 
 # ====================================================================================================
-import numpy.linalg as la
-from scipy.special import erf
 
 
 # TODO: as class
