@@ -124,14 +124,12 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         CompoundModel.set_models(self, models)
 
     def set_grid(self, grid):
-        # give this class the `grid` attribute
+        # set the `grid` attribute on this instance
         FixedGrid.set_grid(self, grid)
 
         # get the sub domain grids for the component models
         for label, model in self.models.items():
-            # sub = (...,) + self.seg.slices[label - 1]
             model.set_grid(self.grid)
-            # model._domain_mask = self.seg.slices[label - 1]
 
     def get_dtype(self, labels=all):
         # build the structured np.dtype object for a particular set of labels.
@@ -193,8 +191,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         # iterator for data segments
 
         try:
-            subs = self.seg.coslice(data, stddev, self.grid, labels=labels, \
-                                                            flatten=True)
+            subs = self.seg.coslice(data, stddev, labels=labels, masked=True)
 
             # # get slices
             # slices = self.seg.get_slices(labels)
@@ -226,7 +223,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
                 #
 
                 # intentionally leaving grid as None here
-                r = model.fit(sub, , std, **kws)
+                r = model.fit(sub, model.grid, std, **kws)
 
                 if r is None:
                     # TODO: optionally raise here based on cls.raise_on_failure
@@ -287,7 +284,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         flatten = kws.pop('flatten', False)
 
         # iterator for data segments
-        subs = self.seg.coslice(data, std, labels=labels, masked_bg=mask,
+        subs = self.seg.coslice(data, std, labels=labels, masked=mask,
                                 flatten=flatten)
 
         # indexer for results container

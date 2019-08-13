@@ -1417,8 +1417,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
         yield from self.coslice(image, labels=labels, flatten=True)
 
-    def coslice(self, *arrays, labels=None, masked_bg=False, flatten=False,
-                enum=False, mask_which_arrays=(0,)):
+    def coslice(self, *arrays, labels=None, masked=False, flatten=False,
+                enum=False, mask_these=(0,)):
         """
         Yields labelled sub-regions of multiple arrays sequentially as tuple of
         (optionally masked) arrays.
@@ -1430,10 +1430,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             position instead of the sliced sub-array
         labels: array-like
             Sequence of integer labels
-        masked_bg: bool
+        masked: bool
             for each array and each segment cutout, mask all data
             "background" data (`label <= 0)`
-        mask_which_arrays: sequence of int, optional
+        mask_these: sequence of int, optional
             index positions of the arrays for which the cutouts will be
             background-masked
         flatten: bool
@@ -1456,11 +1456,12 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         if n == 0:
             raise ValueError('Need at least one array to slice')
 
+        # check if arrays should be masked
+        if not isinstance(masked, bool):
+            raise TypeError('`masked` should be bool')
         # TODO: check if a boolean array was passed?
-        if not isinstance(masked_bg, bool):
-            raise TypeError('`masked_bg` should be bool')
 
-        if masked_bg and flatten:
+        if masked and flatten:
             raise ValueError("Use either mask or flatten. Can't do both.")
 
         # function that yields the result
@@ -1468,9 +1469,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # flag which arrays to mask
         mask_flags = np.zeros(len(arrays), bool)
-        if masked_bg:
+        if masked:
             # mask_which_arrays = np.array(mask_which_arrays, ndmin=1)
-            mask_flags[mask_which_arrays] = True
+            mask_flags[mask_these] = True
         if flatten:
             mask_flags[:] = True
 
@@ -1874,8 +1875,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         counter = itt.count()
         com = np.empty((len(labels), 2))
-        for lbl, (seg, sub, msk, grd) in self.coslice(
-                self.data, image, mask, grid, labels=labels, enum=True):
+        for lbl, (seg, sub, msk, grd) in self.coslice(self.data, image, mask,
+                                                      grid, labels=labels,
+                                                      enum=True):
 
             # ignore whatever is in this slice and is not same label as well
             # as any external mask
@@ -2167,8 +2169,8 @@ class SegmentationGridHelper(SegmentationHelper):  # SegmentationModelHelper
 
     def get_coord_grids(self, labels):
         labels = self.resolve_labels(labels)
-        return dict(self.coslice(self.grid, labels=labels, flatten=True,
-                                 enum=True))
+        return dict(
+                self.coslice(self.grid, labels=labels, flatten=True, enum=True))
 
     # def get_coord_grids(self, labels=None):
     #     grids = {}
