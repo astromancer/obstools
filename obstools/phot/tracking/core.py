@@ -610,7 +610,7 @@ class SegmentationMasksHelper(SegmentationGridHelper, LabelGroupsMixin):
         del self.group_masks  #
 
     @lazyproperty
-    # making group_masks a lazyproperty means it will get reset auto-magically when
+    # making group_masks a lazyproperty means it will reset auto-magically when
     # the segmentation data changes
     def group_masks(self):
         return MaskContainer(self, self.groups, **self._persistent_masks)
