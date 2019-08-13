@@ -16,14 +16,7 @@ from recipes.logging import LoggingMixin
 
 # relative libs
 from .utils import load_memmap, int2tup
-
-
-
-# import json
-
-
-# from recipes.oop import ClassProperty
-
+from .parameters import Parameters
 
 
 def echo(*_):
@@ -454,7 +447,7 @@ class Model(OptionallyNamed, LoggingMixin):
         #  will invoke `self.eval` during the parameter optimization
         # see: https://docs.python.org/3/reference/datamodel.html#special-lookup
         self.__call__ = self.eval
-        # TODO: is it worth doing this HACK
+        # TODO: is it worth doing this HACK?  test
         try:
             # minimization
             p = self._fit(p0, data, grid, stddev=None, *args, **kws)
@@ -565,7 +558,7 @@ class Model(OptionallyNamed, LoggingMixin):
         pos, prob, state = sampler.run_mcmc(p0, nsamples)  # should
         return sampler
 
-    # TODO: Mixin class here??  ConcurrentResultsContainer / SharedMemory
+    # TODO: Mixin class here??  SharedMemoryMixin
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
         dof = self.dof
@@ -648,8 +641,6 @@ class SummaryStatsMixin(object):
 
 # class Record(AttrReadItem, ListLike):
 #     pass
-
-
 
 
 def make_unique_names(names):

@@ -3,10 +3,9 @@ Classes for implementing prior probabilities in the context of Bayesian
 modelling and inference.
 """
 
-
 # std libs
 import numbers
-import functools
+import functools as ftl
 
 # third-party libs
 import numpy as np
@@ -17,10 +16,6 @@ from scipy.stats._distn_infrastructure import rv_frozen
 from obstools.modelling.utils import prod
 from recipes import pprint
 from recipes.dict import AttrReadItem, pformat as pformat_dict
-
-
-
-
 
 
 #
@@ -59,16 +54,14 @@ def _walk_dtype_adapt(obj, new_base):
         yield new_base
 
 
-
-
 def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
                   times='x', compact=True, unicode=True, latex=False,
                   engineering=False):
     assert len(params) == len(names)
     # FIXME: use recipes.pprint.numeric_array
     s = np.vectorize(pprint.numeric, ['U10'])(params, precision, switch, sign,
-                                            times, compact, unicode, latex,
-                                            engineering)
+                                              times, compact, unicode, latex,
+                                              engineering)
     if uncert is not None:
         raise NotImplementedError  # TODO
 
@@ -86,7 +79,7 @@ class _RecurseHelper(object):
         self.allow_types = allow_types
 
     def make_dtype(self, kws, base_dtype):
-        call = functools.partial(self._make_dtype, base_dtype=base_dtype)
+        call = ftl.partial(self._make_dtype, base_dtype=base_dtype)
         dtype = list(self.walk(kws, call))
         # reset object count so we can reuse this method
         size = self.obj_count
@@ -100,7 +93,7 @@ class _RecurseHelper(object):
 
     def get_data(self, obj, flat=False, container=tuple, allow_types=any):  #
         # get data as nested `container` type
-        call = functools.partial(self._get_data, allow_types=allow_types)
+        call = ftl.partial(self._get_data, allow_types=allow_types)
         return container(self.walk(obj, call, flat, False, container))
 
     def _get_data(self, data, allow_types=any):
@@ -465,6 +458,7 @@ class _Uniform(_Prior, stats.distributions.uniform_gen):
 
 Uniform = _Uniform(a=0.0, b=1.0, name='uniform')
 
+
 # def freeze(self, *args, **kwds):
 #     return Prior(self, *args, **kwds)
 
@@ -505,9 +499,7 @@ Uniform = _Uniform(a=0.0, b=1.0, name='uniform')
 #     #     ParameterBase.__setitem__(self, key, values)
 
 
-
-
-@singledispatch  # probably overkill to use single dispatch, but hey!
+@ftl.singledispatch  # probably overkill to use single dispatch, but hey!
 def item_getter(obj):
     """default multiple dispatch func"""
     raise TypeError('No item getter for object of type %r' % type(obj))

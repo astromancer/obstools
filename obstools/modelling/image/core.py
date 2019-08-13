@@ -1,4 +1,6 @@
-
+"""
+Core tools for modelling astronomical images
+"""
 
 # std libs
 import time
@@ -18,13 +20,8 @@ from graphical.imagine import VideoDisplay
 # relative libs
 from ..utils import load_memmap
 from ...phot.utils import LabelGroupsMixin
-
-
-
-
-
-
-# relative
+from ...phot.segmentation import SegmentationGridHelper
+from .. import Model, CompoundModel, FixedGrid, UnconvergedOptimization
 
 
 class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
@@ -194,74 +191,77 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
 
     def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
         # iterator for data segments
-        # subs = self.seg.coslice(data, stddev, labels=labels,
-        #                          masked_bg=mask_bg, flatten=flatten)
 
-        # get slices
-        slices = self.seg.get_slices(labels)
-        if data.ndim > 2:
-            slices = list(map((...,).__add__, slices))
+        try:
+            subs = self.seg.coslice(data, stddev, self.grid, labels=labels, \
+                                                            flatten=True)
 
-        #
-        reduce = residuals is not None
-        for label, slice_ in zip(labels, slices):
-            model = self.models[label]
-
-            # skip models with 0 free parameters
-            if model.dof == 0:
-                continue
-
-            if p0 is not None:
-                kws['p0'] = p0[model.name]
-
-            # select data # this does the job of coslice
-            sub = np.ma.array(data[slice_])
-            sub[..., self.seg.masks[label]] = np.ma.masked
-            std = None if (stddev is None) else stddev[..., slice_]
-
-            # get coordinate grid
-            # minimize
-            # kws['jac'] = model.jacobian_wrss
-            # kws['hess'] = model.hessian_wrss
+            # # get slices
+            # slices = self.seg.get_slices(labels)
+            # if data.ndim > 2:
+            #     slices = list(map((...,).__add__, slices))
 
             #
-            try:
+            reduce = residuals is not None
+            for label, (sub, std) in zip(labels, subs):
+                model = self.models[label]
+
+                # skip models with 0 free parameters
+                if model.dof == 0:
+                    continue
+
+                if p0 is not None:
+                    kws['p0'] = p0[model.name]
+
+                # select data # this does the job of coslice
+                # sub = np.ma.array(data[seg])
+                # sub[..., self.seg.masks[label]] = np.ma.masked
+                # std = None if (stddev is None) else stddev[..., slice_]
+
+                # get coordinate grid
+                # minimize
+                # kws['jac'] = model.jacobian_wrss
+                # kws['hess'] = model.hessian_wrss
+
+                #
+
                 # intentionally leaving grid as None here
-                r = model.fit(sub, None, std, **kws)
-            except Exception as err:
-                from IPython import embed
-                import traceback
-                import textwrap
-                embed(header=textwrap.dedent(
-                        """\
-                        Caught the following %s:
-                        ------ Traceback ------
-                        %s
-                        -----------------------
-                        Exception will be re-raised upon exiting this embedded interpreter.
-                        """) % (err.__class__.__name__, traceback.format_exc()))
-                raise
+                r = model.fit(sub, , std, **kws)
 
-            if r is None:
-                # TODO: optionally raise here based on cls.raise_on_failure
-                #  can do this by catching above and raising from.
-                #  raise_on_failure can also be function / Exception ??
-                msg = (f'{self.models[label]!r} fit to segment {label} '
-                       f'failed to converge.')
-                med = np.ma.median(sub)
-                if np.abs(med - 1) > 0.3:
-                    # TODO: remove this
-                    msg += '\nMaybe try median rescale? data median is %f' % med
-                raise UnconvergedOptimization(msg)
-            else:
-                # print(label, model.name, i)
-                result[model.name] = r.squeeze()
+                if r is None:
+                    # TODO: optionally raise here based on cls.raise_on_failure
+                    #  can do this by catching above and raising from.
+                    #  raise_on_failure can also be function / Exception ??
+                    msg = (f'{self.models[label]!r} fit to segment {label} '
+                           f'failed to converge.')
+                    med = np.ma.median(sub)
+                    if np.abs(med - 1) > 0.3:
+                        # TODO: remove this
+                        msg += '\nMaybe try median rescale? data median is %f' % med
+                    raise UnconvergedOptimization(msg)
+                else:
+                    # print(label, model.name, i)
+                    result[model.name] = r.squeeze()
 
-                if reduce:
-                    # resi = model.residuals(r, np.ma.getdata(sub), grid)
-                    # print('reduce', residuals.shape, slice_, resi.shape)
-                    residuals[slice_] = model.residuals(r, np.ma.getdata(sub),
-                                                        grid)
+                    if reduce:
+                        # resi = model.residuals(r, np.ma.getdata(sub), grid)
+                        # print('reduce', residuals.shape, slice_, resi.shape)
+
+                        residuals[seg] = model.residuals(r, np.ma.getdata(sub))
+        except Exception as err:
+            from IPython import embed
+            import traceback
+            import textwrap
+            embed(header=textwrap.dedent(
+                """\
+                Caught the following %s:
+                ------ Traceback ------
+                %s
+                -----------------------
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % (err.__class__.__name__, traceback.format_exc()))
+            raise
+
 
         return r
 
