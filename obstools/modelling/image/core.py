@@ -11,6 +11,7 @@ from collections import defaultdict, MutableMapping
 # third-party libs
 import numpy as np
 from photutils.aperture import EllipticalAperture, EllipticalAnnulus
+from photutils.segmentation import Segment
 
 # local libs
 from recipes.logging import LoggingMixin
@@ -22,6 +23,17 @@ from ..utils import load_memmap
 from ...phot.utils import LabelGroupsMixin
 from ...phot.segmentation import SegmentationGridHelper
 from .. import Model, CompoundModel, FixedGrid, UnconvergedOptimization
+
+
+class ModelledSegment(Segment):
+
+    def __init__(self, segment_data, label, slices, area):
+        super().__init__(segment_data, label, slices, area)
+
+    def __str__(self):
+        s = super().__str__()
+        s += ('\n' + '')
+        return s
 
 
 class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
@@ -191,7 +203,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         # iterator for data segments
 
         try:
-            subs = self.seg.coslice(data, stddev, labels=labels, masked=True)
+            subs = self.seg.coslice(data, stddev, labels=labels,
+                                    masked=True)
 
             # # get slices
             # slices = self.seg.get_slices(labels)
@@ -222,7 +235,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
 
                 #
 
-                # intentionally leaving grid as None here
+                # note intentionally using internal grid for model since it may
+                #  be transformed to numerically stable regime
                 r = model.fit(sub, model.grid, std, **kws)
 
                 if r is None:
@@ -243,22 +257,21 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
                     if reduce:
                         # resi = model.residuals(r, np.ma.getdata(sub), grid)
                         # print('reduce', residuals.shape, slice_, resi.shape)
-
+                        seg = self.seg.slices[label - 1]
                         residuals[seg] = model.residuals(r, np.ma.getdata(sub))
         except Exception as err:
             from IPython import embed
             import traceback
             import textwrap
             embed(header=textwrap.dedent(
-                """\
-                Caught the following %s:
-                ------ Traceback ------
-                %s
-                -----------------------
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % (err.__class__.__name__, traceback.format_exc()))
+                    """\
+                    Caught the following %s:
+                    ------ Traceback ------
+                    %s
+                    -----------------------
+                    Exception will be re-raised upon exiting this embedded interpreter.
+                    """) % (err.__class__.__name__, traceback.format_exc()))
             raise
-
 
         return r
 
