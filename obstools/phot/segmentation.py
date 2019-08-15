@@ -12,6 +12,8 @@ import itertools as itt
 from operator import attrgetter
 
 # third-party libs
+from typing import Any
+
 import numpy as np
 from scipy import ndimage
 from astropy.utils import lazyproperty
@@ -906,6 +908,12 @@ def format_doc(template):
     return decorator
 
 
+import functools as ftl
+
+
+
+
+
 class SegmentationHelper(SegmentationImage, LoggingMixin):
     """
     Extends `photutils.segmentation.SegmentationImage` functionality
@@ -1033,7 +1041,11 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return new
 
-    def __init__(self, data, use_zero=False):
+    # def __new__(cls, data):
+    #
+    #     return super().__new__(cls)
+
+    def __init__(self, data):
         # self awareness
         if isinstance(data, SegmentationImage):
             data = data.data
@@ -1044,7 +1056,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         # init parent
         super().__init__(data)  # lazyproperties will not be reset on init!
-        self._use_zero = bool(use_zero)
+        # self._use_zero = bool(use_zero)
 
         # hack so we can use `detect` from both class and instance
         self.detect = self._detect_refine
@@ -1525,7 +1537,18 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                       'minimum_position': 'argmin',
                       'maximum_position': 'argmax'}
 
-    def _masked_stat(self, func, image, labels):
+    @classmethod
+    def _make_stat_methods(cls):
+        # factory function to dynamically create methods for statistics on
+        # masked images
+
+        for stat in cls._support_stats:
+            func = getattr(ndimage, stat)
+            setattr(cls, stat, ftl.partial(cls._masked_stat, func=func))
+            format_doc(cls._image_doc_template)()
+
+
+    def _masked_stat(self, image, labels, func):
 
         self._check_image(image)
         labels = self.resolve_labels(labels, allow_zero=True)
@@ -1544,10 +1567,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         else:
             return func(image, self.data, labels)
 
-    for stat in _support_stats:
-        func = getattr(ndimage, stat)
-        ftl.partial(_masked_stat, func)
-        format_doc(_image_doc_template)()
+
 
     @format_doc(_image_doc_template)
     def sum(self, image, labels=None):
