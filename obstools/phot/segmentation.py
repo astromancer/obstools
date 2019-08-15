@@ -1501,7 +1501,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # TODO: maybe use numpy.broadcast_arrays if you want to do stats on
         #  higher dimensional data sets using this class.  You will have to
         #  think carefully on how to managed masked points, since replacing a
-        #  label in the seg data will only work for 2d data.
+        #  label in the seg data will only work for 2d data.  May have to
+        #  resort to `labelled_comprehension`
 
     def _relabel_masked(self, image, masked_pixels_label=None):
         # if image is masked, ignore masked pixels by using copy of segmentation
@@ -1510,7 +1511,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # Note: Some statistical computations `mean`, `median`,
         #  `percentile` etc cannot be computed on the masked image by simply
         #  zero-filling the masked pixels since it will artificially skew the
-        #  results.  
+        #  results. No significant performance difference between the 2 paths
         if masked_pixels_label is None:
             masked_pixels_label = self.max_label + 1
         masked_pixels_label = int(masked_pixels_label)
@@ -1596,10 +1597,18 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         -------
 
         """
-        labels = self.resolve_labels(labels, allow_zero=True)
+        self._check_image(image)
+
+        # return ndimage.mean(image,
+        #                       self._relabel_masked(image),
+        #                       self.resolve_labels(labels, allow_zero=True))
+
         counts = self.sum(image, labels)
         ones = np.ones_like(image)  # preserves masked pixels
         areas = self.sum(ones, labels)
+
+        # Important: areas == 0 indicate that all the labelled pixels are
+        # masked in the image ==> output should be masked at these positions
         return np.ma.MaskedArray(counts, areas == 0) / areas
 
     def median(self, image, labels=None):
@@ -1616,17 +1625,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         """
         self._check_image(image)
-        labels = self.resolve_labels(labels, allow_zero=True)
-
-        if np.ma.is_masked(image):
-            # ignore masked pixels - replace by maximal label + 1
-            seg_data = self.data.copy()
-            seg_data[image.mask] = labels.max() + 1
-            # this label will not be counted
-        else:
-            seg_data = self.data
-
-        return ndimage.median(image, seg_data, labels)
+        return ndimage.median(image,
+                              self._relabel_masked(image),
+                              self.resolve_labels(labels, allow_zero=True))
 
     # minimum, median, minimum_position, maximum_position, extrema, sum, mean,
     # variance, standard_deviation
