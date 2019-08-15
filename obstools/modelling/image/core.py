@@ -98,6 +98,14 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         # TODO: ensure labels always belong to some group ???
         # self.groups.info = Record()
 
+        for lbl, mdl in self.models.items():
+            if hasattr(mdl, '_domain_mask'):
+                if (self.seg.slices[lbl] == mdl._domain_mask):
+                    print('NOPE ' * 20)
+                    from IPython import embed
+                    embed()
+
+
     @property
     def seg(self):
         return self._seg
