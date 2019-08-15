@@ -629,6 +629,8 @@ class SegmentedArray(np.ndarray):
 # simple container for 2-component objects
 # yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
+import textwrap
+
 
 # class Segments(list):
 #     # maps semantic corner positions to slice attributes
@@ -893,6 +895,15 @@ class Slices(object):
         # plot
         ax.add_collection(windows)
         return windows
+
+
+def format_doc(template):
+    # Helper that attaches docstring to method given template
+    def decorator(func):
+        func.__doc__ = template % func.__name__
+        return func
+
+    return decorator
 
 
 class SegmentationHelper(SegmentationImage, LoggingMixin):
@@ -1488,6 +1499,75 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     # Image methods
     # --------------------------------------------------------------------------
+    _image_doc_template = textwrap.dedent(
+            """
+            %s pixel values in each segment ignoring any masked pixels.
+    
+            Parameters
+            ----------
+            image:  array-like, or masked array
+                Image for which to calculate statistic
+            labels: array-like
+                labels
+    
+            Returns
+            -------
+            float or 1d array or masked array
+            """)
+
+    _support_stats = ['mean', 'median',
+                      'minimum', 'minimum_position',
+                      'maximum', 'maximum_position',
+                      'extrema',
+                      'variance', 'standard_deviation']
+    _stats_aliases = {'minimum': 'min',
+                      'maximum': 'max',
+                      'minimum_position': 'argmin',
+                      'maximum_position': 'argmax'}
+
+    def _masked_stat(self, func, image, labels):
+
+        self._check_image(image)
+        labels = self.resolve_labels(labels, allow_zero=True)
+
+        if np.ma.is_masked(image):
+            # ignore masked pixels
+            seg_data = self.data.copy()
+            seg_data[image.mask] = self.max_label + 1
+            # this label will not be used for statistic computation
+            result = func(image, seg_data, labels)
+            mask = (ndimage.sum(np.logical_not(image.mask),
+                                self.data, labels) == 0)
+
+            # get output mask
+            return np.ma.MaskedArray(result, mask)
+        else:
+            return func(image, self.data, labels)
+
+    for stat in _support_stats:
+        func = getattr(ndimage, stat)
+        ftl.partial(_masked_stat, func)
+        format_doc(_image_doc_template)()
+
+    @format_doc(_image_doc_template)
+    def sum(self, image, labels=None):
+        # TODO: look at ndimage._stats --> may be better to use here since
+        #  it gets called internally anyway and you get the `counts` as a
+        #  bonus...
+        return self._masked_stat(image, labels, 'sum')
+
+    for stat in
+
+    @format_doc(_image_doc_template)
+    def mean(self, image, labels=None):
+        return self._masked_stat(image, labels, 'mean')
+
+    @format_doc(_image_doc_template)
+    def median(self, image, labels=None):
+        return self._masked_stat(image, labels, 'median')
+
+    # TODO:
+
     def _check_image(self, image):
 
         # convert list etc to array, but keep masked arrays
@@ -1525,26 +1605,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         else:
             return self.data
 
-    def _masked_stat(self, image, labels, statistic):
 
-        # labels = self.resolve_labels(labels, allow_zero=True)
-        func = getattr(ndimage, statistic, None)
-        if func is None:
-            raise ValueError('%r is not a valid statistic' % statistic)
-
-        if np.ma.is_masked(image):
-            # ignore masked pixels
-            seg_data = self.data.copy()
-            seg_data[image.mask] = self.max_label + 1
-            # this label will not be used for statistic computation
-            result = func(image, seg_data, labels)
-
-            # get output mask
-            mask = (ndimage.sum(np.logical_not(image.mask), self.data,
-                                labels) == 0)
-            return np.ma.MaskedArray(result, mask)
-        else:
-            return func(image, self.data, labels)
 
     def thumbnails(self, image=None, labels=None):
         """
@@ -1582,85 +1643,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             llc = [s.start for s in slices]
             ix[i] = np.add(llc, np.divmod(np.ma.argmax(sub), sub.shape[1]))
         return ix
-
-    def sum(self, image, labels=None):
-        """
-        Sum pixel values in segments, ignoring any masked pixels
-
-        Parameters
-        ----------
-        image
-        labels
-
-        Returns
-        -------
-
-        """
-
-        # TODO: look at ndimage._stats --> probably better to use here since
-        #  it gets called internally and you get the `counts` as a bonus...
-
-        self._check_image(image)
-        return ndimage.sum(np.ma.filled(image, 0),
-                           self.data,
-                           self.resolve_labels(labels, allow_zero=True))
-
-
-
-
-
-
-    def mean(self, image, labels=None):
-        """
-        Mean per-pixel counts in each segment, ignoring masked pixels
-
-        Parameters
-        ----------
-        image
-        labels
-
-        Returns
-        -------
-
-        """
-        self._check_image(image)
-
-        labels = self.resolve_labels(labels, allow_zero=True)
-        mask = (ndimage.sum(np.logical_not(image.mask),  self.data, labels) == 0)
-        np.ma.MaskedArray(result, mask)
-
-        return ndimage.mean(image,
-                            self._relabel_masked(image),
-                            labels)
-
-        # counts = self.sum(image, labels)
-        # ones = np.ones_like(image)  # preserves masked pixels
-        # areas = self.sum(ones, labels)
-
-        # Important: areas == 0 indicate that all the labelled pixels are
-        # masked in the image ==> output should be masked at these positions
-        return np.ma.MaskedArray(counts, areas == 0) / areas
-
-    def median(self, image, labels=None):
-        """
-        Median pixel count ignoring masked pixels
-
-        Parameters
-        ----------
-        image
-        labels
-
-        Returns
-        -------
-
-        """
-        self._check_image(image)
-        return ndimage.median(image,
-                              self._relabel_masked(image),
-                              self.resolve_labels(labels, allow_zero=True))
-
-    # minimum, median, minimum_position, maximum_position, extrema, sum, mean,
-    # variance, standard_deviation
 
     def flux(self, image, labels=None, labels_bg=(0,),
              statistic_bg='median'):  #
