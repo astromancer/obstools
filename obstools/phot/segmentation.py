@@ -1525,6 +1525,27 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         else:
             return self.data
 
+    def _masked_stat(self, image, labels, statistic):
+
+        # labels = self.resolve_labels(labels, allow_zero=True)
+        func = getattr(ndimage, statistic, None)
+        if func is None:
+            raise ValueError('%r is not a valid statistic' % statistic)
+
+        if np.ma.is_masked(image):
+            # ignore masked pixels
+            seg_data = self.data.copy()
+            seg_data[image.mask] = self.max_label + 1
+            # this label will not be used for statistic computation
+            result = func(image, seg_data, labels)
+
+            # get output mask
+            mask = (ndimage.sum(np.logical_not(image.mask), self.data,
+                                labels) == 0)
+            return np.ma.MaskedArray(result, mask)
+        else:
+            return func(image, self.data, labels)
+
     def thumbnails(self, image=None, labels=None):
         """
         Thumbnail cutout images based on segmentation
@@ -1584,6 +1605,11 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                            self.data,
                            self.resolve_labels(labels, allow_zero=True))
 
+
+
+
+
+
     def mean(self, image, labels=None):
         """
         Mean per-pixel counts in each segment, ignoring masked pixels
@@ -1599,13 +1625,17 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
         self._check_image(image)
 
-        # return ndimage.mean(image,
-        #                       self._relabel_masked(image),
-        #                       self.resolve_labels(labels, allow_zero=True))
+        labels = self.resolve_labels(labels, allow_zero=True)
+        mask = (ndimage.sum(np.logical_not(image.mask),  self.data, labels) == 0)
+        np.ma.MaskedArray(result, mask)
 
-        counts = self.sum(image, labels)
-        ones = np.ones_like(image)  # preserves masked pixels
-        areas = self.sum(ones, labels)
+        return ndimage.mean(image,
+                            self._relabel_masked(image),
+                            labels)
+
+        # counts = self.sum(image, labels)
+        # ones = np.ones_like(image)  # preserves masked pixels
+        # areas = self.sum(ones, labels)
 
         # Important: areas == 0 indicate that all the labelled pixels are
         # masked in the image ==> output should be masked at these positions
