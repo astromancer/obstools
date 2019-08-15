@@ -697,12 +697,24 @@ class SegmentedArray(np.ndarray):
 #         return windows
 
 
-class Slices(list):  # rename Segments, integrate with photutils
+class Slices(list):
+    """
+    Container object for tuples of slices to aid selecting rectangular
+    sub-regions of images.
+
+
+    """
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
     def __init__(self, slices=(), segm=None):
+        """
 
+        :param slices:
+        :param segm:
+        """
+
+        # if no slices given, get from SegmentationImage
         if len(slices) == 0:
             if segm is None:
                 raise ValueError
@@ -717,7 +729,7 @@ class Slices(list):  # rename Segments, integrate with photutils
         list.__init__(self, slices)
 
         # add SegmentationHelper instance as attribute
-        self.segm = segm
+        self.seg = segm
 
     # def compute(self):
     #     self.seg.__class__.slices.fget(self.seg)
@@ -747,19 +759,19 @@ class Slices(list):  # rename Segments, integrate with photutils
 
     def lower_left_corners(self, labels=None):
         """lower left corners of segment slices"""
-        return self._get_corners('ll', self.segm.get_slices(labels))
+        return self._get_corners('ll', self.seg.get_slices(labels))
 
     def lower_right_corners(self, labels=None):
         """lower right corners of segment slices"""
-        return self._get_corners('lr', self.segm.get_slices(labels))
+        return self._get_corners('lr', self.seg.get_slices(labels))
 
     def upper_right_corners(self, labels=None):
         """upper right corners of segment slices"""
-        return self._get_corners('ur', self.segm.get_slices(labels))
+        return self._get_corners('ur', self.seg.get_slices(labels))
 
     def upper_left_corners(self, labels=None):
         """upper left corners of segment slices"""
-        return self._get_corners('ul', self.segm.get_slices(labels))
+        return self._get_corners('ul', self.seg.get_slices(labels))
 
     llc = lower_left_corners  # TODO: lazyproperties ???
     lrc = lower_right_corners
@@ -774,26 +786,26 @@ class Slices(list):  # rename Segments, integrate with photutils
 
     def extents(self, labels=None):
         """xy sizes"""
-        slices = self.segm.get_slices(labels)
+        slices = self.seg.get_slices(labels)
         sizes = np.zeros((len(slices), 2))
         for i, sl in enumerate(slices):
             if sl is not None:
                 sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
-                            for s, sz in zip(sl, self.segm.shape)]
+                            for s, sz in zip(sl, self.seg.shape)]
         return sizes
 
     def grow(self, labels, inc=1):
         """Increase the size of each slice in all directions by an increment"""
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), inc).clip(None, self.segm.shape)
+        urc = np.add(self.urc(labels), inc).clip(None, self.seg.shape)
         llc = np.add(self.llc(labels), -inc).clip(0)
         slices = [tuple(slice(*i) for i in yxix)
                   for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
         return slices
 
     def around_centroids(self, image, size, labels=None):
-        com = self.segm.centroid(image, labels)
+        com = self.seg.centroid(image, labels)
         slices = self.around_points(com, size)
         return com, slices
 
@@ -805,7 +817,7 @@ class Slices(list):  # rename Segments, integrate with photutils
         yxss = np.round(yxp[..., None] + yxdelta).astype(int)
         # clip negative slice indices since they yield empty slices
         return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
-                          for sz, ss in zip(self.segm.shape, yxss))))
+                          for sz, ss in zip(self.seg.shape, yxss))))
 
     def plot(self, ax, **kws):
         from matplotlib.patches import Rectangle
@@ -1045,59 +1057,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """Check if there are any zeros in the segmentation image"""
         return (self.data == 0).any()
 
-    @property
-    def use_zero(self):
-        """
-        Allows the 0 label to be included in iteration across segments
-        automatically. If `use_zero` is True, the first segment from
-        iteration methods `iter_slices`, `enum_slices`, `iter_segments`,
-        `coslice` will return the full frame.
-
-        Returns
-        -------
-
-        """
-        return self._use_zero
-
-    @use_zero.setter
-    def use_zero(self, b):
-        b = bool(b)
-        if b is self._use_zero:
-            return
-
-        if not self.has_zero:
-            return
-
-        # if we get here, we know there are 0s in the segmentation image,
-        # and that the `use_zero` state has changed.
-        # Avoid recomputing (slow) the `slices` and `labels` lazyproperties by
-        # setting them explicitly below (via self.__class__.labels.fset etc)
-
-        # change state.
-        if self._use_zero:
-            # ignore full frame
-            slices = self.slices[1:]
-            self.labels = self.labels[1:]
-            self.masks.pop(0)
-        else:
-            # use full frame!
-            slices = [tuple(map(slice, (0, 0), self.shape))]
-            slices.extend(self.slices)
-            self.labels = np.hstack([0, self.labels])
-            self.masks.insert(0, self.mask0)
-
-        # set
-        self.slices = slices  # Slices(slices, self)
-        self._use_zero = b
-
-        del self.areas
-        del self.segments
-
-    # def segment0:
-
-    # @lazyproperty
-    # def segments(self):
-    #     return Segments(super().segments)
 
     @lazyproperty
     def slices(self):
@@ -1110,9 +1069,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         # get slices from parent (possibly compute via `find_objects`)
         slices = SegmentationImage.slices.fget(self)  # only non-zero labels
 
-        if self.use_zero and self.has_zero:
-            slices = [tuple(map(slice, (0, 0), self.shape))] + slices
-
         # return slices #np.array(slices, self._slice_dtype)
         return Slices(slices, self)
 
@@ -1123,20 +1079,20 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return [self.slices[_] for _ in self.index(labels)]
 
     #
-    @lazyproperty
-    def labels(self):
-        # overwrite labels property to allow the use of zero label
-        labels = np.unique(self.data)
-        if (0 in labels) and not self.use_zero:
-            return labels[1:]
-        return labels
-
-    @property
-    def labels_nonzero(self):
-        """Positive segment labels"""
-        if self.has_zero and self.use_zero:
-            return self.labels[1:]
-        return self.labels
+    # @lazyproperty
+    # def labels(self):
+    #     # overwrite labels property to allow the use of zero label
+    #     labels = np.unique(self.data)
+    #     if (0 in labels) and not self.use_zero:
+    #         return labels[1:]
+    #     return labels
+    #
+    # @property
+    # def labels_nonzero(self):
+    #     """Positive segment labels"""
+    #     if self.has_zero and self.use_zero:
+    #         return self.labels[1:]
+    #     return self.labels
 
     def resolve_labels(self, labels=None, allow_zero=False):
         """
@@ -1150,7 +1106,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         ----------
         labels: sequence of int, optional
             labels to check
-        allow_zero
+        allow_zero: bool
+            Whether to raise exception on presence of `0` label
+
 
 
         Returns

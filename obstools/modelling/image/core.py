@@ -100,7 +100,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
 
         for lbl, mdl in self.models.items():
             if hasattr(mdl, '_domain_mask'):
-                if (self.seg.slices[lbl] == mdl._domain_mask):
+                if (self.seg.slices[lbl - 1] != mdl._domain_mask[1:]):
                     print('NOPE ' * 20)
                     from IPython import embed
                     embed()
