@@ -1393,8 +1393,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
 
         labels = self.resolve_labels(labels)
-        slices = self.get_slices(labels)
-        pairs = zip(labels, slices)
+        pairs = zip(labels, self.slices[labels])
         if filter_:
             yield from ((i, s)
                         for i, s in pairs
@@ -1489,6 +1488,42 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     # Image methods
     # --------------------------------------------------------------------------
+    def _check_image(self, image):
+
+        # convert list etc to array, but keep masked arrays
+        image = np.asanyarray(image)
+
+        # check shapes same
+        if image.shape != self.shape:
+            raise ValueError('Arrays does not have the same shape as '
+                             'segmentation image')
+
+        # TODO: maybe use numpy.broadcast_arrays if you want to do stats on
+        #  higher dimensional data sets using this class.  You will have to
+        #  think carefully on how to managed masked points, since replacing a
+        #  label in the seg data will only work for 2d data.
+
+    def _relabel_masked(self, image, masked_pixels_label=None):
+        # if image is masked, ignore masked pixels by using copy of segmentation
+        # data with positions of masked pixels replaced by new label one
+        # larger than current max label.
+        # Note: Some statistical computations `mean`, `median`,
+        #  `percentile` etc cannot be computed on the masked image by simply
+        #  zero-filling the masked pixels since it will artificially skew the
+        #  results.  
+        if masked_pixels_label is None:
+            masked_pixels_label = self.max_label + 1
+        masked_pixels_label = int(masked_pixels_label)
+
+        if np.ma.is_masked(image):
+            # ignore masked pixels
+            seg_data = self.data.copy()
+            seg_data[image.mask] = masked_pixels_label
+            # this label will not be used for statistic computation
+            return seg_data
+        else:
+            return self.data
+
     def thumbnails(self, image=None, labels=None):
         """
         Thumbnail cutout images based on segmentation
@@ -1496,31 +1531,34 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         Parameters
         ----------
         image
+        labels
 
         Returns
         -------
         list of arrays
         """
+
         data = self.data if image is None else image
-        if data.shape != self.shape:
-            raise ValueError('Arrays does not have the same shape as '
-                             'segmentation image')
+        self._check_image(data)
         return list(self.coslice(data, labels=labels))
 
-    def argmax(self, image, labels=None, mask=None):
-        # NOTE: ndimage.maximum_position exists!!
+    def argmax(self, image, labels=None):
         """Indices of maxima in each segment given an image"""
 
-        if mask is not None:
-            image = np.ma.array(image, mask=mask)
+        # NOTE: ndimage.maximum_position exists - check if this is preferable
+        #  pros: n-dimensional, performance??
 
         labels = self.resolve_labels(labels)
+        self._check_image(image)
+
         n = len(labels)
+        image.ndim()
         ix = np.empty((n, 2), int)
-        for i, (sy, sx) in enumerate(self.get_slices(labels)):
-            sub = image[sy, sx]
-            llc = sy.start, sx.start
-            ix[i] = np.add(llc, np.divmod(np.argmax(sub), sub.shape[1]))
+
+        for i, slices in enumerate(self.slices[labels]):
+            sub = image[slices]
+            llc = [s.start for s in slices]
+            ix[i] = np.add(llc, np.divmod(np.ma.argmax(sub), sub.shape[1]))
         return ix
 
     def sum(self, image, labels=None):
@@ -1536,6 +1574,11 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         -------
 
         """
+
+        # TODO: look at ndimage._stats --> probably better to use here since
+        #  it gets called internally and you get the `counts` as a bonus...
+
+        self._check_image(image)
         return ndimage.sum(np.ma.filled(image, 0),
                            self.data,
                            self.resolve_labels(labels, allow_zero=True))
@@ -1572,6 +1615,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         -------
 
         """
+        self._check_image(image)
         labels = self.resolve_labels(labels, allow_zero=True)
 
         if np.ma.is_masked(image):
@@ -1584,8 +1628,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return ndimage.median(image, seg_data, labels)
 
-    # minimum, median, maximum_position, extrema, sum, mean, variance,
-    # standard_deviation
+    # minimum, median, minimum_position, maximum_position, extrema, sum, mean,
+    # variance, standard_deviation
 
     def flux(self, image, labels=None, labels_bg=(0,),
              statistic_bg='median'):  #
@@ -1606,7 +1650,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         -------
 
         """
-
+        self._check_image(image)
         labels = self.resolve_labels(labels)
 
         # for convenience, allow `labels_bg` to be a SegmentedImage!
@@ -1683,30 +1727,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         self.relabel_many(old_labels, new_labels)
         return counts[order]
 
-    def relabel_many(self, old_labels, new_labels):
-        """
-        Reassign multiple labels
-
-        Parameters
-        ----------
-        old_labels
-        new_labels
-
-        Returns
-        -------
-
-        """
-        old_labels = self.resolve_labels(old_labels)
-
-        if len(old_labels) != len(new_labels):
-            raise ValueError('Unequal number of labels')
-
-        # forward_map = np.hstack([0, self.labels])
-        # there may be labels missing
-        forward_map = np.arange(self.max_label + 1)
-        forward_map[old_labels] = new_labels
-        self.data = forward_map[self.data]
-
     def snr(self, image, labels=None, labels_bg=(0,)):
         """
         A signal-to-noise ratio estimate.  Calculates the SNR by taking the
@@ -1729,56 +1749,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         noise = np.sqrt(signal +  # ← poisson.      sky + instrument ↓
                         n_pix_src * (1 + n_pix_src / n_pix_bg) * flx_bg)
         return signal / noise
-
-    def dilate(self, iterations=1, connectivity=4, labels=None, mask=None,
-               copy=False):
-        """
-        Binary dilation on each labelled segment
-
-        Parameters
-        ----------
-        iterations
-        connectivity
-        labels
-        mask
-        copy
-
-        Returns
-        -------
-
-        """
-        if not iterations:
-            return self
-
-        # expand masks to 3D sequence
-        labels = self.resolve_labels(labels)
-        masks = self.to_bool_3d(labels)
-
-        if connectivity == 4:
-            struct = ndimage.generate_binary_structure(2, 1)
-        elif connectivity == 8:
-            struct = ndimage.generate_binary_structure(2, 2)
-        else:
-            raise ValueError('Invalid connectivity={0}.  '
-                             'Options are 4 or 8'.format(connectivity))
-
-        # structure array needs to have same rank as masks
-        struct = struct[None]
-        masks = ndimage.binary_dilation(masks, struct, iterations, mask)
-        data = np.zeros_like(self.data, subok=False)
-        for lbl, mask in zip(labels, masks):
-            data[mask] = lbl
-
-        if labels is not None:
-            no_dilate = self.keep(np.setdiff1d(self.labels, labels))
-            mask = no_dilate.astype(bool)
-            data[mask] = no_dilate[mask]
-
-        if copy:
-            return self.__class__(data)
-        else:
-            self.data = data
-            return self
 
     # TODO: seg.centrality.com / seg.centrality.gmean /
     #  seg.centrality.mean / seg.centrality.argmax
@@ -1871,6 +1841,82 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         return com
 
     centroids = com_bg
+
+    # --------------------------------------------------------------------------
+
+    def relabel_many(self, old_labels, new_labels):
+        """
+        Reassign multiple labels
+
+        Parameters
+        ----------
+        old_labels
+        new_labels
+
+        Returns
+        -------
+
+        """
+        old_labels = self.resolve_labels(old_labels)
+
+        if len(old_labels) != len(new_labels):
+            raise ValueError('Unequal number of labels')
+
+        # forward_map = np.hstack([0, self.labels])
+        # there may be labels missing
+        forward_map = np.arange(self.max_label + 1)
+        forward_map[old_labels] = new_labels
+        self.data = forward_map[self.data]
+
+    def dilate(self, iterations=1, connectivity=4, labels=None, mask=None,
+               copy=False):
+        """
+        Binary dilation on each labelled segment
+
+        Parameters
+        ----------
+        iterations
+        connectivity
+        labels
+        mask
+        copy
+
+        Returns
+        -------
+
+        """
+        if not iterations:
+            return self
+
+        # expand masks to 3D sequence
+        labels = self.resolve_labels(labels)
+        masks = self.to_bool_3d(labels)
+
+        if connectivity == 4:
+            struct = ndimage.generate_binary_structure(2, 1)
+        elif connectivity == 8:
+            struct = ndimage.generate_binary_structure(2, 2)
+        else:
+            raise ValueError('Invalid connectivity={0}.  '
+                             'Options are 4 or 8'.format(connectivity))
+
+        # structure array needs to have same rank as masks
+        struct = struct[None]
+        masks = ndimage.binary_dilation(masks, struct, iterations, mask)
+        data = np.zeros_like(self.data, subok=False)
+        for lbl, mask in zip(labels, masks):
+            data[mask] = lbl
+
+        if labels is not None:
+            no_dilate = self.keep(np.setdiff1d(self.labels, labels))
+            mask = no_dilate.astype(bool)
+            data[mask] = no_dilate[mask]
+
+        if copy:
+            return self.__class__(data)
+        else:
+            self.data = data
+            return self
 
     def shift(self, offset):
         """

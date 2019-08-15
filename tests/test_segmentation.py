@@ -23,12 +23,16 @@ def test_slices():
     slices[[0, 2]] # should be length 2 array of 2-tuples
 
 
-def test_stats
-    seg.mean
-    seg.median
-    seg.minimum
-    maximum_position
-    extrema
-    sum,
-    variance,
-    standard_deviation
+def test_stats():
+    ''
+    # check that stats works for label zero as well as for images containing
+    # masked pixels
+
+    # seg.mean
+    # seg.median
+    # seg.minimum
+    # maximum_position
+    # extrema
+    # sum,
+    # variance,
+    # standard_deviation
