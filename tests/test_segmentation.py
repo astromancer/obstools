@@ -3,7 +3,7 @@
 import numpy as np
 
 # local libs
-from obstools.phot.segmentation import SegmentationHelper, Slices
+from obstools.phot.segmentation import SegmentationHelper, Slices, MaskedStatsMixin
 
 def test_self_awareness():
     seg = SegmentationHelper(np.zeros(10, 10))
@@ -23,10 +23,26 @@ def test_slices():
     slices[[0, 2]] # should be length 2 array of 2-tuples
 
 
+# import pytest
+# @pytest.fixture
+# def detect
+
+
 def test_stats():
     ''
     # check that stats works for label zero as well as for images containing
     # masked pixels
+
+    # generate random test image here
+    image = poof() # TODO: load test data as fixture
+
+    # detect objects # TODO: load test data as fixture
+    seg = SegmentationHelper.detect(image)
+
+
+    for stat in MaskedStatsMixin._supported:
+        print(stat)
+
 
     # seg.mean
     # seg.median

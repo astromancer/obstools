@@ -7,12 +7,12 @@ import types
 import inspect
 import logging
 import warnings
-import functools
+import functools as ftl
 import itertools as itt
 from operator import attrgetter
 
 # third-party libs
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from scipy import ndimage
@@ -282,7 +282,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
         # log what you found
         from recipes import pprint
 
-        seq_repr = functools.partial(seq_repr_trunc, max_items=3)
+        seq_repr = ftl.partial(seq_repr_trunc, max_items=3)
 
         # report detections here
         col_headers = ['snr', 'npix', 'dil', 'debl', 'n_obj', 'labels']
@@ -530,23 +530,25 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     return ma
 
 
-class ModelledSegment(Segment):
-    def __init__(self, segment_img, label, slices, area, model=None):
-        super().__init__(segment_img, label, slices, area)
-        self.model = model
-        # self.grid =
-        #
+# class ModelledSegment(Segment):
+#     def __init__(self, segment_img, label, slices, area, model=None):
+#         super().__init__(segment_img, label, slices, area)
+#         self.model = model
+#         # self.grid =
+#         #
 
 
 class SegmentedArray(np.ndarray):
     """
+    WORK IN PROGRESS
+
     Array subclass for keeping image segmentation data. Keeps a reference to
     the `SegmentationHelper` object that created it so that changing the
     segmentation array data triggers the lazyproperties to recompute the next
     time they are accessed.
 
     # note inplace operations on array will not trigger reset of parent
-    # lazyproperties
+    # lazyproperties, but setting data explicitly should
 
     """
 
@@ -772,8 +774,13 @@ class Slices(object):
 
         # use object array as container so we can get items by indexing with
         # list or array which is really nice and convenient
-        self.slices = np.empty(len(slices), 'O')
-        self.slices[:] = slices
+        # secondly, we include index 0 as the background ==> full array slice!
+        # this means we can index this object directly with an array of
+        # labels, or integer label, instead of needing the -1 every time you
+        # want a slice
+        self.slices = np.empty(len(slices) + 1, 'O')
+        self.slices[0] = (slice(None), ) * seg.data.ndim
+        self.slices[1:] = slices
 
         # add SegmentationHelper instance as attribute
         self.seg = seg
@@ -825,6 +832,7 @@ class Slices(object):
     urc = upper_right_corners
     ulc = upper_left_corners
 
+    # TODO: maybe move to SegmentationImage
     def widths(self):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.x)))
 
@@ -899,41 +907,163 @@ class Slices(object):
         return windows
 
 
-def format_doc(template):
-    # Helper that attaches docstring to method given template
-    def decorator(func):
-        func.__doc__ = template % func.__name__
-        return func
-
-    return decorator
-
-
 import functools as ftl
+import types
 
 
+class Centrality():
+    'TODO: com / gmean / mean / argmax'  # maybe
 
 
+class MaskedStatsMixin(object):
+    """
+    This class gives inheritors access to methods for doing statistics on
+    segmented images (from `scipy.ndimage.measurements`)
+    """
 
-class SegmentationHelper(SegmentationImage, LoggingMixin):
+    # Each supported method is wrapped in the `MaskedStatistic` class upon
+    # class construction.  `MaskedStatistic` is a descriptor and will
+    # dynamically attach to inheritors of this class that invoke the method.
+
+    _supported = ['sum',
+                  'mean', 'median',
+                  'minimum', 'minimum_position',
+                  'maximum', 'maximum_position',
+                  'extrema',
+                  'variance', 'standard_deviation',
+                  'center_of_mass']
+    _aliases = {'minimum': 'min',
+                'maximum': 'max',
+                'minimum_position': 'argmin',
+                'maximum_position': 'argmax',
+                'standard_deviation': 'std',
+                'center_of_mass': 'com'}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # add methods for statistics on masked image to inheritors
+        for stat in cls._supported:
+            method = MaskedStatistic(getattr(ndimage, stat))
+            setattr(cls, stat, method)
+            # also add aliases for convenience
+            alias = cls._aliases.get(stat)
+            if alias:
+                setattr(cls, alias, method)
+
+
+class MaskedStatistic(object):
+    # Descriptor class that enables statistical computation on segmented images
+    _doc_template = \
+        """
+        %s pixel values in each segment ignoring any masked pixels.
+    
+        Parameters
+        ----------
+        image:  array-like, or masked array
+            Image for which to calculate statistic
+        labels: array-like
+            labels
+    
+        Returns
+        -------
+        float or 1d array or masked array
+        """
+
+    def __init__(self, func):
+        self.func = func
+        self.__name__ = name = func.__name__
+        self.__doc__ = self._doc_template % name.title().replace('_', ' ')
+
+    def __get__(self, seg, objtype=None):
+
+        if seg is None:  # called from class
+            return self
+
+        # bind this class to the seg instance from whence the lookup came.
+        # Essentially this binds the first argument `seg` in `__call__` below
+        return types.MethodType(self, seg)
+
+    def __call__(self, seg, image, labels=None):
+        seg._check_image(image)
+        labels = seg.resolve_labels(labels, allow_zero=True)
+
+        if np.ma.is_masked(image):
+            # ignore masked pixels
+            seg_data = seg.data.copy()
+            seg_data[image.mask] = seg.max_label + 1
+            # this label will not be used for statistic computation
+            result = self.func(image, seg_data, labels)
+            # now have to check which labels may be completely masked in
+            # image data, so we can mask those in output
+            mask = (ndimage.sum(np.logical_not(image.mask), seg.data, labels)
+                    == 0)
+            # get output mask
+            return np.ma.MaskedArray(result, mask)
+        else:
+            # ensure return array and not list. labels always array here
+            return np.array(self.func(image, seg.data, labels))
+
+
+import collections as col
+
+
+class SegmentMasks(col.defaultdict):
+    """
+    Container for segment masks
+    """
+
+    def __init__(self, seg):
+        self.seg = seg
+        col.defaultdict.__init__(self, None)
+
+    def __missing__(self, label):
+        # the mask is computed at lookup time and inserted into the dict
+        # allow zero!
+        if label != 0:
+            self.seg.check_label(label)
+        return self.seg.data[self.seg.slices[label]] != label
+
+
+class SegmentMasksMixin(object):
+    @lazyproperty
+    def masks(self):
+        """
+        A dictionary. For each label, a boolean array of the cutout segment
+        with `False` wherever pixels have different labels. The dict will
+        initially be empty - the masks are computed only when lookup happens.
+
+        Returns
+        -------
+        dict of arrays (keyed on labels)
+        """
+        return SegmentMasks(self)
+
+
+class SegmentationHelper(SegmentationImage, MaskedStatsMixin,
+                         SegmentMasksMixin, LoggingMixin):
     """
     Extends `photutils.segmentation.SegmentationImage` functionality
 
     Additions to the SegmentationImage class.
         * classmethod for construction from an image of stars
+
         * support for iterating over segments / slices
-        * support for calculations on masked arrays
-        * methods for basic statistics on segments (mean, median etc)
-        * methods for calculating center of mass, counts, flux in segments
-        * re-ordering (sorting) labels by counts in an image
+
+        * calculations on masked arrays
+        * methods for statistics on segments (min, max, mean, median, ...)
+        * methods for calculating center-of-mass, counts, flux in each segment
+        * re-ordering (sorting) labels by any of the above statistics
+
         * preparing masks for photometry (2d, 3d)
         * dilating, eroding segments, transforming to annuli
+
         * selecting subsets of the segmentation image
         * adding segments from another instance / array
         * displaying as an image with segments labelled
-
-    In terms of modelling, this class is a domain mapping layer that lives on
-    top of images
     """
+
+    # In terms of modelling, this class is a also domain mapping layer that
+    # lives on top of images.
 
     # _allow_negative = False       # TODO: maybe
 
@@ -973,7 +1103,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
         return obj
 
-    @classmethod
+    @classmethod  # todo use sharedmethod?
     def detect(cls, image, mask=False, background=None, snr=3., npixels=7,
                edge_cutoff=None, deblend=False, dilate=0):
         """
@@ -1158,10 +1288,10 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     def resolve_labels(self, labels=None, ignore=(), allow_zero=False):
         """
 
-        Get the list of labels that are in use.  Default is to return the
+        Get the list of labels from input.  Default is to return the
         full list of unique labels in the segmentation image.  If a sequence
         of labels is provided, this method will check whether they are valid
-        - i.e. contained in the segmentation image
+        - i.e. contained in the segmentation image.
 
         Parameters
         ----------
@@ -1210,38 +1340,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
             raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
 
         return labels
-
-    # def index(self, labels):
-    #     """Index the """
-    #     labels = self.resolve_labels(labels)
-    #     if self.is_consecutive:
-    #         return labels - (not self.use_zero)
-    #     else:
-    #         return np.digitize(labels, self.labels) - (not self.use_zero)
-
-    # --------------------------------------------------------------------------
-    @lazyproperty  # TODO: Mixin!!!!
-    def masks(self):  # todo: use attr_getter(self.segments, 'data_ma.mask')
-        """
-        For each (label, slice) pair: a boolean array of the cutout
-        segmentation image containing False where
-        any value in the segmented image is not equal to the value of that
-        label.
-
-        Returns
-        -------
-        dict of arrays (keyed on labels)
-        """
-
-        masks = {}
-        if self.has_zero and self.use_zero:
-            masks[0] = self.mask0
-
-        for lbl, slice_ in self.enum_slices(self.labels_nonzero):
-            seg = self.data[slice_]
-            masks[lbl] = (seg != lbl)
-
-        return masks
 
     @lazyproperty
     def mask0(self):  # todo use `masked_background` now in photutils
@@ -1309,8 +1407,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     def mask_3d(self, image, labels=None, mask0=True):
         """
-        Expand image to 3D masked array, indexed on segment index with
-        background (label<=0) masked.
+        Expand image to 3D masked array, 1st index on label, with background (
+        label<=0) optionally masked.
         """
         return self._select_labels(image, labels, mask0, self.to_bool_3d)
 
@@ -1318,7 +1416,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
     # --------------------------------------------------------------------------
     def select_subset(self, start, shape, type_=None):
         """
-        FIXME: this description not entirely accurate - padding happens
+        FIXME: this description not accurate - padding happens
 
         Create a smaller version of the segmentation image starting at
         yx-indices `start` and having shape `shape`
@@ -1370,14 +1468,26 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     def select_3d(self, image, labels, mask0=False):
         """
-        Get data of labels from image keeping only labeled regions and
-        zeroing / masking everything else. Returns a 3d array with first
-        dimension the size of labels
-        """  # TODO: update for nd ?
+        Get data from image keeping only labeled regions and
+        zeroing / masking everything else.
+
+        Parameters
+        ----------
+        image
+        labels
+        mask0
+
+        Returns
+        -------
+        3d array with first         dimension the size of labels
+        """
+        # TODO: update for nd ?
         return self._select_labels(image, labels, mask0, self.to_bool_3d)
 
     def clone(self, keep_labels=all, remove=None):
-        """Return a modified copy keeping only labels in `keep`"""
+        """
+        Return a modified copy keeping only labels in `keep`
+        """
         if keep_labels is all:
             keep_labels = self.labels
         else:
@@ -1511,83 +1621,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
 
     # Image methods
     # --------------------------------------------------------------------------
-    _image_doc_template = textwrap.dedent(
-            """
-            %s pixel values in each segment ignoring any masked pixels.
-    
-            Parameters
-            ----------
-            image:  array-like, or masked array
-                Image for which to calculate statistic
-            labels: array-like
-                labels
-    
-            Returns
-            -------
-            float or 1d array or masked array
-            """)
-
-    _support_stats = ['mean', 'median',
-                      'minimum', 'minimum_position',
-                      'maximum', 'maximum_position',
-                      'extrema',
-                      'variance', 'standard_deviation']
-    _stats_aliases = {'minimum': 'min',
-                      'maximum': 'max',
-                      'minimum_position': 'argmin',
-                      'maximum_position': 'argmax'}
-
-    @classmethod
-    def _make_stat_methods(cls):
-        # factory function to dynamically create methods for statistics on
-        # masked images
-
-        for stat in cls._support_stats:
-            func = getattr(ndimage, stat)
-            setattr(cls, stat, ftl.partial(cls._masked_stat, func=func))
-            format_doc(cls._image_doc_template)()
-
-
-    def _masked_stat(self, image, labels, func):
-
-        self._check_image(image)
-        labels = self.resolve_labels(labels, allow_zero=True)
-
-        if np.ma.is_masked(image):
-            # ignore masked pixels
-            seg_data = self.data.copy()
-            seg_data[image.mask] = self.max_label + 1
-            # this label will not be used for statistic computation
-            result = func(image, seg_data, labels)
-            mask = (ndimage.sum(np.logical_not(image.mask),
-                                self.data, labels) == 0)
-
-            # get output mask
-            return np.ma.MaskedArray(result, mask)
-        else:
-            return func(image, self.data, labels)
-
-
-
-    @format_doc(_image_doc_template)
-    def sum(self, image, labels=None):
-        # TODO: look at ndimage._stats --> may be better to use here since
-        #  it gets called internally anyway and you get the `counts` as a
-        #  bonus...
-        return self._masked_stat(image, labels, 'sum')
-
-    for stat in
-
-    @format_doc(_image_doc_template)
-    def mean(self, image, labels=None):
-        return self._masked_stat(image, labels, 'mean')
-
-    @format_doc(_image_doc_template)
-    def median(self, image, labels=None):
-        return self._masked_stat(image, labels, 'median')
-
-    # TODO:
-
     def _check_image(self, image):
 
         # convert list etc to array, but keep masked arrays
@@ -1625,8 +1658,6 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         else:
             return self.data
 
-
-
     def thumbnails(self, image=None, labels=None):
         """
         Thumbnail cutout images based on segmentation
@@ -1645,24 +1676,24 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         self._check_image(data)
         return list(self.coslice(data, labels=labels))
 
-    def argmax(self, image, labels=None):
-        """Indices of maxima in each segment given an image"""
-
-        # NOTE: ndimage.maximum_position exists - check if this is preferable
-        #  pros: n-dimensional, performance??
-
-        labels = self.resolve_labels(labels)
-        self._check_image(image)
-
-        n = len(labels)
-        image.ndim()
-        ix = np.empty((n, 2), int)
-
-        for i, slices in enumerate(self.slices[labels]):
-            sub = image[slices]
-            llc = [s.start for s in slices]
-            ix[i] = np.add(llc, np.divmod(np.ma.argmax(sub), sub.shape[1]))
-        return ix
+    # def argmax(self, image, labels=None):
+    #     """Indices of maxima in each segment given an image"""
+    #
+    #     # NOTE: ndimage.maximum_position exists - check if this is preferable
+    #     #  pros: n-dimensional, performance??
+    #
+    #     labels = self.resolve_labels(labels)
+    #     self._check_image(image)
+    #
+    #     n = len(labels)
+    #     image.ndim()
+    #     ix = np.empty((n, 2), int)
+    #
+    #     for i, slices in enumerate(self.slices[labels]):
+    #         sub = image[slices]
+    #         llc = [s.start for s in slices]
+    #         ix[i] = np.add(llc, np.divmod(np.ma.argmax(sub), sub.shape[1]))
+    #     return ix
 
     def flux(self, image, labels=None, labels_bg=(0,),
              statistic_bg='median'):  #
@@ -1783,25 +1814,23 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                         n_pix_src * (1 + n_pix_src / n_pix_bg) * flx_bg)
         return signal / noise
 
-    # TODO: seg.centrality.com / seg.centrality.gmean /
-    #  seg.centrality.mean / seg.centrality.argmax
-    def com(self, image=None, labels=None):
-        """
-        Center of Mass for each labelled segment
-
-        Parameters
-        ----------
-        image: 2d array or None
-            if None, center of mass of segment for constant image is returned
-        labels
-
-        Returns
-        -------
-
-        """
-        image = self.data.astype(bool) if image is None else image
-        labels = self.resolve_labels(labels)
-        return np.array(ndimage.center_of_mass(image, self.data, labels))
+    # def com(self, image=None, labels=None):
+    #     """
+    #     Center of Mass for each labelled segment
+    #
+    #     Parameters
+    #     ----------
+    #     image: 2d array or None
+    #         if None, center of mass of segment for constant image is returned
+    #     labels
+    #
+    #     Returns
+    #     -------
+    #
+    #     """
+    #     image = self.data.astype(bool) if image is None else image
+    #     labels = self.resolve_labels(labels)
+    #     return np.array(ndimage.center_of_mass(image, self.data, labels))
 
     def com_bg(self, image, labels=None, mask=None,
                background_estimator=np.ma.median, grid=None):
@@ -2011,7 +2040,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         Returns
         -------
         list of int (new labels)
-"""
+        """
 
         assert self.shape == data.shape, \
             (f'Shape mismatch between {self.__class__.__name__} instance of '
@@ -2119,7 +2148,7 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
         """
         # TODO: disable sliders ....
 
-        from scipy.cluster.vq import kmeans
+
         from graphical.imagine import ImageDisplay
 
         # draw segment labels
@@ -2153,6 +2182,8 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                 d = np.sqrt(np.square(pos[None].T - w).sum(0))
                 dmin = d.min()
                 if dmin > 1:
+                    from scipy.cluster.vq import kmeans
+
                     # center of mass not close to any pixels. disjointed segment
                     # try cluster
                     codebook, distortion = kmeans(w.T.astype(float), 2)
@@ -2165,6 +2196,9 @@ class SegmentationHelper(SegmentationImage, LoggingMixin):
                                va='center', ha='center')
 
         return im
+
+    def display_ascii(self):
+        ''
 
 
 class SegmentationGroups(SegmentationHelper, LabelGroupsMixin):
