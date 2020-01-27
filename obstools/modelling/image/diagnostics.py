@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 
 # local libs
 from recipes import pprint
-from graphical.imagine import ImageDisplay
+from graphing.imagine import ImageDisplay
 
 
 

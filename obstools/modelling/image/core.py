@@ -15,8 +15,8 @@ from photutils.segmentation import Segment
 
 # local libs
 from recipes.logging import LoggingMixin
-from recipes.dict import Record, AttrDict
-from graphical.imagine import VideoDisplay
+from recipes.containers.dicts import Record, AttrDict
+from graphing.imagine import VideoDisplay
 
 # relative libs
 from ..utils import load_memmap
@@ -36,8 +36,7 @@ class ModelledSegment(Segment):
         return s
 
 
-class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
-                          LoggingMixin):
+class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     """
     Model fitting and comparison on segmented image frame
     """
@@ -48,13 +47,11 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
 
     # TODO: mask_policy.  filter / set error to inf
 
-    # FIXME: implement group stuff in different class HierarchicalImageModel ?
-
     # use record arrays for fit results (structured parameters)
     # use_record = False
     # use_params = True
 
-    def __init__(self, seg, models=()):  # , label_groups=None
+    def __init__(self, seg, models=(), group_name=None):  # ,
         """
 
         Parameters
@@ -75,36 +72,28 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
             assigning keys in the `models` attribute dict.
         """
 
+        # TODO: ways to handle multi-segment models.  This is one of the last
+        #  pieces needed for a fully hierarchical model
+
         # init container
         CompoundModel.__init__(self)
 
         # init segments
-        self._seg = None  # placeholder
         self.set_segments(seg)
+        # optional named label groups
+        if group_name is not None:
+            self.seg.groups[group_name] = self.seg.labels
+            # TODO: maybe ensure labels always belong to some group if you
+            #  want to use this consistently for parameter construction
 
         # add models
         self.set_models(models)
 
         # set the independent variable grid for all models
         self.set_grid(np.indices(self.seg.shape))
-        # TODO: should all models that become part of this get a domain_mask??
 
-        # optional unique names for parameter construction
-        # self._names = None
-
-        # probably check the labels in the groups
-        # # optional named groups
-        LabelGroupsMixin.__init__(self)
-        # TODO: ensure labels always belong to some group ???
-        # self.groups.info = Record()
-
-        for lbl, mdl in self.models.items():
-            if hasattr(mdl, '_domain_mask'):
-                if (self.seg.slices[lbl - 1] != mdl._domain_mask[1:]):
-                    print('NOPE ' * 20)
-                    from IPython import embed
-                    embed()
-
+    def __getitem__(self, key):
+        return self.models[key]
 
     @property
     def seg(self):
@@ -115,9 +104,10 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         self.set_segments(seg)
 
     def set_segments(self, seg):
-        # setter for `seg` property
+        """setter for `seg` property"""
+        # noinspection PyAttributeOutsideInit
         self._seg = SegmentationGridHelper(seg)
-        # FIXME: can now just be  SegmentationHelper
+        # FIXME: can now just be SegmentationHelper
 
         # re-compute grids for component models
         self.set_grid(self.grid)
@@ -160,172 +150,163 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
             dtypes.append(dtype)
         return dtypes
 
-    def fit(self, data, stddev=None, **kws):
-        """
-        Fit frame data by looping over segments and models
+    def get_region(self, model):
+        return self.seg.slices[self.models.invert(one2one=True)[model]]
 
-        Parameters
-        ----------
-        data
-        std
-        mask
-        models
-        labels
+    def iter_region_data(self, keys, *data, **kws):
+        #
+        seg = self.seg
+        for label, subs in seg.coslice(*data, labels=keys, enum=True, **kws):
+            yield seg.slices[label], subs
 
-        Returns
-        -------
+    # def fit(self, data, stddev=None, **kws):
+    #     """
+    #     Fit frame data by looping over segments and models
+    #
+    #     Parameters
+    #     ----------
+    #     data
+    #     std
+    #     mask
+    #     models
+    #     labels
+    #
+    #     Returns
+    #     -------
+    #
+    #     """
+    #     return self.fit_sequential(data, stddev, **kws)
+    #
+    # def fit_sequential(self, data, stddev=None, labels=None,
+    #                    reduce=False, **kws):
+    #     """
+    #     Fit data in the segments with labels.
+    #     """
+    #
+    #     full_output = kws.pop('full_output', False)
+    #     # full results container is returned with nans where model (component)
+    #     # was not fit / did not converged
+    #     p0 = kws.pop('p0', None)
+    #
+    #     if labels is None:
+    #         labels = list(self.models.keys())
+    #     else:
+    #         labels = self.seg.resolve_labels(labels)
+    #
+    #     # output
+    #     results = self._results_container(None if full_output else labels)
+    #     residuals = np.ma.getdata(data).copy() if reduce else None
+    #
+    #     # optimize
+    #     self.fit_worker(data, stddev, labels, p0, results, residuals, **kws)
+    #
+    #     if reduce:
+    #         return results, residuals
+    #
+    #     return results
+    #
+    # def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
+    #
+    #     # iterator for data segments
+    #     subs = self.seg.coslice(data, stddev, labels=labels,masked=True)
+    #
+    #     # # get slices
+    #     # slices = self.seg.get_slices(labels)
+    #     # if data.ndim > 2:
+    #     #     slices = list(map((...,).__add__, slices))
+    #
+    #     #
+    #     # TODO: multiprocess this for loop!!!???
+    #     reduce = residuals is not None
+    #     for label, (sub, std) in zip(labels, subs):
+    #         model = self.models[label]
+    #
+    #         # skip models with 0 free parameters
+    #         if model.dof == 0:
+    #             continue
+    #
+    #         if p0 is not None:
+    #             kws['p0'] = p0[model.name]
+    #
+    #         # select data # this does the job of coslice
+    #         # sub = np.ma.array(data[seg])
+    #         # sub[..., self.seg.masks[label]] = np.ma.masked
+    #         # std = None if (stddev is None) else stddev[..., slice_]
+    #
+    #         # get coordinate grid
+    #         # minimize
+    #         # kws['jac'] = model.jacobian_wrss
+    #         # kws['hess'] = model.hessian_wrss
+    #
+    #         # note intentionally using internal grid for model since it may
+    #         #  be transformed to numerically stable regime
+    #         r = model.fit(sub, model.grid, std, **kws)
+    #
+    #         if r is None:
+    #             # TODO: optionally raise here based on cls.raise_on_failure
+    #             #  can do this by catching above and raising from.
+    #             #  raise_on_failure can also be function / Exception ??
+    #             msg = (f'{self.models[label]!r} fit to segment {label} '
+    #                    f'failed to converge.')
+    #             med = np.ma.median(sub)
+    #             if np.abs(med - 1) > 0.3:
+    #                 # TODO: remove this
+    #                 msg += '\nMaybe try median rescale? data median is %f' % med
+    #             raise UnconvergedOptimization(msg)
+    #         else:
+    #             # print(label, model.name, i)
+    #             result[model.name] = r.squeeze()
+    #
+    #             if reduce:
+    #                 # resi = model.residuals(r, np.ma.getdata(sub), grid)
+    #                 # print('reduce', residuals.shape, slice_, resi.shape)
+    #                 seg = self.seg.slices[label]
+    #                 residuals[seg] = model.residuals(r, np.ma.getdata(sub))
+    #     # return r
+    #
+    # def minimized_residual(self, data, stddev=None, **kws):
+    #     # loop over all models and all segments
+    #     results = self.fit(data, stddev, **kws)
+    #
+    #     # minimized_residual
+    #     resi = self.residuals(results, data)
+    #     return results, resi
 
-        """
-        return self.fit_sequential(data, stddev, **kws)
-
-    def fit_sequential(self, data, stddev=None, labels=None,
-                       reduce=False, **kws):
-        """
-        Fit data in the segments with labels.
-        """
-
-        full_output = kws.pop('full_output', False)
-        # full results container is returned with nans where not fit / not
-        # converged
-        p0 = kws.pop('p0', None)
-
-        # if full_output:
-        #     labels = None
-
-        if labels is None:
-            labels = list(self.models.keys())
-
-        # output
-        results = self._results_container(None if full_output else labels)
-        residuals = np.ma.getdata(data).copy() if reduce else None
-
-        # optimize
-        self.fit_worker(data, stddev, labels, p0, results, residuals, **kws)
-
-        if reduce:
-            return results, residuals
-
-        return results
-
-    def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
-        # iterator for data segments
-
-        try:
-            subs = self.seg.coslice(data, stddev, labels=labels,
-                                    masked=True)
-
-            # # get slices
-            # slices = self.seg.get_slices(labels)
-            # if data.ndim > 2:
-            #     slices = list(map((...,).__add__, slices))
-
-            #
-            reduce = residuals is not None
-            for label, (sub, std) in zip(labels, subs):
-                model = self.models[label]
-
-                # skip models with 0 free parameters
-                if model.dof == 0:
-                    continue
-
-                if p0 is not None:
-                    kws['p0'] = p0[model.name]
-
-                # select data # this does the job of coslice
-                # sub = np.ma.array(data[seg])
-                # sub[..., self.seg.masks[label]] = np.ma.masked
-                # std = None if (stddev is None) else stddev[..., slice_]
-
-                # get coordinate grid
-                # minimize
-                # kws['jac'] = model.jacobian_wrss
-                # kws['hess'] = model.hessian_wrss
-
-                #
-
-                # note intentionally using internal grid for model since it may
-                #  be transformed to numerically stable regime
-                r = model.fit(sub, model.grid, std, **kws)
-
-                if r is None:
-                    # TODO: optionally raise here based on cls.raise_on_failure
-                    #  can do this by catching above and raising from.
-                    #  raise_on_failure can also be function / Exception ??
-                    msg = (f'{self.models[label]!r} fit to segment {label} '
-                           f'failed to converge.')
-                    med = np.ma.median(sub)
-                    if np.abs(med - 1) > 0.3:
-                        # TODO: remove this
-                        msg += '\nMaybe try median rescale? data median is %f' % med
-                    raise UnconvergedOptimization(msg)
-                else:
-                    # print(label, model.name, i)
-                    result[model.name] = r.squeeze()
-
-                    if reduce:
-                        # resi = model.residuals(r, np.ma.getdata(sub), grid)
-                        # print('reduce', residuals.shape, slice_, resi.shape)
-                        seg = self.seg.slices[label - 1]
-                        residuals[seg] = model.residuals(r, np.ma.getdata(sub))
-        except Exception as err:
-            from IPython import embed
-            import traceback
-            import textwrap
-            embed(header=textwrap.dedent(
-                    """\
-                    Caught the following %s:
-                    ------ Traceback ------
-                    %s
-                    -----------------------
-                    Exception will be re-raised upon exiting this embedded interpreter.
-                    """) % (err.__class__.__name__, traceback.format_exc()))
-            raise
-
-        return r
-
-    def minimized_residual(self, data, stddev=None, **kws):
-        # loop over all models and all segments
-        results = self.fit(data, stddev, **kws)
-
-        # minimized_residual
-        resi = self.residuals(results, data)
-        return results, resi
-
-    def _fit_model_sequential(self, model, data, std, labels, results, **kws):
-        """
-        Fit this model with data for the segments with labels
-        """
-
-        # skip models with 0 free parameters
-        if model.dof == 0:
-            return results
-
-        # this method is for production
-        mask = kws.pop('mask', True)
-        flatten = kws.pop('flatten', False)
-
-        # iterator for data segments
-        subs = self.seg.coslice(data, std, labels=labels, masked=mask,
-                                flatten=flatten)
-
-        # indexer for results container
-        if len(labels) == 1:
-            # hack for models with single label to keep results array 1d
-            rix = itt.repeat(slice(None))
-        else:
-            rix = itt.count()
-
-        # loop over image segments for this model
-        for i, lbl, (sub, substd) in zip(rix, labels, subs):
-            grid = self.seg.coord_grids[lbl]
-            r = model.fit(sub, grid, substd, **kws)
-
-            if r is not None:
-                # print(i, lbl, repr(model), 'results', r, r.shape, results[
-                #     i].shape)
-                results[i] = r
-
-        return results  # squeeze for models that only have one label
+    # def _fit_model_sequential(self, model, data, std, labels, results, **kws):
+    #     """
+    #     Fit this model with data for the segments with labels
+    #     """
+    #
+    #     # skip models with 0 free parameters
+    #     if model.dof == 0:
+    #         return results
+    #
+    #     # this method is for production
+    #     mask = kws.pop('mask', True)
+    #     flatten = kws.pop('flatten', False)
+    #
+    #     # iterator for data segments
+    #     subs = self.seg.coslice(data, std, labels=labels, masked=mask,
+    #                             flatten=flatten)
+    #
+    #     # indexer for results container
+    #     if len(labels) == 1:
+    #         # hack for models with single label to keep results array 1d
+    #         rix = itt.repeat(slice(None))
+    #     else:
+    #         rix = itt.count()
+    #
+    #     # loop over image segments for this model
+    #     for i, lbl, (sub, substd) in zip(rix, labels, subs):
+    #         grid = self.seg.coord_grids[lbl]
+    #         r = model.fit(sub, grid, substd, **kws)
+    #
+    #         if r is not None:
+    #             # print(i, lbl, repr(model), 'results', r, r.shape, results[
+    #             #     i].shape)
+    #             results[i] = r
+    #
+    #     return results  # squeeze for models that only have one label
 
     def animate(self, shape):
         """
@@ -343,6 +324,23 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LabelGroupsMixin,
         """
 
         return ImageModelAnimation(self, shape)
+
+    def plot_image(self, p, grid=None):
+        from graphing.imagine import ImageDisplay
+        return ImageDisplay(self(p, grid))
+
+    def plot_surface(self, r, grid=None, **kws):
+        if grid is None:
+            grid = self.grid
+
+        # noinspection PyUnresolvedReferences
+        import mpl_toolkits.mplot3d
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(subplot_kw=dict(projection='3d'))
+        ax.plot_wireframe(*grid, self(r))
+
+    # .syntaxError
 
     # def model_selection(self, gof):
     #     """
@@ -390,7 +388,6 @@ class HierarchicalImageModel(LabelGroupsMixin):  # CompoundModel ??
             same model will be used for multiple segments.
         """
         LabelGroupsMixin.__init__(groups)
-
         self.groups.info = Record()
 
         for grp, labels in groups.items():
@@ -890,12 +887,12 @@ class AperturesFromModel(LoggingMixin):
             self.logger.warning('Large sky apertures: ' + info, i, *rsky)
 
 
-class ImageModeller(SegmentedImageModel, ModellingResultsMixin):
-    def __init__(self, segm, psf, bg, metrics=None, use_labels=None,
-                 fit_positions=True, save_residual=True):
-        SegmentedImageModel.__init__(self, segm, psf, bg, self._metrics,
-                                     use_labels)
-        ModellingResultsMixin.__init__(self, save_residual)
+# class ImageModeller(SegmentedImageModel, ModellingResultsMixin):
+#     def __init__(self, segm, psf, bg, metrics=None, use_labels=None,
+#                  fit_positions=True, save_residual=True):
+#         SegmentedImageModel.__init__(self, segm, psf, bg, self._metrics,
+#                                      use_labels)
+#         ModellingResultsMixin.__init__(self, save_residual)
 
 
 class ImageModelAnimation(VideoDisplay):

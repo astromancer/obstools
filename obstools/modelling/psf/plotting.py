@@ -5,7 +5,7 @@ from grafico.multitab import MplMultiTab
 from grafico.imagine import Compare3DImage
 
 # local libs
-from recipes.dict import TransDict
+from recipes.containers.dicts import TransDict
 
 
 
@@ -16,17 +16,17 @@ class NullPSFPlot():
 
 #****************************************************************************************************
 #class LinkedAxesMixin():
-    
-    
 
-#****************************************************************************************************        
+
+
+#****************************************************************************************************
 class PSFPlot(Compare3DImage):
     '''Class for plotting / updating PSF models.'''
     #TODO: buttons for switching back and forth??
     pass
-        
-        
-#****************************************************************************************************        
+
+
+#****************************************************************************************************
 class MultiPSFPlot(MplMultiTab):
     '''Append each new fit plot as a figure in tab.'''
     #WARNING:  This is very slow!
@@ -35,10 +35,10 @@ class MultiPSFPlot(MplMultiTab):
     def update(self, X, Y, Z, data):
         plotter = PSFPlot()
         plotter.update(X, Y, Z, data)
-        
+
         self.add_tab( plotter.fig )
-    
-#****************************************************************************************************        
+
+#****************************************************************************************************
 class PSFPlotFactory():
     MODES = TransDict({ None       :      NullPSFPlot,
                         'update'   :      PSFPlot,
@@ -49,7 +49,7 @@ class PSFPlotFactory():
     def __call__(self, mode):
         #if not mode in MODES.allkeys():
             #raise ValueError
-            
+
         c = self.MODES.get(mode, NullPSFPlot)
         return c
 

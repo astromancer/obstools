@@ -11,7 +11,7 @@ import numpy as np
 from scipy.optimize import minimize, leastsq
 
 # local libs
-from recipes.list import tally
+from recipes.containers.lists import tally
 from recipes.logging import LoggingMixin
 
 # relative libs
@@ -235,9 +235,6 @@ class Model(OptionallyNamed, LoggingMixin):
     def fwrs(self, p, data, grid=None, stddev=None):
         """weighted squared residuals vector"""
         return self.wrs(p, data, grid, stddev).ravel()
-        # if np.ma.isMA(fwrs):
-        #     return fwrs.compressed()
-        # return fwrs
 
     def wrss(self, p, data, grid=None, stddev=None):
         """weighted residual sum of squares. ie. The chi squared statistic χ²"""
@@ -315,8 +312,11 @@ class Model(OptionallyNamed, LoggingMixin):
             sigma_term = np.log(stddev).sum()
 
         n = data.size
-        return -n / 2 * np.log(2 * np.pi) - sigma_term \
-               - 0.5 * self.wrss(p, data, grid, stddev)
+        return (-n / 2 * np.log(2 * np.pi)
+                - 0.5 * self.wrss(p, data, grid, stddev)
+                - sigma_term)
+
+    llh = logLikelihood
 
     def objective_mle(self, p, data, grid=None, stddev=None):
         return -self.logLikelihood(p, data, grid, stddev)
@@ -524,13 +524,13 @@ class Model(OptionallyNamed, LoggingMixin):
         """
 
         # TODO: would be nice to have some kind of progress indicator here
+        # could do this by wrapping the logLikelihood function with counter
 
         import emcee
 
-        dof = self.dof
         if nwalkers is None:
             nwalkers_per_dof = 4
-            nwalkers = dof * nwalkers_per_dof
+            nwalkers = self.dof * nwalkers_per_dof
         nwalkers = int(nwalkers)
 
         if threads is None:
@@ -539,12 +539,12 @@ class Model(OptionallyNamed, LoggingMixin):
         threads = int(threads)
 
         # create sampler
-        sampler = emcee.EnsembleSampler(nwalkers, dof, self.logLikelihood,
+        sampler = emcee.EnsembleSampler(nwalkers, self.dof, self.logProb,
                                         args=(data,), threads=threads)
 
         # randomized initial guesses for parameters
         if p0 is None:
-            p0 = np.random.rand(nwalkers, dof)
+            p0 = np.random.rand(nwalkers, self.dof)
             # FIXME: this should consider Priors
         else:
             raise NotImplementedError  # TODO
@@ -561,13 +561,12 @@ class Model(OptionallyNamed, LoggingMixin):
     # TODO: Mixin class here??  SharedMemoryMixin
     def _init_mem(self, loc, shape, fill=np.nan, clobber=False):
         """Initialize shared memory for this model"""
-        dof = self.dof
         # final array shape is external `shape` + parameter shape `dof`
         if isinstance(shape, int):
             shape = shape,
 
         if isinstance(self.dof, int):
-            shape += (dof,)
+            shape += (self.dof,)
 
         # locPar = '%s.par' % self.name  # locStd = '%s.std' % self.name
         dtype = self.get_dtype()
@@ -694,8 +693,10 @@ class ModelContainer(OrderedDict, LoggingMixin):
 
     def __setitem__(self, key, model):
 
-        if not isinstance(model, Model):
-            raise ValueError('Components models must inherit from `Model`')
+        # HACK autoreload
+        # if not isinstance(model, Model):
+        #     raise ValueError('Components models must inherit from `Model`')
+        # HACK autoreload
 
         # make sure the model has the same name that it is keyed on in the dict
         # if key != model.name:
@@ -718,17 +719,21 @@ class ModelContainer(OrderedDict, LoggingMixin):
         getter = operator.attrgetter(*attrs)
         return list(map(getter, self.values()))
 
-    def invert(self, keys=all):
+    def invert(self, keys=all, one2one=False):
         """
-        Mapping from models to list of keys.  Useful helper for
-        constructing dtypes for compound models.  This mapping is
-        intentionally not one-to-one if there are multiple keys pointing to
-        the same model.  If you would like a one-to-one inverted mapping do:
-        >>> dict(zip(m.values(), m.keys()))
+        Mapping from models to list of keys.  Useful helper for constructing
+        dtypes for compound models.  The default is to return a mapping from
+        unique model to the list of corresponding key.  In the inverse
+        mapping, models that apply to more than one key value will therefore
+        map to a list that has multiple elements. A one-to-one inverted
+        mapping can be obtained by passing `one2one=True`.
 
         Parameters
         ----------
-        keys
+        keys: sequence of keys, default all
+            The list of keys to include in the inverted mapping
+        one2one: bool, default False
+            Whether the inverse mapping should be one to one
 
         Returns
         -------
@@ -741,6 +746,9 @@ class ModelContainer(OrderedDict, LoggingMixin):
             keys_valid = set(self.keys())
             keys_invalid = set(keys) - keys_valid  # maybe print these ???
             keys = set(keys) - keys_invalid
+
+        if one2one:
+            return dict(zip(map(self.get, keys), keys))
 
         inverse = defaultdict(list)
         for key in keys:
@@ -898,32 +906,138 @@ class CompoundModel(Model):
 
         # build model dtype
         if dtype is None:
+            # noinspection PyTypeChecker
             dtype = self.get_dtype(keys)
 
         # create array
         out = np.full(shape, fill, dtype)
         return type_(out)
 
-    def p0guess(self, data, grid=None, stddev=None, **kws):
-        #
-        if kws.get('nested'):
-            return Parameters({name: mdl.p0guess(data, grid, stddev, **kws)
-                               for name, mdl in self.items()})
-        else:
-            return np.hstack([mdl.p0guess(data, grid, stddev, **kws)
-                              for mdl in self.models])
+    # def p0guess(self, data, grid=None, stddev=None, **kws):
+    #     #
+    #     if kws.get('nested', True):
+    #         return Parameters({name: mdl.p0guess(data, grid, stddev, **kws)
+    #                            for name, mdl in self.models.items()})
+    #     else:
+    #         return np.hstack([mdl.p0guess(data, grid, stddev, **kws)
+    #                           for mdl in self.models])
 
-    def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
-        #
-        if p0 is None:
-            p0 = self.p0guess(*args)
+    # def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
+    #     #
+    #     # if p0 is None:
+    #     #     p0 = self.p0guess(data, grid, stddev, **kws)
+    #
+    #     # loop through models to fit
+    #     p = np.empty_like(p0)
+    #     for key, mdl in self.models.items():
+    #         p[key] = mdl.fit(p0[key], *args, **kws)
+    #
+    #     return p
 
-        # loop through models to fit
-        p = np.empty_like(p0)
-        for key, mdl in self.models.items():
-            p[key] = mdl.fit(p0[key], *args, **kws)
+    def fit(self, data, grid=None, stddev=None, **kws):
+        """
+        Fit frame data by looping over segments and models
 
-        return p
+        Parameters
+        ----------
+        data
+        stddev
+
+        Returns
+        -------
+
+        """
+        return self.fit_sequential(data, stddev, **kws)
+
+    def fit_sequential(self, data, grid=None, stddev=None, keys=None,
+                       reduce=False, **kws):
+        """
+        Fit data in the segments with labels.
+        """
+
+        full_output = kws.pop('full_output', False)
+        # full results container is returned with nans where model (component)
+        # was not fit / did not converged
+        p0 = kws.pop('p0', None)
+
+        if keys is None:
+            keys = list(self.models.keys())
+
+        # output
+        results = self._results_container(None if full_output else keys)
+        residuals = np.ma.getdata(data).copy() if reduce else None
+
+        # optimize
+        self.fit_worker(data, grid, stddev, keys, p0, results, residuals, **kws)
+
+        if reduce:
+            return results, residuals
+
+        return results
+
+    def fit_worker(self, data, grid, stddev, keys, p0, result, residuals, **kws):
+
+        # todo: check keys against self.models.keys()
+
+        # iterator for data segments
+        itr_subs = self.iter_region_data(keys, data, grid, stddev, masked=True)
+
+        reduce = residuals is not None
+        for key, (reg, (sub, grd, std)) in zip(keys, itr_subs):
+            model = self.models[key]
+
+            # skip models with 0 free parameters
+            if model.dof == 0:
+                continue
+
+            if p0 is not None:
+                kws['p0'] = p0[model.name]
+
+            # select data -- does the same job as `SegmentationHelper.coslice`
+            # sub = np.ma.array(data[seg])
+            # sub[..., self.seg.masks[label]] = np.ma.masked
+            # std = None if (stddev is None) else stddev[..., slice_]
+
+            # get coordinate grid
+            # minimize
+            # kws['jac'] = model.jacobian_wrss
+            # kws['hess'] = model.hessian_wrss
+
+            # note intentionally using internal grid for model since it may
+            #  be transformed to numerically stable regime
+            grd = getattr(model, 'grid', grd)
+            r = model.fit(sub, grd, std, **kws)
+
+            # if model.__class__.__name__ == 'MedianEstimator':
+            #     from IPython import embed
+            #     embed()
+
+            if r is None:
+                # TODO: optionally raise here based on cls.raise_on_failure
+                #  can do this by catching above and raising from.
+                #  raise_on_failure can also be function / Exception ??
+                msg = (f'{self.models[key]!r} fit to model {key} '
+                       f'failed to converge.')
+                med = np.ma.median(sub)
+                if np.abs(med - 1) > 0.3:
+                    # TODO: remove this
+                    msg += '\nMaybe try median rescale? data median is %f' % med
+                raise UnconvergedOptimization(msg)
+            else:
+                # print(label, model.name, i)
+                result[model.name] = r.squeeze()
+
+                if reduce:
+                    # resi = model.residuals(r, np.ma.getdata(sub), grid)
+                    # print('reduce', residuals.shape, slice_, resi.shape)
+
+                    residuals[reg] = model.residuals(r, np.ma.getdata(sub))
+
+    def iter_region_data(self, keys, *data):
+        """
+        Iterator that yields (region, data) for each component model in keys
+        """
+        raise NotImplementedError
 
 
 # class CompoundSequentialFitter(CompoundModel):

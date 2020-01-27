@@ -2,8 +2,6 @@
 Utility functions for statistical modelling
 """
 
-
-
 # std libs
 import logging
 import numbers
@@ -16,12 +14,6 @@ import numpy as np
 
 # local libs
 from recipes.introspection.utils import get_module_name
-
-
-
-
-
-
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__, 2))

@@ -15,7 +15,7 @@ from scipy.stats._distn_infrastructure import rv_frozen
 # local libs
 from obstools.modelling.utils import prod
 from recipes import pprint
-from recipes.dict import AttrReadItem, pformat as pformat_dict
+from recipes.containers.dicts import AttrReadItem, pformat as pformat_dict
 
 
 #
@@ -256,7 +256,7 @@ class Parameters(np.recarray):
         #
         if obj is None:
             # explicit constructor eg:  NestedParameters(foo=1)
-            # print('Explicit! ' * 3)
+            # logger.debug('Explicit! ' * 3)
             return
 
         # print('bla! ' * 3)
@@ -271,16 +271,15 @@ class Parameters(np.recarray):
         # hack so we don't end up with un-sized array containing single object
         item = super().__getattribute__(key)
         #
-
         # note: the following block causes problems downstream when checking
         #  the lengths of parameter sets.  It may however at some point be
         #  useful when construction involves single named parameters. so:
-        # fixme: make optinal.  or make sure your downstream checks use
+        # fixme: make optional.  or make sure your downstream checks use
         #  np.size
         if isinstance(item, np.ndarray):
             kls = super().__getattribute__('__class__')
             if not isinstance(item, kls) and (np.size(item) == 1):
-                return np.asscalar(item)
+                return item.item()
 
         # if not item.dtype.fields and (np.size(item) == 1):
         #     return np.asscalar(item)
@@ -291,7 +290,7 @@ class Parameters(np.recarray):
         # hack so we don't end up with un-sized array containing single object
         # print('get em!!')
         if not item.dtype.fields and (np.size(item) == 1):
-            return np.asscalar(item)
+            return item.item()
         return item
 
     def __str__(self):
@@ -364,7 +363,8 @@ class Priors(Parameters):
     # object type restrictions
     _allow_types = any  # TODO: only accept `Prior` objects
 
-    # Record array containing functions ??!  Unusual, but effective
+    # Record array containing functions!  Unusual, but effective
+
     def __new__(cls, distrs=None, **kws):
         return super().__new__(cls, distrs, 'O', **kws)
 
@@ -418,19 +418,17 @@ class MCMCParams(Parameters):
     #     pass
 
 
-class _Prior(object):  # Mixin
+class _Prior(object):
+    #
     def freeze(self, *args, **kwds):
         return Prior(self, *args, **kwds)
 
 
 class Prior(rv_frozen):  # DistRepr
-    """Base class for prior distributions.  These """
+    """Base class for prior distributions. """
 
     #  Essentially a higher level wrapper for
     # `scipy.stats._distn_infrastructure.rv_frozen`
-
-    # def random_sample(self, size):
-    #     """(psuedo-)Random number generator"""
 
     def __repr__(self):
         return self.dist.name.title() + 'Prior' + str(self.args)
@@ -444,6 +442,7 @@ class Prior(rv_frozen):  # DistRepr
         return symbol + str(args)
 
     def random_sample(self, size=None, random_state=None):
+        """(psuedo-)Random number generator"""
         return self.rvs(size, random_state)
 
 
@@ -458,17 +457,14 @@ class _Uniform(_Prior, stats.distributions.uniform_gen):
 
 Uniform = _Uniform(a=0.0, b=1.0, name='uniform')
 
-
-# def freeze(self, *args, **kwds):
-#     return Prior(self, *args, **kwds)
-
-
 # class UniformPositive(Uniform):
 
 
 # class UniformNegative(Uniform):
 #     def __init__(self, infimum=-None):
 #         ''
+
+# class LogUniform
 
 
 # TODO:
