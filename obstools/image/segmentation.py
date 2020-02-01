@@ -19,8 +19,8 @@ import numpy as np
 from scipy import ndimage
 from astropy.utils import lazyproperty
 from photutils.detection.core import detect_threshold
-from photutils.segmentation.detect import detect_array
-from photutils.segmentation import SegmentationImage, Segment
+from photutils.segmentation.detect import detect_sources
+from photutils.segmentation import SegmentationImage  # , Segment
 
 # local libs
 from motley.table import Table
@@ -28,8 +28,7 @@ from recipes.logging import LoggingMixin
 from recipes.pprint.misc import seq_repr_trunc
 from recipes.introspection.utils import get_module_name
 from obstools.modelling import UnconvergedOptimization
-from obstools.phot.utils import (iter_repeat_last, LabelGroupsMixin
-                                 )
+from obstools.phot.utils import iter_repeat_last, LabelGroupsMixin
 from obstools.image.utils import shift_combine
 from recipes.misc import duplicate_if_scalar
 import collections as col
@@ -88,14 +87,10 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
     if mask is None:
         mask = False  # need this for logical operators below to work
 
-    # calculate threshold without edges so that std accurately measured for
-    # region of interest
-    if edge_cutoff:
-        border = make_border_mask(image, edge_cutoff)
-        mask = mask | border
-
     # separate pixel mask for threshold calculation (else the mask gets
     # duplicated to threshold array, which will skew the detection stats)
+    # calculate threshold without masked pixels so that std accurately measured
+    # for region of interest
     if np.ma.isMA(image):
         mask = mask | image.mask
         image = image.data
@@ -108,7 +103,7 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
     if not np.any(mask):
         mask = None  # annoying photutils #HACK
 
-    seg = detect_array(image, threshold, npixels, mask=mask)
+    seg = detect_sources(image, threshold, npixels, mask=mask)
 
     # check if anything detected
     no_sources = (np.sum(seg) == 0)
@@ -119,8 +114,13 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
         from photutils import deblend_sources
         seg = deblend_sources(image, seg, npixels).data
 
+    if edge_cutoff:
+        border = make_border_mask(image, edge_cutoff)
+        # labels = np.unique(seg.data[border])
+        seg.remove_masked_labels(border)
+
     # intentionally return an array
-    return seg
+    return seg.data
 
 
 def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
@@ -1049,8 +1049,8 @@ class MaskedStatsMixin(object):
                   'center_of_mass']
     _aliases = {'minimum': 'min',
                 'maximum': 'max',
-                'minimum_position': 'argmin',
-                'maximum_position': 'argmax',
+                'minimum_position': 'argmin',  # minpos # minloc
+                'maximum_position': 'argmax',  # maxpos # maxloc
                 'standard_deviation': 'std',
                 'center_of_mass': 'com'}
 
@@ -1113,8 +1113,24 @@ class MaskedStatistic(object):
             # image data, so we can mask those in output
             mask = (ndimage.sum(np.logical_not(image.mask), seg.data, labels)
                     == 0)
-            # get output mask
-            return np.ma.MaskedArray(result, mask)
+            try:
+                # get output mask
+                return np.ma.MaskedArray(result, mask)
+            except Exception as err:
+                import sys
+                from IPython import embed
+                from IPython.core.ultratb import ColorTB
+                import textwrap
+                embed(header=textwrap.dedent(
+                    """\
+                    Caught the following %s:
+                    ------ Traceback ------
+                    %s
+                    -----------------------
+                    Exception will be re-raised upon exiting this embedded interpreter.
+                    """) %
+                    (err.__class__.__name__, ColorTB().text(*sys.exc_info())))
+                raise
         else:
             # ensure return array and not list. labels always array here
             return np.array(self.func(image, seg.data, labels))
@@ -1988,7 +2004,6 @@ class SegmentationHelper(SegmentationImage,  # base
 
     def com_bg(self, image, labels=None, mask=None,
                background_estimator=np.ma.median, grid=None):
-        # todo: better name ? com_deviation com_dev
         """
         Compute centre of mass of background subtracted (masked) image.
         Default is to use median statistic  as background estimator.
@@ -2023,14 +2038,14 @@ class SegmentationHelper(SegmentationImage,  # base
 
         labels = self.resolve_labels(labels)
 
-        # generalization for higher dimensional data
+        # generalized for higher dimensional data
         axes_sum = tuple(range(1, image.ndim))
 
         counter = itt.count()
-        com = np.empty((len(labels), 2))
-        for lbl, (seg, sub, msk, grd) in self.coslice(self.data, image, mask,
-                                                      grid, labels=labels,
-                                                      enum=True):
+        com = np.empty((len(labels), image.ndim))
+        # u  = np.empty((len(labels), image.ndim))  # uncertainty
+        for lbl, (seg, sub, msk, grd) in self.coslice(
+                self.data, image, mask, grid, labels=labels, enum=True):
 
             # ignore whatever is in this slice and is not same label as well
             # as any external mask
@@ -2038,7 +2053,7 @@ class SegmentationHelper(SegmentationImage,  # base
             if msk is not None:
                 use &= ~msk
 
-            #
+            # noise = np.sqrt(sub)
             sub = bg_sub(sub)
             grd = grd[:, use]
             sub = sub[use]
@@ -2051,8 +2066,10 @@ class SegmentationHelper(SegmentationImage,  # base
                 # can skip next
 
             # compute centre of mass
-            com[next(counter)] = (sub * grd).sum(axes_sum) / sum_
+            i = next(counter)
+            com[i] = (sub * grd).sum(axes_sum) / sum_
             # may be nan / inf
+            # u[i] =
 
         return com
 
@@ -2152,7 +2169,6 @@ class SegmentationHelper(SegmentationImage,  # base
         # now, relabel
         for new, old in agg.items():
             self.relabel(old, new)
-
 
     def shift(self, offset):
         """
