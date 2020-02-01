@@ -1,7 +1,6 @@
 # coding: utf-8
 
 
-
 # std libs
 from functools import partial
 
@@ -9,22 +8,79 @@ from functools import partial
 import numpy as np
 
 # local libs
-from recipes.list import sortmore
+from recipes.containers.lists import sortmore
+
+from matplotlib import rc, ticker
+
+from matplotlib.transforms import Affine2D
+
+rc('font', size=14)
 
 
+def sexa(h, pos=None):
+    m = abs((h - int(h)) * 60)
+    sign = '-' if h < 0 else ''
+    return '{}{:2,d}ʰ{:02,d}ᵐ'.format(sign, abs(int(h)), int(m))
 
 
+def make_twin(ax, tick_label_angle=0):
+    axp = ax.twin(Affine2D().translate(0, 0).scale(1 / 24))
+    axp.yaxis.set_ticks([])
+    axp.xaxis.set_major_formatter(ticker.FuncFormatter(sexa))
+    ax.xaxis.set_ticklabels([])
 
-class Ephemeris():
-    def __init__(self, t0, P):
+    if tick_label_angle:
+        axp.tick_params(pad=-5)
+        ticklabels = axp.xaxis.get_majorticklabels()
+        for label in ticklabels:
+            label.set_ha('left')
+            label.set_rotation(tick_label_angle)
+            label.set_rotation_mode('anchor')
+
+    return axp
+
+
+class Ephemeris(object):
+    # TODO: def from_string(self):
+
+    def __init__(self, *args):
         """
-        t0 - zero point for ephemeris
-        P - period in days
+        to initialize use:
+        >>> eph = Ephemeris(t0, P)
+        or if you have uncertainties
+        >>> eph = Ephemeris(t0, σ_t0, P, σ_t0)
+        to initialize
+
+        Parameters
+        ----------
+        t0:
+            zero point for ephemeris
+        P:
+            period in days
+        σ_t0:
+            uncertainty on zero point
+        σ_P:
+            uncertainty on period
+
         """
-        self.t0 = t0
-        self.P = P
+
+        if len(args) == 2:
+            self.t0, self.P = args
+            self.e_t0 = self.e_P = None
+
+        elif len(args) == 4:
+            self.t0, self.e_t0, self.P, self.e_P = args
+            # oom = 3 - len(str(self.P))
+            # σp = self.e_P * 10 ** (oom - 1)
+        else:
+            raise TypeError('Invalid number of arguments')
+
+        #
 
     def __str__(self):
+        if self.e_t0:
+            t = '{:f}({:02d})'.format(self.t0, self.e_t0)
+
         return 'HJD = %f + %f E' % (self.t0, self.P)
 
     def __call__(self, E):
@@ -34,7 +90,7 @@ class Ephemeris():
         phase = np.atleast_1d(t - self.t0) / self.P
         return phase
 
-    def phaseModulo1(self, t):
+    def phase_mod1(self, t):
         return self.phase(t) % 1
 
 
@@ -140,66 +196,3 @@ def phase_splitter(ph, *data, **kws):
     phs, *datas = (np.split(item, ix[1:]) for item in (ph,) + data)
     return phs, datas
 
-
-# allocate bins based on phase range
-
-# nbins = 20 #
-# nphbw = 1. / nbins
-
-# ph0 = max(egress) - min(ingress)           #start after eclipse egress
-# phmx = fPh.max()
-# ph1 = ((phmx // nphbw) + 1) * nphbw   #maximum phase bin upper edge
-
-# phbins = np.linspace(ph0, 1, nbins, endpoint=True)
-# phbins = np.r_[0, np.ravel(np.c_[:np.ceil(phmx)] + phbins)]
-
-
-##collect segments in phase bins
-
-# segdict = defaultdict(list)
-##tdict = defaultdict(list)
-# for i, ph in enumerate(Ph):
-# dz = np.digitize(ph, phbins)
-# unq, ix = np.unique(dz-1, return_index=True)  #NOTE: -1 ensures correct bin allocation!
-
-# segs = np.split(D[i], ix[1:])
-# tsegs = np.split(UT[i], ix[1:])
-# phsegs = np.split(ph, ix[1:])
-
-# for nq, phseg, tseg, seg in zip(unq, phsegs, tsegs, segs):
-##Compute Power-spectrum of each segment
-# f, (P,) = Spectral(tseg, seg, gaps=('mean', 25), detrend=('poly', 0))
-##add data to bins (phased)
-# segdict[nq % nbins].append((phseg, tseg, seg, f, P))
-
-
-if __name__ == '__main__':
-    # %%time
-
-    # NOTE:  this doesn't work so well.  Find a way of fitting simultaneously
-
-    binsize = 1  # in seconds
-    tspans = [np.diff(t[[0, -1]]) for t in T]
-    tmax = max(tspans)
-    ir = 1  # np.argmax(tspans)  #this is the reference
-    bins = np.arange(0, tmax, binsize)
-    Nb = len(bins)
-
-    tr, lcr = T[ir], D[ir]
-    B = np.ma.zeros((len(T), Nb))
-    B[ir] = br = binner(tr, lcr, bins)
-    M = np.zeros(len(T))
-    M[ir] = 0
-    for i, (t, lc) in enumerate(zip(T, D)):
-        if i == ir:
-            continue
-
-        B[i] = b = binner(t, lc, bins)
-        # S, E = shifter(br, b, 0.4)
-
-        # fig, ax  = plt.subplots(figsize=(18,8))
-        # ax.plot(S, E)
-
-        M[i] = brutus(br, b, 0.4)  # S[np.nanargmin(E)]#
-
-    aB = np.ma.array(B)
