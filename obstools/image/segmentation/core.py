@@ -3,35 +3,29 @@ Extensions for segmentation images
 """
 
 # std libs
-import types
 import inspect
 import logging
 import warnings
-import functools as ftl
 import itertools as itt
 from operator import attrgetter
 import numbers
-
+from collections import namedtuple
 # third-party libs
-from typing import Any, Callable
 
 import numpy as np
 from scipy import ndimage
 from astropy.utils import lazyproperty
-from photutils.detection.core import detect_threshold
-from photutils.segmentation.detect import detect_sources
+from obstools.image.segmentation.trace import trace_boundary
+
+from .detect import detect
 from photutils.segmentation import SegmentationImage  # , Segment
 
 # local libs
-from motley.table import Table
 from recipes.logging import LoggingMixin
-from recipes.pprint.misc import seq_repr_trunc
 from recipes.introspection.utils import get_module_name
-from obstools.modelling import UnconvergedOptimization
-from obstools.phot.utils import iter_repeat_last, LabelGroupsMixin
+from obstools.phot.utils import LabelGroupsMixin
 from obstools.image.utils import shift_combine
-from recipes.misc import duplicate_if_scalar
-import collections as col
+from recipes.containers.dicts import pformat
 
 # from obstools.modelling.image import SegmentedImageModel
 # from collections import namedtuple
@@ -41,374 +35,26 @@ import collections as col
 
 
 # module level logger
-
-
 logger = logging.getLogger(get_module_name(__file__))
 
-
 #
-# def methodize(func, instance):
-#     return types.MethodType(func, instance)
+# simple container for 2-component objects
+yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
 def is_lazy(_):
     return isinstance(_, lazyproperty)
 
 
+# def autoreload_isinstance_hack(obj, kls):
+#     for parent in obj.__class__.mro():
+#         if parent.__name__ == kls.__name__:
+#             return True
+
+
 # def is_sequence(obj):
 #     """Check if obj is non-string sequence"""
 #     return isinstance(obj, (tuple, list, np.ndarray))
-
-
-def detect(image, mask=False, background=None, snr=3., npixels=7,
-           edge_cutoff=None, deblend=False):
-    """
-    Image detection that returns a SegmentationHelper instance
-
-    Parameters
-    ----------
-    image
-    mask
-    background
-    snr
-    npixels
-    edge_cutoff:
-        only used for threshold calculation
-    deblend
-    dilate
-
-    Returns
-    -------
-
-    """
-
-    logger.debug('Running detect(snr=%.1f, npixels=%i)', snr, npixels)
-
-    if mask is None:
-        mask = False  # need this for logical operators below to work
-
-    # separate pixel mask for threshold calculation (else the mask gets
-    # duplicated to threshold array, which will skew the detection stats)
-    # calculate threshold without masked pixels so that std accurately measured
-    # for region of interest
-    if np.ma.isMA(image):
-        mask = mask | image.mask
-        image = image.data
-
-    # # check mask reasonable
-    # if mask.sum() == mask.size:
-
-    # detection
-    threshold = detect_threshold(image, snr, background, mask=mask)
-    if not np.any(mask):
-        mask = None  # annoying photutils #HACK
-
-    seg = detect_sources(image, threshold, npixels, mask=mask)
-
-    # check if anything detected
-    no_sources = (np.sum(seg) == 0)
-    if no_sources:
-        logger.debug('No objects detected')
-
-    if deblend and not no_sources:
-        from photutils import deblend_sources
-        seg = deblend_sources(image, seg, npixels).data
-
-    if edge_cutoff:
-        border = make_border_mask(image, edge_cutoff)
-        # labels = np.unique(seg.data[border])
-        seg.remove_masked_labels(border)
-
-    # intentionally return an array
-    return seg.data
-
-
-def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
-                   edge_cutoff=None, deblend=False, dilate=0):
-    #
-    seg = SegmentationHelper.detect(image, mask, background, snr, npixels,
-                                    edge_cutoff, deblend, dilate)
-
-    # for images with strong gradients, local median in annular region around
-    # source is a better background estimator. Accurate count estimate here
-    # is relatively important since we edit the background mask based on
-    # source fluxes to account for photon bleed during frame transfer
-    # bg = [np.median(image[region]) for region in
-    #       seg.to_annuli(width=sky_width)]
-    # bg = seg.median(image, 0)
-    # sum = seg.sum(image) - bg * seg.areas
-    return seg, seg.com_bg(image)  # , counts
-
-
-class MultiThresholdBlobDetection(object):
-    # algorithm defaults
-    snr = (10, 7, 5, 3)
-    npixels = (7, 5, 3)
-    deblend = (True, False)
-    dilate = (4, 2, 1)
-    edge_cutoff = None
-    max_iter = np.inf
-
-    def __call__(self, *args, **kwargs):
-        assert False, 'TODO'
-
-
-def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
-                deblend=(True, False), dilate=(4, 2, 1), edge_cutoff=None,
-                max_iter=np.inf, group_name_format='sources{count}',
-                bg_model=None, opt_kws=None, report=None):
-    """
-    Multi-threshold image blob detection, segmentation and grouping. This
-    function runs multiple iterations of the blob detection algorithm on the
-    same image, masking new sources after each round so that progressively
-    fainter sources may be detected. By default the algorithm will continue
-    looping until no new sources are detected. The number of iterations in
-    the loop can also be controlled by specifying `max_iter`.  The arguments
-    `snr`, `npixels`, `deblend`, `dilate` can be sequences, in which case each
-    new detection round will use the next value in the sequence until the last
-    value which will then be repeated for subsequent iterations. If scalar,
-    this value will be used repeatedly for each round.
-
-    A background model may also be provided.  This model will be fit to the
-    image background region after each round of detection.  The model
-    optimization can be controlled by passing `opt_kws` dict.
-
-    Parameters
-    ----------
-    image: array-like
-    mask: array-like, same shape as image
-    snr: float or sequence of float
-    npixels: int or sequence of int
-    deblend: bool or sequence of bool
-    dilate: int or sequence of int
-    edge_cutoff: int or tuple
-    max_iter: int
-    group_name_format: str
-    bg_model
-    opt_kws: dict
-    report: bool
-
-    Returns
-    -------
-    seg: SegmentationHelper
-    groups: dict
-    info: dict
-    result: np.ndarray
-    residual: np.ndarray
-
-    """
-    # todo: this could be a call method of the SourceDetectionMixin class
-
-    # short circuit
-    if max_iter == 0:
-        # seg, groups, info, result, residual
-        return np.zeros(image.shape, int), [], [], None, image
-
-    if not isinstance(group_name_format, str):
-        raise TypeError('`group_name_format` parameter should be a format '
-                        'string')
-
-    # log
-    logger.info('Running detection loop')
-    lvl = logger.getEffectiveLevel()
-    debug = logger.getEffectiveLevel() >= logging.DEBUG
-    if report is None:
-        report = lvl <= logging.INFO
-
-    # make iterables
-    var_names = ('snr', 'npixels', 'dilate', 'deblend')
-    var_iters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
-    var_gen = zip(*var_iters)
-
-    # original_mask = mask
-    if mask is None:
-        mask = np.zeros(image.shape, bool)
-
-    # first round detection without background model
-    # opt_kws.setdefault('method', 'leastsq')
-    opt_kws = opt_kws or {}
-    residual = image
-    result = None
-
-    # get segmentation image
-    seg = SegmentationHelper(np.zeros(image.shape, int))
-
-    # label groups
-    # keep track of group info + detection meta data
-    groups = []
-    info = []
-    gof = []
-
-    # detection loop
-    counter = itt.count(0)
-    while True:
-        # keep track of iteration number
-        count = next(counter)
-        logger.debug('count %i', count)
-
-        if count >= max_iter:
-            logger.debug('break: max_iter reached')
-            break
-
-        # get detect options and assign group name
-        # noinspection PyTupleAssignmentBalance
-        snr_, npix, dil, debl = opts = next(var_gen)
-        info_dict = dict(zip(var_names, opts))
-        group_name = group_name_format.format(count=count, **info_dict)
-
-        # detect on residual image
-        new_seg = seg.detect(residual, mask, None, snr_, npix, edge_cutoff,
-                             debl, dil, group_name)
-
-        if not new_seg.data.any():
-            logger.debug('break: no new detections')
-            break
-
-        # aggregate
-        if count > 0:
-            _, new_labels = seg.add_segments(new_seg)
-        else:
-            seg = new_seg
-            new_labels = new_seg.labels
-
-        # debug log!
-        if debug:
-            logger.debug('detect_loop: round %i: %i new detections: %s',
-                         count, len(new_labels),
-                         seq_repr_trunc(tuple(new_labels)))
-
-        # update mask
-        mask = mask | new_seg.to_bool()
-
-        # group info
-        groups.append(new_labels)
-        info.append(info_dict)
-
-        if bg_model:
-            # fit model, get residuals
-            mimage = np.ma.MaskedArray(image, mask)
-            try:
-                result = bg_model.fit(mimage, **opt_kws)
-                residual = bg_model.residuals(result, image)
-                if report:
-                    gof.append(bg_model.redchi(result, mimage))
-            except UnconvergedOptimization as err:
-                logger.info('Model optimization unsuccessful. Returning.')
-                break
-
-    # seg.groups.update()
-
-    # def report_detection(groups, info, bg_model, gof):
-    if report:
-        # log what you found
-        from recipes import pprint
-
-        seq_repr = ftl.partial(seq_repr_trunc, max_items=3)
-
-        # report detections here
-        col_headers = ['snr', 'npix', 'dil', 'debl', 'n_obj', 'labels']
-        info_list = list(map(list, map(dict.values, info)))
-        tbl = np.column_stack([np.array(info_list, 'O'),
-                               list(map(len, groups)),
-                               list(map(seq_repr, groups))])
-        if bg_model:
-            col_headers.insert(-1, 'χ²ᵣ')
-            tbl = np.insert(tbl, -1, list(map(pprint.numeric, gof)), 1)
-
-        title = 'Object detections'
-        if bg_model:
-            title += f' with {bg_model.__class__.__name__} model'
-
-        tbl_ = \
-            Table(tbl,
-                  title=title,
-                  col_headers=col_headers,
-                  totals=(4,), minimalist=True)
-        logger.info(f'\n{tbl_}')
-        # print(logger.name)
-
-    return seg, groups, info, result, residual
-
-
-class SourceDetectionMixin(object):
-    """
-    Provides the `from_image` classmethod and the `detect` staticmethod that
-    can be used to construct image models from images.
-    """
-
-    @classmethod
-    def detect(cls, image, detect_sources, **kws):
-        """
-
-        Parameters
-        ----------
-        image
-        detect_sources: bool
-            Controls whether source detection algorithm is run. This argument
-            provides a shortcut to the default source detection by setting
-            `True`, or alternatively to skip source detection by setting
-            `False`
-        kws:
-            Keywords for source detection algorithm
-
-        Returns
-        -------
-
-        """
-        # Detect objects & segment image
-        if isinstance(detect_sources, dict):
-            kws.update(detect_sources)
-
-        if not ((detect_sources is True) or kws):
-            # short circuit the detection loop
-            kws['max_iter'] = 0
-
-        return cls._detect(image, **kws)
-
-    @classmethod
-    def _detect(cls, image, *args, **kws):
-        """
-        Default blob detection algorithm.  Subclasses can override as needed
-        """
-        return detect_loop(image, *args, **kws)
-
-    @classmethod
-    def from_image(cls, image, detect_sources=True, **detect_opts):
-        """
-        Construct a instance of this class from an image.
-        Sources in the image will be identified using `detect` method.
-        Segments for detected sources will be added to the segmented image.
-        Source groups will be added to `groups` attribute dict.
-
-`
-        Parameters
-        ----------
-        image
-        detect_sources
-
-        detect_opts
-
-        Returns
-        -------
-
-        """
-
-        # Basic constructor that initializes the object from an image. The
-        # base version here runs a detection algorithm to separate foreground
-        # objects and background, but doesn't actually include any physically
-        # useful models. Subclasses can overwrite this method to add useful
-        # models to the segments.
-
-        # Detect objects & segment image
-        seg, groups, info, result, residual = cls.detect(image, detect_sources,
-                                                         **detect_opts)
-
-        obj = cls(seg)
-
-        # add detected sources
-        obj.groups.update(groups)
-
-        return obj
 
 
 def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
@@ -484,7 +130,7 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
     # If you have crowded fields you may need to run "deblend" again
     # afterwards to separate them again
-    seg_extended = SegmentationHelper(seg_image_extended)
+    seg_extended = SegmentedImage(seg_image_extended)
     seg_extended.dilate(post_merge_dilate)
     seg_extended.blend()
     return seg_extended
@@ -548,32 +194,6 @@ def inside_segment(coords, sub, grid):
     return inside
 
 
-def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
-    """Edge mask"""
-    mask = np.zeros(data.shape, bool)
-
-    mask[:ylow] = True
-    if yhi is not None:
-        mask[yhi:] = True
-
-    mask[:, :xlow] = True
-    if xhi is not None:
-        mask[:, xhi:] = True
-    return mask
-
-
-def make_border_mask(data, edge_cutoffs):
-    if isinstance(edge_cutoffs, int):
-        return _make_border_mask(data,
-                                 edge_cutoffs, -edge_cutoffs,
-                                 edge_cutoffs, -edge_cutoffs)
-    edge_cutoffs = tuple(edge_cutoffs)
-    if len(edge_cutoffs) == 4:
-        return _make_border_mask(data, *edge_cutoffs)
-
-    raise ValueError('Invalid edge_cutoffs %s' % edge_cutoffs)
-
-
 def get_masking_flags(arrays, masked):
     # get flags determining which arrays in the sequence are to be mask
     mask_flags = np.zeros(len(arrays), bool)
@@ -610,7 +230,7 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     Parameters
     ----------
     array:  np.ndarray
-    slice_: tuple
+    slice_: tuple of slices
     mask:   bool, np.ndarray or None (default)
     compress: bool
 
@@ -652,7 +272,7 @@ class SegmentedArray(np.ndarray):
     WORK IN PROGRESS
 
     Array subclass for keeping image segmentation data. Keeps a reference to
-    the `SegmentationHelper` object that created it so that changing the
+    the `SegmentedImage` object that created it so that changing the
     segmentation array data triggers the lazyproperties to recompute the next
     time they are accessed.
 
@@ -670,14 +290,14 @@ class SegmentedArray(np.ndarray):
         obj = super_.__new__(cls, obj.shape, int)
         super_.__setitem__(obj, ..., input_array)  # populate entire array
 
-        # add SegmentationHelper instance as attribute to be updated upon
+        # add SegmentedImage instance as attribute to be updated upon
         # changes to segmentation data
         obj.parent = parent  # FIXME: this will be missed for new-from-template
         return obj
 
     def __setitem__(self, key, value):
         np.ndarray.__setitem__(self, key, value)
-        # set the data in the SegmentationHelper
+        # set the data in the SegmentedImage
         # print('Hitting up set data')
         self.parent.data = self
 
@@ -718,7 +338,7 @@ class SegmentedArray(np.ndarray):
         #     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
         #
         #     def __new__(cls, parent):
-        #         # parent in SegmentationHelper instance
+        #         # parent in SegmentedImage instance
         #         # get list of slices from super class SegmentationImage
         #         slices = SegmentationImage.slices.fget(parent)
         #         if parent.use_zero:
@@ -726,221 +346,83 @@ class SegmentedArray(np.ndarray):
         #
         #         # initialize np.ndarray with data
         #         super_ = super(np.recarray, cls)
-        dtype = np.dtype(list(zip('yx', 'OO')))
+        # dtype = np.dtype(list(zip('yx', 'OO')))
 
 
 #         obj = super_.__new__(cls, len(slices), dtype)
 #         super_.__setitem__(obj, ..., slices)
 #
-#         # add SegmentationHelper instance as attribute
+#         # add SegmentedImage instance as attribute
 #         obj.parent = parent
 #         return obj
 #
 #     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
 #         return NotImplemented
 
-# simple container for 2-component objects
-# yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
-import textwrap
-
-
-# class Segments(list):
-#     # maps semantic corner positions to slice attributes
-#     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
-#
-#     def __repr__(self):
-#         return ''.join((self.__class__.__name__, super().__repr__()))
-#
-#     def attrgetter(self, *attrs):
-#         getter = operator.attrgetter(*attrs)
-#         return list(map(getter, self))
-#
-#     # def of_labels(self, labels=None):
-#     #     return self.seg.get_slices(labels)
-#
-#     def _get_corners(self, vh, slices):
-#         # vh - vertical horizontal positions as two character string
-#         yss, xss = (self._corner_slice_mapping[_] for _ in vh)
-#         return [(getattr(y, yss), getattr(x, xss)) for (y, x) in slices]
-#
-#     def lower_left_corners(self):
-#         """lower left corners of segment slices"""
-#         return self._get_corners('ll', self.seg.get_slices(labels))
-#
-#     def lower_right_corners(self, labels=None):
-#         """lower right corners of segment slices"""
-#         return self._get_corners('lr', self.seg.get_slices(labels))
-#
-#     def upper_right_corners(self, labels=None):
-#         """upper right corners of segment slices"""
-#         return self._get_corners('ur', self.seg.get_slices(labels))
-#
-#     def upper_left_corners(self, labels=None):
-#         """upper left corners of segment slices"""
-#         return self._get_corners('ul', self.seg.get_slices(labels))
-#
-#     llc = lower_left_corners
-#     lrc = lower_right_corners
-#     urc = upper_right_corners
-#     ulc = upper_left_corners
-#
-#     def widths(self):
-#         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.x)))
-#
-#     def height(self):
-#         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.y)))
-#
-#     def extents(self, labels=None):
-#         """xy sizes"""
-#         slices = self.seg.get_slices(labels)
-#         sizes = np.zeros((len(slices), 2))
-#         for i, sl in enumerate(slices):
-#             if sl is not None:
-#                 sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
-#                             for s, sz in zip(sl, self.seg.shape)]
-#         return sizes
-#
-#     def grow(self, labels, inc=1):
-#         """Increase the size of each slice in all directions by an increment"""
-#         # z = np.array([slices.llc(labels), slices.urc(labels)])
-#         # z + np.array([-1, 1], ndmin=3).T
-#         urc = np.add(self.urc(labels), inc).clip(None, self.seg.shape)
-#         llc = np.add(self.llc(labels), -inc).clip(0)
-#         slices = [tuple(slice(*i) for i in yxix)
-#                   for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
-#         return slices
-#
-#     def around_centroids(self, image, size, labels=None):
-#         com = self.seg.centroid(image, labels)
-#         slices = self.around_points(com, size)
-#         return com, slices
-#
-#     def around_points(self, points, size):
-#
-#         yxhw = duplicate_if_scalar(size) / 2
-#         yxdelta = yxhw[:, None, None] * [-1, 1]
-#         yxp = np.atleast_2d(points).T
-#         yxss = np.round(yxp[..., None] + yxdelta).astype(int)
-#         # clip negative slice indices since they yield empty slices
-#         return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
-#                           for sz, ss in zip(self.seg.shape, yxss))))
-#
-#     def plot(self, ax, **kws):
-#         from matplotlib.patches import Rectangle
-#         from matplotlib.collections import PatchCollection
-#
-#         kws.setdefault('facecolor', 'None')
-#
-#         rectangles = []
-#         for (y, x) in self:
-#             xy = np.subtract((x.start, y.start), 0.5)  # pixel centres at 0.5
-#             w = x.stop - x.start
-#             h = y.stop - y.start
-#             r = Rectangle(xy, w, h)
-#             rectangles.append(r)
-#
-#         windows = PatchCollection(rectangles, **kws)
-#         ax.add_collection(windows)
-#         return windows
-
-
-class Slices(object):
+class vdict(dict):
     """
-    Container emulation for tuples of slices. Aids selecting rectangular
-    sub-regions of images.
-
-
+    Dictionary with vectorized item lookup
     """
+
+    def __getitem__(self, key):
+        # dispatch on np.ndarray for vectorized item getting with arbitrary
+        # nesting
+        if isinstance(key, (np.ndarray, list, tuple)):
+            return [self[_] for _ in key]
+
+        if key in (Ellipsis, None):
+            return list(self.values())
+
+        return super().__getitem__(key)
+
+
+class Sliced(vdict):
+    """
+    Dict-like container for tuples of slices. Aids selecting rectangular
+    sub-regions of images more easily.
+    """
+
     # maps semantic corner positions to slice attributes
     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
 
-    def __init__(self, seg_or_slices):
-        """
-        Create container of slices from SegmentationImage, Slice instance, or
-        from list of 2-tuples of slices.
-
-        Slices are stored in a numpy object array.  The first item in the
-        array is a slice that will return the entire object to which it is
-        passed as item getter.  This represents the "background" slice.
-
-        Parameters
-        ----------
-        slices
-        seg
-        """
-
-        # self awareness
-        if isinstance(seg_or_slices, Slices):
-            slices = seg_or_slices
-            seg = slices.seg
-
-        elif isinstance(seg_or_slices, SegmentationImage):
-            # get slices from SegmentationImage
-            seg = seg_or_slices
-            slices = SegmentationImage.slices.fget(seg_or_slices)
-        else:
-            raise TypeError('%r should be initialized from '
-                            '`SegmentationImage` or `Slices` object' %
-                            self.__class__.__name__)
-
-        # use object array as container so we can get items by indexing with
-        # list or array which is really nice and convenient
-        # secondly, we include index 0 as the background ==> full array slice!
-        # this means we can index this object directly with an array of
-        # labels, or integer label, instead of needing the -1 every time you
-        # want a slice
-        self.slices = np.empty(len(slices) + 1, 'O')
-        self.slices[0] = (slice(None),) * seg.data.ndim
-        self.slices[1:] = slices
-
-        # add SegmentationHelper instance as attribute
-        self.seg = seg
-
-    def __getitem__(self, key):
-        # delegate item getting to `np.ndarray`
-        # FIXME: will only work if labels are consecutive
-        return self.slices[key]
-
-    def __repr__(self):
-        return '%s(%s)' % (self.__class__.__name__,
-                           np.array2string(self.slices))
+    def __setitem__(self, key, value):
+        # convert items to namedtuple so we can later do things like
+        # >>> image[seg.slice[7].x]
+        super().__setitem__(key, yxTuple(*value))
 
     @property
     def x(self):
-        _, x = zip(*self.slices)
-        return x
+        _, x = zip(*self.values())
+        return vdict(zip(self.keys(), x))
 
     @property
     def y(self):
-        y, _ = zip(*self.slices)
-        return y
-
-    # def of_labels(self, labels=None):
-    #     return self.seg.get_slices(labels)
+        y, _ = zip(*self.values())
+        return vdict(zip(self.keys(), y))
 
     def _get_corners(self, vh, slices):
         # vh - vertical horizontal positions as two character string
         yss, xss = (self._corner_slice_mapping[_] for _ in vh)
         return [(getattr(y, yss), getattr(x, xss)) for (y, x) in slices]
 
-    def lower_left_corners(self, labels=None):
+    def lower_left_corners(self, labels=...):
         """lower left corners of segment slices"""
-        return self._get_corners('ll', self.seg.get_slices(labels))
+        return self._get_corners('ll', self[labels])
 
-    def lower_right_corners(self, labels=None):
+    def lower_right_corners(self, labels=...):
         """lower right corners of segment slices"""
-        return self._get_corners('lr', self.seg.get_slices(labels))
+        return self._get_corners('lr', self[labels])
 
-    def upper_right_corners(self, labels=None):
+    def upper_right_corners(self, labels=...):
         """upper right corners of segment slices"""
-        return self._get_corners('ur', self.seg.get_slices(labels))
+        return self._get_corners('ur', self[labels])
 
-    def upper_left_corners(self, labels=None):
+    def upper_left_corners(self, labels=...):
         """upper left corners of segment slices"""
-        return self._get_corners('ul', self.seg.get_slices(labels))
+        return self._get_corners('ul', self[labels])
 
-    llc = lower_left_corners  # TODO: lazyproperties ???
+    llc = lower_left_corners
     lrc = lower_right_corners
     urc = upper_right_corners
     ulc = upper_left_corners
@@ -949,43 +431,43 @@ class Slices(object):
     def widths(self):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.x)))
 
-    def height(self):
+    def heights(self):
         return np.subtract(*zip(*map(attrgetter('stop', 'start'), self.y)))
 
-    def extents(self, labels=None):
-        """xy sizes"""
-        slices = self.seg.get_slices(labels)
-        sizes = np.zeros((len(slices), 2))
-        for i, sl in enumerate(slices):
-            if sl is not None:
-                sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
-                            for s, sz in zip(sl, self.seg.shape)]
-        return sizes
+    # def extents(self, labels=None):
+    #     """xy sizes"""
+    #     slices = self[labels]
+    #     sizes = np.zeros((len(slices), 2))
+    #     for i, sl in enumerate(slices):
+    #         if sl is not None:
+    #             sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
+    #                         for s, sz in zip(sl, self.seg.shape)]
+    #     return sizes
 
     def grow(self, labels, inc=1):
         """Increase the size of each slice in all directions by an increment"""
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), inc).clip(None, self.seg.shape)
+        urc = np.add(self.urc(labels), inc)  # .clip(None, self.seg.shape)
         llc = np.add(self.llc(labels), -inc).clip(0)
         slices = [tuple(slice(*i) for i in yxix)
                   for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
         return slices
 
-    def around_centroids(self, image, size, labels=None):
-        com = self.seg.centroid(image, labels)
-        slices = self.around_points(com, size)
-        return com, slices
-
-    def around_points(self, points, size):
-
-        yxhw = duplicate_if_scalar(size) / 2
-        yxdelta = yxhw[:, None, None] * [-1, 1]
-        yxp = np.atleast_2d(points).T
-        yxss = np.round(yxp[..., None] + yxdelta).astype(int)
-        # clip negative slice indices since they yield empty slices
-        return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
-                          for sz, ss in zip(self.seg.shape, yxss))))
+    # def around_centroids(self, image, size, labels=None):
+    #     com = self.seg.centroid(image, labels)
+    #     slices = self.around_points(com, size)
+    #     return com, slices
+    #
+    # def around_points(self, points, size):
+    #
+    #     yxhw = duplicate_if_scalar(size) / 2
+    #     yxdelta = yxhw[:, None, None] * [-1, 1]
+    #     yxp = np.atleast_2d(points).T
+    #     yxss = np.round(yxp[..., None] + yxdelta).astype(int)
+    #     # clip negative slice indices since they yield empty slices
+    #     return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
+    #                       for sz, ss in zip(self.seg.shape, yxss))))
 
     def plot(self, ax, **kws):
         from matplotlib.patches import Rectangle
@@ -1020,12 +502,64 @@ class Slices(object):
         return windows
 
 
+# class Slices(object):
+#     # FIXME: remove this now superceded by Sliced
+#     """
+#     Container emulation for tuples of slices. Aids selecting rectangular
+#     sub-regions of images more easil
+#     """
+#     # maps semantic corner positions to slice attributes
+#     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
+#
+#     def __init__(self, seg_or_slices):
+#         """
+#         Create container of slices from SegmentationImage, Slice instance, or
+#         from list of 2-tuples of slices.
+#
+#         Slices are stored in a numpy object array.  The first item in the
+#         array is a slice that will return the entire object to which it is
+#         passed as item getter.  This represents the "background" slice.
+#
+#         Parameters
+#         ----------
+#         slices
+#         seg
+#         """
+#
+#         # self awareness
+#         if isinstance(seg_or_slices, Slices):
+#             slices = seg_or_slices
+#             seg = slices.seg
+#
+#         elif isinstance(seg_or_slices, SegmentationImage):
+#             # get slices from SegmentationImage
+#             seg = seg_or_slices
+#             slices = SegmentationImage.slices.fget(seg_or_slices)
+#         else:
+#             raise TypeError('%r should be initialized from '
+#                             '`SegmentationImage` or `Slices` object' %
+#                             self.__class__.__name__)
+#
+#         # use object array as container so we can get items by indexing with
+#         # list or array which is really nice and convenient
+#         # secondly, we include index 0 as the background ==> full array slice!
+#         # this means we can index this object directly with an array of
+#         # labels, or integer label, instead of needing the -1 every time you
+#         # want a slice
+#         self.slices = np.empty(len(slices) + 1, 'O')
+#         self.slices[0] = (slice(None),) * seg.data.ndim
+#         self.slices[1:] = slices
+#
+#         # add SegmentedImage instance as attribute
+#         self.seg = seg
+
+
 # import functools as ftl
 import types
 
 
-class Centrality():
-    'TODO: com / gmean / mean / argmax'  # maybe
+# class Centrality():
+#     'TODO: com / gmean / mean / argmax'  # maybe
 
 
 class MaskedStatsMixin(object):
@@ -1113,24 +647,8 @@ class MaskedStatistic(object):
             # image data, so we can mask those in output
             mask = (ndimage.sum(np.logical_not(image.mask), seg.data, labels)
                     == 0)
-            try:
-                # get output mask
-                return np.ma.MaskedArray(result, mask)
-            except Exception as err:
-                import sys
-                from IPython import embed
-                from IPython.core.ultratb import ColorTB
-                import textwrap
-                embed(header=textwrap.dedent(
-                    """\
-                    Caught the following %s:
-                    ------ Traceback ------
-                    %s
-                    -----------------------
-                    Exception will be re-raised upon exiting this embedded interpreter.
-                    """) %
-                    (err.__class__.__name__, ColorTB().text(*sys.exc_info())))
-                raise
+            # get output mask
+            return np.ma.MaskedArray(result, mask)
         else:
             # ensure return array and not list. labels always array here
             return np.array(self.func(image, seg.data, labels))
@@ -1139,7 +657,7 @@ class MaskedStatistic(object):
 import collections as col
 
 
-class SegmentMasks(col.defaultdict):
+class SegmentMasks(col.defaultdict):  # SegmentMasks
     """
     Container for segment masks
     """
@@ -1155,7 +673,7 @@ class SegmentMasks(col.defaultdict):
         # allow zero!
         if label != 0:
             self.seg.check_label(label)
-        return self.seg.data[self.seg.slices[label]] != label
+        return self.seg.sliced(label) != label
 
 
 class SegmentMasksMixin(object):
@@ -1173,14 +691,15 @@ class SegmentMasksMixin(object):
         return SegmentMasks(self)
 
 
-class SegmentationHelper(SegmentationImage,  # base
-                         MaskedStatsMixin,  # stats methods for masked images
-                         SegmentMasksMixin,  # handles masks for foreground obj
-                         LabelGroupsMixin,  # keeps track of label groups
-                         LoggingMixin  # logger
-                         ):
+# SegmentImage
+class SegmentedImage(SegmentationImage,  # base
+                     MaskedStatsMixin,  # stats methods for masked images
+                     SegmentMasksMixin,  # handles masks for foreground obj
+                     LabelGroupsMixin,  # keeps track of label groups
+                     LoggingMixin  # logger
+                     ):
     """
-    Extends `photutils.segmentation.SegmentationImage` functionality
+    Extends `photutils.segmentation.SegmentationImage` functionality.
 
     Additions to the SegmentationImage class.
         * classmethod for construction from an image of stars
@@ -1197,10 +716,14 @@ class SegmentationHelper(SegmentationImage,  # base
 
         * selecting subsets of the segmentation image
         * adding segments from another instance / array
+
         * displaying as an image with segments labelled in matplotlib or on
           the console
 
         * keeps track of logical groupings of labels
+
+        * allows all zero data - base class does not allow this which is
+          unecessarily restrictive
     """
 
     # In terms of modelling, this class is a also domain mapping layer that
@@ -1219,7 +742,7 @@ class SegmentationHelper(SegmentationImage,  # base
     def from_image(cls, image, background=None, snr=3., npixels=7,
                    edge_cutoff=None, deblend=False, dilate=1, flux_sort=True):
         """
-        Detect stars in an image and return a SegmentationHelper object
+        Detect stars in an image and return a SegmentedImage object
 
         Parameters
         ----------
@@ -1250,7 +773,7 @@ class SegmentationHelper(SegmentationImage,  # base
     def detect(cls, image, mask=False, background=None, snr=3., npixels=7,
                edge_cutoff=None, deblend=False, dilate=0, group_name=None):
         """
-        Image object detection that returns a SegmentationHelper instance
+        Image object detection that returns a SegmentedImage instance
 
         Parameters
         ----------
@@ -1331,13 +854,10 @@ class SegmentationHelper(SegmentationImage,  # base
     #     return super().__new__(cls)
 
     def __init__(self, data, label_groups=None):
-
-        # todo: label_groups param seems unnecessary - never used!
-
         # self awareness
         if isinstance(data, SegmentationImage):
             # preserve label groups if no new mapping is given
-            if label_groups is not None:
+            if label_groups is None:
                 label_groups = data.groups
 
             data = data.data
@@ -1347,7 +867,8 @@ class SegmentationHelper(SegmentationImage,  # base
                 setattr(self, key, value)
 
         # init parent
-        super().__init__(data)  # lazyproperties will not be reset on init!
+        super().__init__(data.astype(int))  # lazyproperties will not be reset
+        # on init!
         # self._use_zero = bool(use_zero)
 
         # optional named groups
@@ -1355,6 +876,11 @@ class SegmentationHelper(SegmentationImage,  # base
 
         # hack so we can use `detect` from both class and instance
         self.detect = self._detect_refine
+
+    def __str__(self):
+        params = ['shape', 'nlabels', 'groups']
+        return pformat({p: getattr(self, p) for p in params},
+                       self.__class__.__name__)
 
     def __reduce__(self):
         # for some reason default object.__reduce__ borks with TypeError when
@@ -1379,6 +905,7 @@ class SegmentationHelper(SegmentationImage,  # base
         """Reset all lazy properties.  Will work for subclasses"""
         for key, value in inspect.getmembers(self.__class__, is_lazy):
             self.__dict__.pop(key, None)
+        # TODO: base class method should suffice in recent versions - romove
 
     @property
     def data(self):
@@ -1400,9 +927,7 @@ class SegmentationHelper(SegmentationImage,  # base
         # Note however that the array which this property points to
         #  is mutable, so explicitly changing it's contents
         #  (via eg: ``seg.data[:] = 1``) will not delete the lazyproperties!
-        #  There should be an array interface subclass for this
-
-        # TODO: manage through class method allow_negative
+        #  There could be an array interface subclass for this
 
         if np.any(~np.isfinite(value)):
             raise ValueError('data must not contain any non-finite values '
@@ -1417,39 +942,70 @@ class SegmentationHelper(SegmentationImage,  # base
     @lazyproperty
     def has_zero(self):
         """Check if there are any zeros in the segmentation image"""
-        return (self.data == 0).any()
+        return 0 in self.data
 
     @lazyproperty
     def slices(self):
         """
-        The minimal bounding box slices for each labeled region as a list.
+        Segment bounding boxes as dict of tuple of slices.  The object
+        returned by this method has builtin vectorized item getting, so you
+        can get many slices at once (as a list) by indexing it with a tuple,
+        list, or np.ndarray.  Eg:
+        >>> seg.slices[0, 1, 2]
+
+        You can also choose only row or column slices like this:
+        >>> seg.slices.x[7, 8] # returns a list of slices
+        which is very nice.
         """
+        s = {0: (slice(None),) * self.data.ndim}
+        s.update(zip(self.labels, SegmentationImage.slices.fget(self)))
+        return Sliced(s)
 
-        # self.logger.debug('computing slices!')
-        # get slices from parent (possibly compute via `find_objects`)
-        return Slices(self)
+    def sliced(self, label):
+        """
+        Shorthand for
+        >>> seg.data[seg.slices[label]]
 
-    def get_slices(self, labels=None):
-        if labels is None:
-            return self.slices
+        Returns
+        -------
+        np.ndarray
+        """
+        self.check_label(label)
+        return self.data[self.slices[label]]
 
-        return self.slices[self.get_indices(labels) + 1]
+    @lazyproperty
+    def widths(self):
+        return self.slices.widths
 
-    #
-    # @lazyproperty
-    # def labels(self):
-    #     # overwrite labels property to allow the use of zero label
-    #     labels = np.unique(self.data)
-    #     if (0 in labels) and not self.use_zero:
-    #         return labels[1:]
-    #     return labels
-    #
-    # @property
-    # def labels_nonzero(self):
-    #     """Positive segment labels"""
-    #     if self.has_zero and self.use_zero:
-    #         return self.labels[1:]
-    #     return self.labels
+    @lazyproperty
+    def heights(self):
+        return self.slices.heights
+
+    @lazyproperty
+    def max_label(self):
+        if len(self.labels):
+            return super().max_label
+        else:
+            # otherwise `np.max` borks with empty sequence
+            return 0
+
+    def make_cmap(self, background_color='#000000', random_state=None):
+        # this function fails for all zero data since `make_random_cmap`
+        # squeezes the rgb values into an array with shape (3,).  The parent
+        # tries to set the background colour (a tuple) in the 0th position of
+        # this array and fails. This overwrite would not be necessary if
+        # `make_random_cmap`
+
+        from photutils.utils.colormaps import make_random_cmap
+        from matplotlib import colors
+
+        cmap = make_random_cmap(self.max_label + 1, random_state=random_state)
+        cmap.colors = np.atleast_2d(cmap.colors)
+
+        if background_color is not None:
+            cmap.colors[0] = colors.hex2color(background_color)
+
+        return cmap
 
     def resolve_labels(self, labels=None, ignore=None, allow_zero=False):
         """
@@ -1670,11 +1226,11 @@ class SegmentationHelper(SegmentationImage,  # base
         # TODO: update for nd ?
         return self._select_labels(image, labels, mask0, self.to_bool_3d)
 
-    def clone(self, keep_labels=all, remove=None):
+    def clone(self, keep_labels=..., remove=None):
         """
         Return a modified copy keeping only labels in `keep`
         """
-        if keep_labels is all:
+        if keep_labels is ...:
             keep_labels = self.labels
         else:
             keep_labels = np.atleast_1d(keep_labels)
@@ -1686,39 +1242,28 @@ class SegmentationHelper(SegmentationImage,  # base
 
     # segment / slice iteration
     # --------------------------------------------------------------------------
-    def iter_slices(self, labels=None, filter_=False):
+    def iter_slices(self, labels=None):
         """
 
         Parameters
         ----------
         labels: sequence of int
             Segment labels to be iterated over
-        filter_: bool
-            whether to filter empty labels (no pixels)
 
         Returns
         -------
 
         """
+        for label in self.resolve_labels(labels):
+            yield self.slices[label]
 
-        slices = self.get_slices(labels)
-        if filter_:
-            slices = filter(None, slices)
-        yield from slices
-
-    def enum_slices(self, labels=None, filter_=True):
+    def enum_slices(self, labels=None):
         """
         Yield (label, slice) pairs optionally filtering None slices
         """
 
-        labels = self.resolve_labels(labels)
-        pairs = zip(labels, self.get_slices(labels))
-        if filter_:
-            yield from ((i, s)
-                        for i, s in pairs
-                        if s is not None)
-        else:
-            yield from pairs
+        for label in self.resolve_labels(labels):
+            yield label, self.slices[label]
 
     def iter_segments(self, image, labels=None):
         """
@@ -1750,8 +1295,8 @@ class SegmentationHelper(SegmentationImage,  # base
             Sequence of integer labels
         masked: bool or sequence of ints
             If True:
-                For each cutout, mask all pixels for which label is "background"
-                in all the arrays. If an array is greater than
+                For each cutout, mask all "background" pixels (i.e. those
+                with values not equal to `label`.
             If sequence of ints:
                 Represents index number in the sequence of arrays for which
                 the returned cutout is required to be masked.
@@ -1780,6 +1325,11 @@ class SegmentationHelper(SegmentationImage,  # base
         # checks
         if n == 0:
             raise ValueError('Need at least one array to slice')
+
+        for i, a in enumerate(arrays):
+            if (a is not None) and np.ndim(a) < 2:
+                raise ValueError('All arguments should be (nd)images or `None`.'
+                                 ' Array %i is %id.' % (i, np.ndim(a)))
 
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
@@ -1829,11 +1379,11 @@ class SegmentationHelper(SegmentationImage,  # base
         # if image is masked, ignore masked pixels by using copy of segmentation
         # data with positions of masked pixels replaced by new label one
         # larger than current max label.
-        # Note: Some statistical computations `mean`, `median`,
+        # Note: Some statistical computations eg `mean`, `median`,
         #  `percentile` etc cannot be computed on the masked image by simply
         #  zero-filling the masked pixels since it will artificially skew the
         #  results. There is no significant performance difference between
-        #  the 2 paths, I checked
+        #  the 2 code paths, I checked.
         if masked_pixels_label is None:
             masked_pixels_label = self.max_label + 1
         masked_pixels_label = int(masked_pixels_label)
@@ -1847,7 +1397,7 @@ class SegmentationHelper(SegmentationImage,  # base
         else:
             return self.data
 
-    def thumbnails(self, image=None, labels=None):
+    def thumbnails(self, image=None, labels=None, masked=False):
         """
         Thumbnail cutout images based on segmentation
 
@@ -1863,7 +1413,7 @@ class SegmentationHelper(SegmentationImage,  # base
 
         data = self.data if image is None else image
         self._check_image(data)
-        return list(self.coslice(data, labels=labels))
+        return list(self.coslice(data, labels=labels, masked=masked))
 
     def flux(self, image, labels=None, labels_bg=(0,),
              statistic_bg='median'):  #
@@ -2273,7 +1823,6 @@ class SegmentationHelper(SegmentationImage,  # base
                 forward_map = np.zeros(input_labels.max() + 1)
                 forward_map[input_labels] = new_labels
                 data = forward_map[data]
-
         else:
             # shift labels that are larger than `label_insert` upwards so
             # they follow numerically from largest label in `self`
@@ -2298,6 +1847,7 @@ class SegmentationHelper(SegmentationImage,  # base
         if copy:
             seg_data_out = self.data.copy()
             seg_data_out[new_pix] = data[new_pix]
+            groups.update(self.groups)
             return self.__class__(seg_data_out, groups), new_labels
         else:
             self.data[new_pix] = data[new_pix]
@@ -2337,7 +1887,12 @@ class SegmentationHelper(SegmentationImage,  # base
         # If this distance is large, it means the segment potentially has a
         # hole or is arc shaped, or is disjointed. For these we add the label
         # multiple times, one label for each separate part of the segment.
-        # Decide on where to put the labels based on kmeans with 2 clusters
+        # Decide on where to put the labels based on kmeans with 2 clusters.
+        # note. this will give bad positions for some shapes, but is good
+        #  enough for jazz
+
+        if self.nlabels == 0:
+            return {}
 
         # noinspection PyUnresolvedReferences
         yx = self.com(self.data)
@@ -2372,8 +1927,6 @@ class SegmentationHelper(SegmentationImage,  # base
         im: `ImageDisplay` instance
 
         """
-        # TODO: disable sliders ....
-
         from graphing.imagine import ImageDisplay
 
         # draw segment labels
@@ -2384,6 +1937,7 @@ class SegmentationHelper(SegmentationImage,  # base
         cmap = 'gray' if (self.nlabels == 0) else self.make_cmap()
         # conditional here prevents bork on empty segmentation image
         kws.setdefault('cmap', cmap)
+        kws.setdefault('sliders', False)
 
         # plot
         im = ImageDisplay(self.data, *args, **kws)
@@ -2393,21 +1947,53 @@ class SegmentationHelper(SegmentationImage,  # base
 
         if draw_labels:
             # add label text (number) on each segment
-            for lbl, pos in self._label_positions().items():
-                for x, y in pos[:, ::-1]:
-                    im.ax.text(x, y, str(lbl),
-                               color='w', fontdict=dict(weight='bold'),
-                               va='center', ha='center')
+            self.draw_labels(im.ax, color='w', fontdict=dict(weight='bold'))
 
         return im
 
-    def display_term(self, show_labels=True, frame=True):
+    def draw_labels(self, ax, **kws):
+
+        kws_ = dict(va='center', ha='center')
+        kws_.update(**kws)
+        for lbl, pos in self._label_positions().items():
+            for x, y in pos[:, ::-1]:
+                ax.text(x, y, str(lbl), **kws_)
+
+    def display_term(self, show_labels=True, frame=True, origin=0):
         """
         A lightweight visualization of the segmented image for display
         on console.  This creates a string with colourised "pixels" using ANSI
-        escape sequences. Useful for small images and when you might not have
-        access to high level display.  The string representation is printed
+        escape sequences. Useful for visualising source cutouts or
+        small segmented images.  The string representation is printed
         to stdout and returned by this function.
+
+
+        The string returned by this function, when printed, might look
+        something like this, but with the different segments coloured:
+
+           _________________________________________________
+           |                                               |
+           |                          ██                   |
+           |         ██             ██████        ██       |
+           |       ██████             ██        ████       |
+           |     ██████████                         ██     |
+           |       ██████                                  |
+           |         ██                                    |
+           |                                ████           |
+           |               ██             ████████         |
+           |             ██████             ██████         |
+           |             ████████             ██           |
+           |               ████                            |
+           |                 ██                            |
+           |                                               |
+           |                                               |
+           |                                               |
+           |             ██                        ██      |
+           |           ██████                    ██████    |
+           |             ██                    ██████████  |
+           |                                     ██████    |
+           |                                       ██      |
+           |_______________________________________________|
 
 
         Parameters
@@ -2421,100 +2007,149 @@ class SegmentationHelper(SegmentationImage,  # base
         -------
         str
         """
+
+        im = self.format_term(show_labels, frame, origin)
+        print(im)
+        return im
+
+    def format_term(self, show_labels=True, frame=True, origin=0):
         import motley
         from motley import codes
 
+        origin = int(origin)
+        assert origin in (0, 1)
+
+        # re-orient data
+        o = 1 if origin else -1
+        data = self.data[::o].ravel()
+
         BORDER = '⎪'  # U+23aa Sm CURLY BRACKET EXTENSION ⎪  # '|'
-
-        nm = 2
+        nm = 2  # number of characters that represent a pixel
         n = self.nlabels
-        cmap = self.make_cmap()
         nr, nc = self.shape
+        cmap = self.make_cmap()
 
+        # mapping from indices to labels
         forward_map = np.zeros(self.max_label + 1, int)
         forward_map[self.labels] = np.arange(1, n + 1)
 
         # get the 24 bit colours
-        all_labels = [0] + list(self.labels)
-        colours = cmap(all_labels, bytes=True)[:, :3]
-
+        # noinspection PyTypeChecker
+        colours = cmap([0] + list(self.labels), bytes=True)[:, :3]
         # create markers (using ANSI bg codes)
-        markers = np.array(codes.from_list(bg=colours))
+        # markers = np.array(codes.from_list(bg=colours))
+        markers = np.char.add(codes.from_list(bg=colours), '  ')
+        # `markers` are just the ansi colour codes for each label with 2
+        # whitespace added to represent a pixel.
 
-        # get positions / str for labels
-        li = []
-        li_mrk = []
-        if show_labels:
-            for lbl, pos in self._label_positions().items():
-                posi = np.ravel_multi_index(
-                        tuple(np.array((nr - 1 - pos[:, 0],
-                                        pos[:, 1])).T.round().astype(int).T),
-                        self.shape)
-                li.extend(posi)
-                li_mrk.extend([str(lbl)] * len(posi))
-
-        # positions where switch to different label / ANSI strings at said pos
-        data = self.data[::-1]
-        swi = np.where(np.diff(data.ravel().astype(bool)))[0] + 1
-        swi_lbl = data[np.unravel_index(swi, self.shape)]
-        swi_mrk = markers[forward_map[swi_lbl]]
+        # row end markers.
+        if frame:
+            ul = codes.get('underline')
+            endings = ((f'{codes.END}{BORDER}\n{BORDER}',) * (nr - 2) +
+                       (f'{codes.END}{BORDER}\n{ul}{BORDER}',
+                        f'{codes.END}{ul}{BORDER}{codes.END}\n'))
+        else:
+            endings = ('\n',) * nr
 
         # newline positions / strings
-        nli = list(range(nc, nr * nc + 1, nc))
-        nl = '\n'
-        if frame:
-            end_nl = f'{codes.END}{BORDER}\n'
-            start_nl = BORDER + markers[0]
-            nl = end_nl + start_nl
-            # underline last line
-            ul = codes.get('underline')
-            nl_mrk = [nl] * (len(nli) - 2) + \
-                     [end_nl + ul + start_nl,
-                      f'{codes.END}{ul}{BORDER}{codes.END}\n']
-        else:
-            nl_mrk = [nl] * (len(nli) - 1) + ['\n']
+        marks = col.defaultdict(str)
 
-        # curiously, hstack with one empty list casts dtype to float....
-        indxs = np.hstack([swi, li, nli]).astype(int)
-        marks = np.hstack([swi_mrk, li_mrk, nl_mrk])
-        o = indxs.argsort()
-        indxs = indxs[o]
-        marks = marks[o]
+        # make line end markers.  New line begins with a coloured pixel.
+        nli = np.arange(nc, nr * nc + 1, nc)
+        marks.update(zip(nli, endings))
 
-        # find positions where two marks are trying to be written at once
-        # and make sure we where the non-display characters first
-        trouble, = np.where(np.diff(indxs) == 0)
-        double_trouble = np.array([trouble, trouble + 1]).T
-        swapsies = marks[double_trouble].argsort(1)
-        # reorder for labels after ANSI code.
-        # note this may place labels that fall on frame edges on next line
-        for s, t in zip(swapsies, double_trouble):
-            marks[t] = marks[t[s]]
+        # positions where switch to different label / ANSI strings at said pos
+        swi, = np.where(np.diff(data, prepend=0).astype(bool))
+        # each new row should also start with new colour
+        swi = np.union1d(swi, np.arange(0, nr * nc, nc))
+        for i in swi:
+            marks[i] += markers[forward_map[data[i]]]
 
+        # get positions / str for labels
+        if show_labels:
+            for lbl, pos in self._label_positions().items():
+                label = '%-2i' % lbl
+                if origin == 0:
+                    pos[:, 0] = nr - 1 - pos[:, 0]
+
+                for i in np.ravel_multi_index(
+                        np.round(pos).astype(int), self.shape):
+                    if i in marks:
+                        marks[i] = marks[i].replace('  ', label)
+                    else:
+                        marks[i] = markers[lbl].replace('  ', label)
+
+        # create string
         i0 = 0
         im = ''
         if frame:
             im = motley.underline(' ' * ((nc + 1) * nm)) + '\n' + BORDER
 
-        im += markers[0]
-        for i, mrk in zip(indxs, marks):
-            im += ' ' * ((i - i0) * nm)
+        for i, mrk in sorted(marks.items(), key=lambda _: _[0]):
+            im += ' ' * ((i - i0 - 1) * nm) + mrk
             i0 = i
-            if ord(mrk[0]) > 27:  # this is a displayed character (label)
-                δ = len(mrk)
-                l = ((δ // nm) + (δ % nm))
-                mrk = '{:>{}}'.format(mrk, l * nm)
-                i0 = i + l
-
-            im += mrk
 
         im += codes.END
-        print(im)
         return im
 
+    def get_boundary(self, label):
+        """
+        Fast boundary trace for segment `label`.  This algorithm is designed
+        to be general enough to handle disjoint segments with a single label
+        and therefore always returns a list even if the segment is monolithic.
+        """
+        self.check_label(label)
+        s = self.slices[label]
+        b = (self.data[s] == label)
+        origin = [_.start for _ in s]
+        count = 0
+        segments = []
+        while b.any():
+            pixels, boundary = trace_boundary(b)
+            # get outline image, fill it, difference original, repeat.
+            # This will trace outer as well as inner boundaries for
+            # segments with holes.
+            tmp = np.zeros_like(b)
+            tmp[tuple(pixels.T)] = True
+            b[ndimage.binary_fill_holes(tmp)] = False
+            #
+            segments.append((boundary + origin - 0.5)[:, ::-1])
 
-#
-# class SegmentationGroups(SegmentationHelper, LabelGroupsMixin):
+            if count > 10:
+                break
+            count += 1
+
+        return segments
+
+    def get_boundaries(self, labels=None):
+        """Get traced outlines for many labels"""
+        return {label: self.get_boundary(label)
+                for label in self.resolve_labels(labels)}
+
+    @lazyproperty
+    def traced(self):
+        return self.get_boundaries()
+
+    # @lazyproperty
+    def get_contours(self, labels=None, **kws):
+
+        from matplotlib.collections import LineCollection
+
+        # if not 'colors' in kws:
+        cmap = self.make_cmap()
+
+        # note: use PathPatch if you want to be able to hatch the regions.
+        #  at the moment you cannot hatch individual paths in PathCollection
+        contours = self.get_boundaries(labels)
+
+        kws.setdefault('colors', cmap(list(contours.keys())))
+        return LineCollection(list(mit.flatten(contours.values())), **kws)
+
+
+import more_itertools as mit
+
+
+# class SegmentationGroups(SegmentedImage, LabelGroupsMixin):
 #
 #     def __init__(self, data, use_zero=False):
 #         super().__init__(data, use_zero)
@@ -2529,7 +2164,7 @@ class CachedPixelGrids():
     'things!'
 
 
-class SegmentationGridHelper(SegmentationHelper):  # SegmentationModelHelper
+class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None, domains=None):
