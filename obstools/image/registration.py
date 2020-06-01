@@ -1,14 +1,16 @@
 """
 Helper functions to infer World Coordinate System given a target name or
 coordinates of a object in the field. This is done by matching the image
-with the DSS image for the same field via image registration.  A number of
-methods are implemented for doing this:
+with the DSS / SkyMapper image for the same field via image registration.  
+A number of methods are implemented for doing this:
   point cloud drift
   matching via locating dense cluster of displacements between points
-  direct image-to-image matching
+  direct image-to-image matching 
   brute force search with gaussian mixtures on points
 """
 
+import collections as col
+from recipes.misc import duplicate_if_scalar
 import functools as ftl
 import logging
 import multiprocessing as mp
@@ -130,7 +132,7 @@ def prob_gmm(xy_trg, xy, sigma):
     # *_, n = xy.shape
     # volume = len(xy_trg) * (np.sqrt(2 * np.pi) * sigma) ** n
     return np.exp(
-            -np.square(xy_trg[None] - xy[:, None]).sum(-1) / (2 * sigma * sigma)
+        -np.square(xy_trg[None] - xy[:, None]).sum(-1) / (2 * sigma * sigma)
     ).sum(-1)
 
 
@@ -345,7 +347,7 @@ class GaussianMixture(object):  # Model  # !
 
         rx, ry = duplicate_if_scalar(size)
         return np.mgrid[x0:x1:(rx * 1j),
-               y0:y1:(ry * 1j)]
+                        y0:y1:(ry * 1j)]
 
     def gridsearch_max(self, grid=None, gridsize=100):
         if grid is None:
@@ -355,13 +357,14 @@ class GaussianMixture(object):  # Model  # !
         ll = self(xy).reshape(grid.shape[1:])
         return grid, ll, xy[ll.argmax()]
 
-    def plot(self, grid=None, gridsize=100, show_peak=False):
+    def plot(self, grid=None, gridsize=100, show_peak=False, cmap='Blues',
+             alpha=0.5):
 
         grid, ll, peak = self.gridsearch_max(grid, gridsize)
 
         extent = np.c_[grid[:, 0, 0], grid[:, -1, -1]].ravel()
         im = ImageDisplay(ll.T, extent=extent,
-                          cmap='Blues', alpha=0.5)
+                          cmap=cmap, alpha=alpha)
 
         im.ax.plot(*self.xy.T, '.')
         if show_peak:
@@ -392,7 +395,7 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=5,
                    edge_cutoff=None, deblend=False, dilate=0):
     #
     seg = SegmentedImage.detect(image, mask, background, snr, npixels,
-                                    edge_cutoff, deblend, dilate)
+                                edge_cutoff, deblend, dilate)
 
     counts = seg.sum(image) - seg.median(image, [0]) * seg.areas
     coords = seg.com_bg(image)
@@ -609,19 +612,19 @@ def plot_transformed_image(ax, image, fov=None, p=(0, 0, 0), frame=True,
     # Rotate the image by setting the transform
     *xy, theta = p  # * fov, p[-1]
     art.set_transform(Affine2D().rotate(theta).translate(*xy) +
-                      art.get_transform())
+                      art.get_transform() # ax.transData
+                      )
 
     if bool(frame):
         from matplotlib.patches import Rectangle
 
-        frame_kws = dict(fc='none', lw=1.5, ec='0.5')
+        frame_kws = dict(fc='none', lw=1, ec='0.5', alpha=kws.get('alpha', 0.3))
         if isinstance(frame, dict):
             frame_kws.update(frame)
 
-        ax.add_patch(
-                Rectangle(xy - half_pixel_size, *fov[::-1], np.degrees(theta),
+        frame = Rectangle(xy - half_pixel_size, *fov[::-1], np.degrees(theta),
                           **frame_kws)
-        )
+        ax.add_patch(frame)
 
     if set_lims:
         delta = 1 / 100
@@ -629,7 +632,7 @@ def plot_transformed_image(ax, image, fov=None, p=(0, 0, 0), frame=True,
         xlim, ylim = np.vstack([c.min(0), c.max(0)]).T * (1 - delta, 1 + delta)
         im.ax.set(xlim=xlim, ylim=ylim)
 
-    return art
+    return art, frame
 
 
 def plot_coords_nrs(cooref, coords):
@@ -659,9 +662,6 @@ def display_multitab(images, fovs, params, coords):
         # if i == 1:
         #    break
     return ui
-
-
-from recipes.misc import duplicate_if_scalar
 
 
 # todo: move to diagnostics
@@ -960,7 +960,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
                         (n_stars, n, f_det))
 
     if np.any(~use_stars):
-        logger.info('Ignoring %i / %i stars with low (<%.0f%%) detection '
+        logger.info('Ignoring %i / %i stars with low (<=%.0f%%) detection '
                     'frequency for frame offset measurement.',
                     n_stars - len(i_use), n_stars, detect_freq_min * 100)
 
@@ -1175,26 +1175,29 @@ def report_measurements(xy, centres, σ_xy, xy_offsets, counts=None,
     # logger.info('Differencing change overall variance by %r',
     #             np.array2string((s0 - s1) / s0, precision=3))
 
+    # FIXME: percentage format in total wrong
+    # TODO: align +- values
     col_headers = ['n (%)', 'x', 'y']  # '(px.)'
-    fmt = {0: ftl.partial(pprint.decimal_with_percentage,
-                          total=n_points, precision=0, right_pad=1)}  #
+    formatters = {0: ftl.partial(pprint.decimal_with_percentage,
+                                 total=n_points, precision=0, right_pad=1)}  #
 
     if detect_frac_min is not None:
         n_min = detect_frac_min * n_points
-        fmt[0] = ConditionalFormatter('y', op.lt, n_min, fmt[0])
+        formatters[0] = ConditionalFormatter('y', op.le, n_min, formatters[0])
 
     # get array with number ± std representations
     columns = [points_per_star,
                pprint.uarray(centres, σ_xy, 2)[:, ::-1]]
+    # FIXME: don't print uncertainties if less than 6 measurement points
 
     if counts is not None:
         # TODO highlight counts?
         cn = 'counts (e⁻)'
-        fmt[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
-                              compact=False)
+        formatters[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
+                                     compact=False)
         if count_thresh:
-            fmt[cn] = ConditionalFormatter('c', op.ge, count_thresh,
-                                           fmt[cn])
+            formatters[cn] = ConditionalFormatter('c', op.ge, count_thresh,
+                                                  formatters[cn])
         columns.append(counts)
         col_headers += [cn]
 
@@ -1212,7 +1215,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets, counts=None,
                              align='r',
                              row_nrs=True,
                              totals=[0],
-                             formatters=fmt)
+                             formatters=formatters)
 
     # fix formatting with percentage in total.  Still need to think of a
     # cleaner solution for this
@@ -1237,9 +1240,6 @@ class Image(object):
 
     def __array__(self):
         return self.data
-
-
-import collections as col
 
 
 class TransformedImageGrids(col.defaultdict, LoggingMixin):
@@ -1315,7 +1315,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         for cx in self.coms:
             cx *= ratio
 
-        # note this means reg.mosaic will no longer work without fov keyword
+        # NOTE this means reg.mosaic will no longer work without fov keyword
         #  since we have changed the scale and it substitutes image shape for
         #  fov if not given
 
@@ -1403,6 +1403,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
     def model(self):
         return ConstellationModel(self.xy, self.guess_sigma())
 
+
     def __init__(self, images=(), fovs=(), params=(), **find_kws):
         """
         Initialize an image register.
@@ -1437,7 +1438,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         n = len(images)
         assert n == len(fovs) == len(params)
 
-        # note passing a reference index is only meaningful if the class is
+        # NOTE passing a reference index is only meaningful if the class is
         #  initialized with a set of images
         self.idx = 0
 
@@ -1484,7 +1485,8 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
 
     def __call__(self, image, fov, rotation=0., plot=False, **find_kws):
         """
-        Run match_image and aggregate
+        Run `match_image` and aggregate results. If this is the first time
+        calling this method, the reference image is set.
 
         Parameters
         ----------
@@ -1498,6 +1500,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
 
         """
 
+        # first image will be the de facto reference frame
         if len(self.images) == 0:
             # Detect stars in reference frame
             # np.divide(fov, image.shape)
@@ -1505,7 +1508,9 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
             # `xy` are the initial target coordinates for matching. Theses will
             # be updated in `recentre`
             p = np.zeros(3)
-            self._xy = xy = yx[:, ::-1]
+            good = np.isfinite(yx).all(1)
+            self._xy = xy = yx[good, ::-1]
+            counts = counts[good]
             self._min_dist = dist_flat(self.xy).min()
         else:
             p, xy, counts, seg = self.match_image(image, fov, rotation, plot)
@@ -1553,8 +1558,8 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         self.images.extend(images)
         self.fovs.extend(np.array(fovs))
         self.detections.extend(segs)
-        self.coms.extend(xy)
-        self.counts.extend(counts)
+        self.coms.extend(xy)  # [good]
+        self.counts.extend(counts)  # [good]
         self.params.extend(params)
 
     def min_dist(self):
@@ -1584,6 +1589,9 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
 
         # convert coordinates to pixel coordinates of reference image
         reg.convert_to_pixels_of(self)
+
+        reg.copy()
+
 
         # use `match points` so we don't aggregate data just yet
         xy = rotate(reg.xy.T, angle).T
@@ -1655,8 +1663,8 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
     def register_constellation(self, clustering=None, plot=False):
 
         # clustering + relative position measurement
-        # clustering =
-        self.cluster_id(clustering or self.get_clf())
+        clustering = clustering or self.get_clf()
+        self.cluster_id(clustering)
         # make the cluster centres the target constellation
         self.xy = self.xyt_block.mean(0)
 
@@ -1668,7 +1676,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
             ax = art.axes
 
             # bandwidth size indicator.
-            # todo: get this to remain anchored lower left but scale with zoom..
+            # TODO: get this to remain anchored lower left but scale with zoom..
             bw = clustering.bandwidth
             xy = self.xy.min(0)  # - bw * 0.6
             cir = Circle(xy, bw, alpha=0.5)
@@ -1742,9 +1750,9 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         account. The xy offset of each image is measured from the mean
         xy-offset of the brightest stars from their respective cluster centres.
         Once all the frames have been shifted, we re-compute the cluster
-        centers using the geometric median.  We check that the new position
-        yield clusters that are more tightly bound, ie. offset transformation
-        parameters closer the the global minimum by taking the likelihood
+        centers using the geometric median.  We check that the new positions
+        yield clusters that are more tightly bound, (ie. offset transformation
+        parameters are closer the the global minimum) by taking the likelihood
         ratio of the constellation model for before and after the shift.
 
         Parameters
@@ -1776,7 +1784,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
             self.sigmas = xy_std
             del self.model
 
-        # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if plot:
             # diagnostic for source location measurements
             from obstools.phot.diagnostics import plot_position_measures
@@ -1946,7 +1954,7 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         dx, dy = self.fov
         hx, hy = 0.5 * self.pixel_scale
         by, bx = np.ogrid[-hx:(dx + hx):complex(sy + 1),
-                 -hy:(dy + hy):complex(sx + 1)]
+                          -hy:(dy + hy):complex(sx + 1)]
         bins = by.ravel(), bx.ravel()
 
         sy, sx = image.shape
@@ -1954,11 +1962,11 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         yx = np.mgrid[:dx:complex(sy), :dy:complex(sx)].reshape(2, -1).T
 
         return minimize(
-                ftl.partial(objective_pix,
-                            normalize_image(self.data),
-                            normalize_image(image).ravel(),
-                            yx, bins),
-                p0)
+            ftl.partial(objective_pix,
+                        normalize_image(self.data),
+                        normalize_image(image).ravel(),
+                        yx, bins),
+            p0)
 
     # def match_image_brute(self, image, fov, rotation=0., step_size=0.05,
     #                       return_coords=False, plot=False, sigma_gmm=0.03):
@@ -2100,11 +2108,11 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
         z = np.full((1,) + grid.shape[1:], rotation)
         grid = np.r_[grid, z]
         self.logger.info(
-                '\nDoing grid search on ' """
+            '\nDoing grid search on ' """
                 δx = [{0:.1f} : {1:.1f} : {4:.1f}]; 
                 δy = [{2:.1f} : {3:.1f} : {5:.1f}] 
                 ({6:d} x {6:d}) offset grid"""
-                ''.format(*rng.T.ravel(), *step_size, *grid.shape[-2:]))
+            ''.format(*rng.T.ravel(), *step_size, *grid.shape[-2:]))
 
         # parallel
         r = gridsearch_mp(self.model.objective_trans, grid, (xy,))
@@ -2221,8 +2229,8 @@ class ImageRegistration(LoggingMixin):  # ImageRegister
             if number:
                 for i, xy in enumerate(self.xy):
                     s.extend(
-                            im.ax.plot(*xy, marker='$%i$' % i,
-                                       color=marker_color)
+                        im.ax.plot(*xy, marker='$%i$' % i,
+                                   color=marker_color)
                     )
             else:
                 s, = im.ax.plot(*self.xy.T, 'rx')
@@ -2241,10 +2249,15 @@ class ImageRegistrationDSS(ImageRegistration):
     Image registration using Digitized Sky Survey images
     """
     #
-    _servers = ('poss2ukstu_blue', 'poss1_blue',
+    _servers = ('all',
+                'poss2ukstu_blue', 'poss1_blue',
                 'poss2ukstu_red', 'poss1_red',
                 'poss2ukstu_ir',
-                'all')
+                )
+
+    # TODO: more modern sky images
+    # TODO: can you warn users about this possibility if you only have access to
+    # old DSS images
 
     def __init__(self, name_or_coords, fov=(3, 3), **find_kws):
         """
@@ -2264,6 +2277,9 @@ class ImageRegistrationDSS(ImageRegistration):
         if coords is None:
             raise ValueError('Need object name or coordinates')
 
+        # TODO: proper motion correction
+        # TODO: move some of this code to utils
+
         for srv in self._servers:
             try:
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
@@ -2275,7 +2291,8 @@ class ImageRegistrationDSS(ImageRegistration):
         # DSS data array
         data = self.hdu[0].data.astype(float)
         find_kws.setdefault('deblend', True)
-        ImageRegistration.__init__(self, data, fov, **find_kws)
+        ImageRegistration.__init__(self)
+        self(data, fov, **find_kws)
 
         # TODO: print some header info for DSS image - date!
         # DATE-OBS
@@ -2393,7 +2410,7 @@ class MosaicPlotter(object):
             if name is None:
                 header = self.reg.hdu[0].header
                 name = ' '.join(
-                        filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
+                    filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
 
         self.use_aplpy = use_aplpy
         self.name = name
@@ -2498,9 +2515,9 @@ class MosaicPlotter(object):
         # plot
         # image = image / image.max()
         art = self.art[name] = plot_transformed_image(
-                self.ax, image, fov, p, frame,
-                set_lims=False,                 cbar=False,
-                **kws)
+            self.ax, image, fov, p, frame,
+            set_lims=False, cbar=False,
+            **kws)
 
         # save upper left corner positions (for labels)
 
@@ -2518,6 +2535,7 @@ class MosaicPlotter(object):
         # mosaic plot
 
         cmap = kws.pop('cmap_ref', self.default_cmap_ref)
+        # 
         cmap_other = kws.pop('cmap', None)
 
         n = len(images)
@@ -2549,7 +2567,6 @@ class MosaicPlotter(object):
                     text_offset=3, **text_props):
 
         # TODO: determine arrow_offset automatically by looking for peak
-
         """
 
         Parameters
@@ -2597,8 +2614,8 @@ class MosaicPlotter(object):
                            color=colour, **text_props)
         # add border around text to make it stand out (like the arrows)
         txt.set_path_effects(
-                [path_effects.Stroke(linewidth=2, foreground='black'),
-                 path_effects.Normal()])
+            [path_effects.Stroke(linewidth=2, foreground='black'),
+             path_effects.Normal()])
 
         return txt, arrows
 
@@ -2651,12 +2668,14 @@ class MosaicPlotter(object):
         # position 0 represents the mosaic
         self.image_label.set_visible(self._idx_active != len(self.art))
 
-        for i, pl in enumerate(self.art.values()):
-            pl.set_alpha(alphas[i])
-            if i == self._idx_active:
-                pl.set_zorder(-(i == -1))
-            else:
-                pl.set_zorder(0)
+        for i, artists in enumerate(self.art.values()):
+            for art in artists:
+                art.set_alpha(alphas[i])
+                art.set_zorder(-(i == self._idx_active == -1))
+            # if i == self._idx_active:
+            #     im.set_zorder(-(i == -1))
+            # else:
+            #     im.set_zorder(0)
 
     def _scroll(self, event):
         """
@@ -2667,11 +2686,11 @@ class MosaicPlotter(object):
         # self.image_label = self.ax.text(0, 0, '', color='w', alpha=0,
         #                                 rotation_mode='anchor',
         #                                 va='top')
-
-        if event.inaxes and len(self.art):  #
+        n = len(self.art)
+        if event.inaxes and n:  #
             # set alphas
             self._idx_active += [-1, +1][event.button == 'up']  #
-            self._idx_active %= (len(self.art) + 1)  # wrap
+            self._idx_active %= (n + 1)  # wrap
 
             #
             i = self._idx_active
@@ -2679,7 +2698,7 @@ class MosaicPlotter(object):
                 self.image_label = self.label_image()
 
             txt = self.image_label
-            if i < len(self.art):
+            if i < n:
                 txt.set_text(f'{i}: {self.names[i]}')
                 xy = _get_ulc(self.reg.params[i],
                               (0.98 * self.reg.fovs[i] / self.reg.pixel_scale))
@@ -2693,7 +2712,7 @@ class MosaicPlotter(object):
             #     self.image_label = None
 
             # set tiles
-            # if self._idx_active != len(self.art):
+            # if self._idx_active != n:
             #     # position -1 represents the original image
 
             # redraw
