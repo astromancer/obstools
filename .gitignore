@@ -1,4 +1,6 @@
 .idea/
+.vscode
+
 
 *.kate-swp
 *~
@@ -6,10 +8,16 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/ # at any depth
 *.py[cod]
+
+# ipython notebook
 .ipynb_checkpoints/
 
+# testing
+.pytest_cache
+
+# backups
 *.bak
-test.py
+
 
 dev/
 spectra/
