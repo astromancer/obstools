@@ -22,10 +22,14 @@ a[a < 0] += 2 * np.pi
 # clockwise
 o = a.argsort()
 moves = moves[o]
+step_sizes = np.sqrt(abs(moves).sum(1))
 
 # index array for sequence position from relative neighbour positions
 nix = np.zeros((3, 3), int)
 nix[tuple(moves.T)] = range(8)
+
+# cleanup module namespace
+del n, a, o
 
 
 def trace_boundary(b, stop=int(1e4)):
@@ -45,7 +49,12 @@ def trace_boundary(b, stop=int(1e4)):
 
     Returns
     -------
-
+    pixels: array (n, 2)
+        indices of pixels that make up the object boundary
+    boundary: array (m, 2)
+        The boundary outline of the object composed of pixel edges
+    perimeter: float
+        measurement of the object perimeter distance (circumference)
     """
 
     # find first pixel
@@ -65,6 +74,7 @@ def trace_boundary(b, stop=int(1e4)):
     start = current = np.array(start)
     boundary = [start]
     pixels = [start]
+    perimeter = 0       # circumference
 
     # trace
     counter = itt.count()
@@ -75,23 +85,27 @@ def trace_boundary(b, stop=int(1e4)):
         for i in range(ss, ss + 8):
             i %= 8  # loop neighbours
             mv = moves[i]
-            new = current + mv
+            step_size = step_sizes[i]
+            new = current + mv  # new pixel position
 
-            # check out of bounds index or black pixel
-            invalid = ((-1 in new) or (new == b.shape).any())
-            if invalid or not b[tuple(new)]:
+            # check if new position is outside image, or is a black pixel
+            out_of_bounds = ((-1 in new) or (new == b.shape).any())
+            if out_of_bounds or not b[tuple(new)]:
                 # add edge if not diagonal neighbour
-                if np.abs(mv.sum()) == 1:
+                if step_size == 1:
                     boundary.append(boundary[-1] + EDGES[tuple(mv)])
 
                 # check if we are done. Jacob's stopping criterion
                 done = (current == start).all() and (mv == (0, -1)).all()
                 if done:
+                    # close the perimeter
+                    perimeter += step_size
                     break
             else:
                 # reached a white pixel
                 current = new
                 pixels.append(new)
+                perimeter += step_size
 
                 # new position to start neighbour search
                 ss = nix[tuple(moves[i - 1] - mv)]
@@ -100,4 +114,4 @@ def trace_boundary(b, stop=int(1e4)):
         if count >= stop:
             break
 
-    return np.array(pixels), np.array(boundary)
+    return np.array(pixels), np.array(boundary), perimeter

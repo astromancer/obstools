@@ -11,6 +11,7 @@ from obstools.phot.utils import iter_repeat_last
 from photutils import detect_threshold, detect_sources
 from recipes.pprint.misc import seq_repr_trunc
 from recipes.introspection.utils import get_module_name
+from recipes.logging import LoggingMixin
 
 # module level logger
 logger = logging.getLogger(get_module_name(__file__))
@@ -124,7 +125,7 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
     return seg, seg.com_bg(image)  # , counts
 
 
-class MultiThresholdBlobDetection(object):
+class MultiThresholdBlobDetection(LoggingMixin):
     # algorithm defaults
     snr = (10, 7, 5, 3)
     npixels = (7, 5, 3)
@@ -133,14 +134,18 @@ class MultiThresholdBlobDetection(object):
     edge_cutoff = None
     max_iter = np.inf
 
-    def __call__(self, *args, **kwargs):
-        assert False, 'TODO'
+    def __call__(self, image, mask=None, snr=snr, npixels=npixels,
+                 deblend=deblend, dilate=dilate, edge_cutoff=edge_cutoff,
+                 max_iter=max_iter, group_name_format='sources{count}',
+                 model=None, opt_kws=None, report=None):
+        #
+        'todo ?'
 
 
-def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
-                deblend=(True, False), dilate=(2, 1), edge_cutoff=None,
+def detect_loop(image, mask=None, snr=3, npixels=3,
+                deblend=True, dilate=0, edge_cutoff=None,
                 max_iter=np.inf, group_name_format='sources{count}',
-                bg_model=None, opt_kws=None, report=None):
+                model=None, opt_kws=None, report=None):
     """
     Multi-threshold image blob detection, segmentation and grouping. This
     function runs multiple iterations of the blob detection algorithm on the
@@ -164,11 +169,15 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
     snr: float or sequence of float
     npixels: int or sequence of int
     deblend: bool or sequence of bool
-    dilate: int or sequence of int
+
+    dilate: int or sequence of int or 'auto'
+
     edge_cutoff: int or tuple
     max_iter: int
+        Maximum number of iteration of the algorithm
+
     group_name_format: str
-    bg_model
+    model
     opt_kws: dict
     report: bool
 
@@ -192,7 +201,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
 
     # short circuit
     if max_iter == 0:
-        # seg, groups, info, result, residual
+        # seg, info, model, result, residual
         return np.zeros(image.shape, int), [], [], None, image
 
     if not isinstance(group_name_format, str):
@@ -221,8 +230,8 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
     residual = image
     result = None
 
-    # get segmentation image
-    seg = SegmentedImage(np.zeros(image.shape, int))
+    # get empty segmented image
+    seg = SegmentedImage.empty_like(image)
 
     # label groups
     # keep track of group info + detection meta data
@@ -231,7 +240,7 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
     gof = []
 
     # detection loop
-    counter = itt.count(0)
+    counter = itt.count()
     while True:
         # keep track of iteration number
         count = next(counter)
@@ -250,18 +259,24 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
         # detect on residual image
         new_seg = seg.detect(residual, mask, None, snr_, npix, edge_cutoff,
                              debl, dil, group_name)
+        # im = new_seg.display()
+        # im.ax.set_title(f'new {count}')
 
         if not new_seg.data.any():
             logger.debug('break: no new detections')
             break
 
         # aggregate
-        if count > 0:
-            _, new_labels = seg.add_segments(new_seg)
-
-        else:
+        if count == 0:
             seg = new_seg
             new_labels = new_seg.labels
+
+            # initialize the model if required
+            if type(model) is type:
+                model = model(seg)
+
+        else:
+            _, new_labels = seg.add_segments(new_seg)
 
         # debug log!
         if debug:
@@ -270,56 +285,61 @@ def detect_loop(image, mask=None, snr=(10, 7, 5, 3), npixels=(7, 5, 3),
                          seq_repr_trunc(tuple(new_labels)))
 
         # update mask
-        mask = mask | new_seg.to_bool()
+        mask = mask | new_seg.to_binary()
 
         # group info
         groups.append(new_labels)
         info.append(info_dict)
 
-        if bg_model:
+        if model:
             # fit model, get residuals
             mimage = np.ma.MaskedArray(image, mask)
+
             try:
-                result = bg_model.fit(mimage, **opt_kws)
-                residual = bg_model.residuals(result, image)
+                result = model.fit(mimage, **opt_kws)
+                residual = model.residuals(result, image)
                 if report:
-                    gof.append(bg_model.redchi(result, mimage))
+                    gof.append(model.redchi(result, mimage))
             except UnconvergedOptimization as err:
                 logger.info('Model optimization unsuccessful. Returning.')
                 break
 
+        # if dilate == 'auto':
+
     # seg.groups.update()
 
-    # def report_detection(groups, info, bg_model, gof):
+    # def report_detection(groups, info, model, gof):
     if report:
-        # log what you found
-        from recipes import pprint
+        if len(info):
+            # log what you found
+            from recipes import pprint
 
-        seq_repr = ftl.partial(seq_repr_trunc, max_items=3)
+            seq_repr = ftl.partial(seq_repr_trunc, max_items=3)
 
-        # report detections here
-        col_headers = ['snr', 'npix', 'dil', 'debl', 'n_obj', 'labels']
-        info_list = list(map(list, map(dict.values, info)))
-        tbl = np.column_stack([np.array(info_list, 'O'),
-                               list(map(len, groups)),
-                               list(map(seq_repr, groups))])
-        if bg_model:
-            col_headers.insert(-1, 'χ²ᵣ')
-            tbl = np.insert(tbl, -1, list(map(pprint.numeric, gof)), 1)
+            # report detections here
+            col_headers = ['snr', 'npix', 'dil', 'debl', 'n_obj', 'labels']
+            info_list = list(map(list, map(dict.values, info)))
+            tbl = np.column_stack([np.array(info_list, 'O'),
+                                   list(map(len, groups)),
+                                   list(map(seq_repr, groups))])
+            if model:
+                col_headers.insert(-1, 'χ²ᵣ')
+                tbl = np.insert(tbl, -1, list(map(pprint.numeric, gof)), 1)
 
-        title = 'Object detections'
-        if bg_model:
-            title += f' with {bg_model.__class__.__name__} model'
+            title = 'Object detections'
+            if model:
+                title += f' with {model.__class__.__name__} model'
 
-        tbl_ = \
-            Table(tbl,
-                  title=title,
-                  col_headers=col_headers,
-                  totals=(4,), minimalist=True)
-        logger.info(f'\n{tbl_}')
+            msg = Table(tbl,
+                        title=title,
+                        col_headers=col_headers,
+                        totals=(4,), minimalist=True)
+        else:
+            msg = 'No detections!'
+        logger.info(f'\n{msg}')
         # print(logger.name)
 
-    return seg, groups, info, result, residual
+    return seg, info, model, result, residual
 
 
 class SourceDetectionMixin(object):
@@ -328,18 +348,19 @@ class SourceDetectionMixin(object):
     can be used to construct image models from images.
     """
 
+    def __init__(self, seg):
+        """Base initializer only sets the `seg` attribute"""
+        self.seg = seg
+
     @classmethod
-    def detect(cls, image, detect_sources=True, **kws):
+    def detect(cls, image, *args, **kws):
         """
+        Default blob detection algorithm.  Subclasses can override as needed
 
         Parameters
         ----------
         image
-        detect_sources: bool
-            Controls whether source detection algorithm is run. This argument
-            provides a shortcut to the default source detection by setting
-            `True`, or alternatively to skip source detection by setting
-            `False`
+
         kws:
             Keywords for source detection algorithm
 
@@ -347,22 +368,9 @@ class SourceDetectionMixin(object):
         -------
 
         """
-        # Detect objects & segment image
-        if isinstance(detect_sources, dict):
-            kws.update(detect_sources)
 
-        if not ((detect_sources is True) or kws):
-            # short circuit the detection loop
-            kws['max_iter'] = 0
-
-        return cls._detect(image, **kws)
-
-    @classmethod
-    def _detect(cls, image, *args, **kws):
-        """
-        Default blob detection algorithm.  Subclasses can override as needed
-        """
         return detect_loop(image, *args, **kws)
+        # return cls._detect(image, **kws)
 
     @classmethod
     def from_image(cls, image, detect_sources=True, **detect_opts):
@@ -376,14 +384,26 @@ class SourceDetectionMixin(object):
         Parameters
         ----------
         image
-        detect_sources
+        detect_sources: bool
+            Controls whether source detection algorithm is run. This argument
+            provides a shortcut to the default source detection by setting
+            `True`, or alternatively to skip source detection by setting
+            `False`
 
-        detect_opts
+        detect_opts: dict
 
         Returns
         -------
 
         """
+
+        # Detect objects & segment image
+        if isinstance(detect_sources, dict):
+            detect_opts.update(detect_sources)
+
+        if not ((detect_sources is True) or detect_opts):
+            # short circuit the detection loop
+            detect_opts['max_iter'] = 0
 
         # Basic constructor that initializes the object from an image. The
         # base version here runs a detection algorithm to separate foreground
@@ -392,12 +412,10 @@ class SourceDetectionMixin(object):
         # models to the segments.
 
         # Detect objects & segment image
-        seg, groups, info, result, residual = cls.detect(image, detect_sources,
-                                                         **detect_opts)
-
-        obj = cls(seg)
+        seg, info, model, result, residual = cls.detect(image, **detect_opts)
 
         # add detected sources
-        obj.groups.update(groups)
+        seg.groups.update(seg.groups)
 
-        return obj
+        # init
+        return cls(seg)
