@@ -9,12 +9,12 @@ from pathlib import Path
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
-from matplotlib.cm import get_cmap
 from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # local libs
-from recipes.misc import is_interactive, duplicate_if_scalar
+from graphing.scatter import scatter_density
+from recipes.misc import is_interactive
 from motley.table import Table
 from motley.profiling.timers import timer
 from obstools.aps import ApertureCollection
@@ -26,8 +26,6 @@ from graphing.formatters import LinearRescaleFormatter
 
 
 SECONDS_PER_DAY = 86400
-DEFAULT_CMAP = 'magma'
-KNOWN_TESSELLATIONS = ('hex', 'rect')
 
 logger = logging.getLogger('diagnostics')
 
@@ -70,11 +68,11 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
     from matplotlib.lines import Line2D
     from matplotlib.gridspec import GridSpec
 
-    # def _on_first_draw(event):
-    #     # have to draw rectangle inset lines after first draw else they point
-    #     # to wrong locations on the edges of the lower axes
-    #     add_rectangle_inset()
-    #     fig.canvas.mpl_disconnect(cid)  # disconnect so this only runs once
+    def _on_first_draw(event):
+        # have to draw rectangle inset lines after first draw else they point
+        # to wrong locations on the edges of the lower axes
+        add_rectangle_inset()
+        fig.canvas.mpl_disconnect(cid)  # disconnect so this only runs once
 
     def add_rectangle_inset():
         # add rectangle to indicate size of lower axes on upper
@@ -123,7 +121,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
 
     # setup axes
     figsize = (n_cols * ax_size_inches, 2 * n_rows * ax_size_inches)
-    top = 0.9
+    top = 0.85
     bottom = 0.05
     gap = 0.075 if ticks else 0.05
     dy = (top - bottom - (n_rows - 1) * gap) / n_rows
@@ -167,7 +165,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
     yx = (coords - shifts[:, None])[..., ::-1]
 
     # plot shifted cluster centroids
-    d = 0.05 * pixel_size
+    d = 0.5 * pixel_size
     for i, ax_row in enumerate(axes):
         j0 = (i // 2) * n_cols
         yx_row = yx[:, j0:j0 + n_cols]
@@ -236,13 +234,13 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
     fig.legend(handles, labels, loc='upper left', ncol=3)
 
     # add callback for drawing rectangle inset and rotating tick labels
-    # cid = fig.canvas.mpl_connect('draw_event', _on_first_draw)
-    add_rectangle_inset()
+    cid = fig.canvas.mpl_connect('draw_event', _on_first_draw)
+    # add_rectangle_inset()
     # fig.tight_layout()
     return fig, axes
 
 
-def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=True,
+def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
                          show_centres=True, centre_func=np.mean,
                          centre_marker='*', centre_label='', bins=100,
                          min_count=3, tessellation='hex', scatter_kws=None,
@@ -295,8 +293,8 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=True,
         yx = features[:, i]
 
         # plot point cloud visualization
-        scatter_density_plot(ax, yx, bins, min_count,
-                             tessellation, scatter_kws, density_kws)
+        scatter_density(ax, yx, bins, None, min_count,
+                        tessellation, scatter_kws, density_kws)
 
         if show_centres:
             ax.plot(*centres[i], centre_marker, label=centre_label)
@@ -306,192 +304,13 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=True,
             ax.set(xlim=xlim, ylim=ylim)
 
         ax.grid(True)
-        ax.set_aspect('equal')
+        # ax.set_aspect('equal')
 
     # ax.figure.tight_layout() # triggers warning
     return ax.figure, axes
 
 
-def scatter_density_plot(ax, data, bins=100, min_count=3, tessellation='hex',
-                         scatter_kws=None, density_kws=None):
-    """
-    Point cloud visualization with density map and scatter plot. Regions
-    with high point density are plotted as a 2d histogram image using either
-    rectangular or hexagonal binning.
-
-    Parameters
-    ----------
-    ax
-    data
-    bins: int
-    min_count: int
-        point density threshold. Bins with more points than this number will
-        be plotted as density map. Points not in dense regions will be
-        plotted as actual markers. For pure scatter plot set this value `None`
-        or `numpy.inf`.  For pure density map, set `min_count` to 0.
-    tessellation
-
-    Returns
-    -------
-
-    """
-
-    data = _sanitize_data(data, 2)
-
-    # default arg
-    # cmap = get_cmap(density_kws.get('cmap', DEFAULT_CMAP))
-    scatter_kws = scatter_kws or {}
-    density_kws = density_kws or {}
-
-    if tessellation not in KNOWN_TESSELLATIONS:
-        raise ValueError('Invalid tessellation %r: Valid choices are %s',
-                         tessellation, KNOWN_TESSELLATIONS)
-
-    # choose range todo: extent=
-    # xyrange = np.array(
-    #         [(np.floor(x_data.min()), np.ceil(x_data.max())),
-    #          (np.floor(y_data.min()), np.ceil(y_data.max()))])
-
-    # np.nanpercentile(, (0.01, 99.99), 0)
-
-    if tessellation == 'rect':
-        returns = hist2d_scatter(ax, data, bins, min_count,
-                                 scatter_kws, density_kws)
-
-    if tessellation == 'hex':
-        returns = hexbin_scatter(ax, data, bins, min_count,
-                                 scatter_kws, density_kws)
-
-    # div = make_axes_locatable(ax)
-    # cax = div.append_axes('right', '5%')
-    # cbar = ax.figure.colorbar(im, cax)
-    # cbar.ax.set_ylabel('Density')
-
-    # ax.set_title('Coord scatter')
-    # ax.set_xlabel('x')
-    # ax.set_ylabel('y')
-    ax.grid()
-
-    return returns
-
-
-def hist2d_scatter(ax, data, bins, min_count, scatter_kws=None,
-                   density_kws=None):
-    """
-
-    Parameters
-    ----------
-    ax
-    data
-    bins
-    min_count
-    scatter_kws
-    density_kws
-
-    Returns
-    -------
-
-    """
-    do_density_plot = (min_count is not None) and np.isfinite(min_count)
-    if do_density_plot:
-        density_kws = density_kws or {}
-        bins = duplicate_if_scalar(bins)
-
-        x_data, y_data = data.T
-        # plot density map
-        hvals, x_edges, y_edges, qmesh = ax.hist2d(x_data, y_data,
-                                                   bins=bins,
-                                                   **density_kws)
-        # remove low density points
-        fc = qmesh.get_facecolor()
-        fc[np.ravel(hvals < min_count)] = 0
-        qmesh.set_facecolor(fc)
-
-        ix_x = np.digitize(x_data, x_edges)
-        ix_y = np.digitize(y_data, y_edges)
-
-        # select points within the range
-        ind = (ix_x > 0) & (ix_x <= bins[0]) & (ix_y > 0) & (ix_y <= bins[1])
-        # values of the histogram where there are enough points
-        hhsub = hvals[ix_x[ind] - 1, ix_y[ind] - 1]
-        x_scatter = x_data[ind][hhsub < min_count]  # low density points
-        y_scatter = y_data[ind][hhsub < min_count]
-    else:
-        hvals = []
-        qmesh = None
-        x_scatter, y_scatter = data
-
-    # plot scatter points
-    scatter_kws = scatter_kws or {}
-    scatter_kws.setdefault('color', qmesh.get_cmap()(0))
-    scatter_kws.setdefault('marker', 'o')
-    scatter_kws.setdefault('ls', '')
-
-    points = ax.plot(x_scatter, y_scatter, **scatter_kws)
-
-    return hvals, qmesh, points
-
-
-def hexbin_scatter(ax, data, bins, min_count, scatter_kws=None,
-                   density_kws=None):
-    """
-
-    Parameters
-    ----------
-    ax
-    data
-    bins
-    min_count
-    scatter_kws
-    density_kws
-
-    Returns
-    -------
-
-    """
-    scatter_kws = scatter_kws or {}
-    do_density_plot = (min_count is not None) and np.isfinite(min_count)
-    if do_density_plot:
-        density_kws = density_kws or {}
-        sparse_point_indices = []
-
-        def collect_indices(idx):
-            counts = len(idx)
-            if counts < min_count:
-                sparse_point_indices.extend(idx)
-            return counts
-
-        def on_first_draw(_):  # FIXME: can you do this with mincnt=3
-            fc = polygons.get_facecolor()
-            fc[hvals < min_count] = 0
-            polygons.set_facecolor(fc)
-
-            # disconnect callback so this func only runs once
-            fig.canvas.mpl_disconnect(cid)
-
-        fig = ax.figure
-        cid = fig.canvas.mpl_connect('draw_event', on_first_draw)
-
-        # plot density map
-        indices = np.arange(len(data))
-        polygons = ax.hexbin(*data.T, indices,
-                             gridsize=bins,
-                             reduce_C_function=collect_indices,
-                             **density_kws)
-        hvals = polygons.get_array()
-        # set default colour of markers to match colormap
-        scatter_kws.setdefault('color', polygons.get_cmap()(0))
-    else:
-        sparse_point_indices = ...
-        hvals = []
-        polygons = None
-
-    # plot scatter points
-    scatter_kws.setdefault('marker', 'o')
-    scatter_kws.setdefault('ls', '')
-    points = ax.plot(*data[sparse_point_indices].T, **scatter_kws)
-
-    return hvals, polygons, points
+# TODO: move to graphing.scatter ??
 
 
 def new_diagnostics(coords, rcoo, Appars, optstat):
@@ -800,7 +619,7 @@ def plot_coord_moves(coords, rcoo):
                                    subplot_kw=dict(aspect='equal'))
 
     #
-    scatter_density_plot(ax1, coords, rcoo)
+    scatter_density(ax1, coords, rcoo)
     #
     plot_coord_walk(ax2, coords)
 
