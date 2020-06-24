@@ -1,4 +1,5 @@
 # std libs
+import functools as ftl
 import itertools as itt
 from pathlib import Path
 
@@ -6,23 +7,29 @@ from pathlib import Path
 import numpy as np
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
+from astropy.utils import lazyproperty
 
 # local libs
 from recipes.logging import LoggingMixin
 from recipes.containers import (SelfAwareContainer, AttrGrouper,
                                 AttrMapper, AttrTable, Grouped,
-                                ReprContainer, ReprContainerMixin, TypeEnforcer,
+                                ReprContainer, ReprContainerMixin, OfType,
                                 ObjectArray1D
                                 )
 from obstools.image.sample import BootstrapResample
+from obstools.image.calibration import ImageCalibration, keep
 
-from sklearn.cluster import MeanShift
-from obstools.image.registration import register_constellation
+
+# from sklearn.cluster import MeanShift
+# from obstools.image.registration import register_constellation
 
 
 # TODO: multiprocess generic methods
 # TODO: Create an abstraction layer that can split and merge multiple time
 #  series data sets
+
+# TODO: # each item in this container should have  MultivariateTimeSeries
+#  containing changes of observed brightness (etc ...) over time
 
 
 class FilenameHelper(AttrMapper):
@@ -38,7 +45,7 @@ class FilenameHelper(AttrMapper):
         return [Path(hdu._file.name) for hdu in self.parent]
 
 
-# class ImageRegistrationMixin(object):
+# class ImageRegisterMixin(object):
 #     'todo maybe'
 
 
@@ -62,18 +69,77 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
             return self.filepath.stem
         return 'None'
 
-    # def get_instrumental_setup(self):
-    #     raise NotImplementedError
+    @property
+    def ishape(self):
+        """Image frame shape"""
+        return self.shape[-2:]
+
+    @property
+    def ndim(self):
+        return len(self.shape)
+
+    @lazyproperty
+    def fov(self):
+        # field of view
+        return self.get_fov()
+
+    def get_fov(self):
+        raise NotImplementedError
+
+    def pixel_scale(self):
+        return self.fov / self.ishape
+
+    @lazyproperty
+    def pa(self):
+        return self.get_rotation()
+
+    def get_rotation(self):
+        """
+        Get the instrument rotation (position angle) wrt the sky in radians
+        """
+        raise NotImplementedError
+
+    @lazyproperty
+    def oriented(self):
+        # manage on-the-fly image orientation
+        from obstools.image.orient import ImageOrienter
+        return ImageOrienter(self)
+
+    @lazyproperty  # ImageCalibrationMixin ?
+    def calibrated(self):
+        # manage on-the-fly calibration for large files
+        return ImageCalibration(self)
+
+    def set_calibrators(self, bias=keep, flat=keep):
+        """
+        Set calibration images for this observation. Default it to keep
+        previously set image if none are provided here.  To remove a
+        previously set calibration image pass a value of `None` to this
+        function, or simply delete the attribute `self.calibrated.bias` or
+        `self.calibrated.flat`
+
+        Parameters
+        ----------
+        bias
+        flat
+
+        Returns
+        -------
+
+        """
+        self.calibrated.bias = bias
+        self.calibrated.flat = flat
 
     # plotting
     def display(self, **kws):
         """Display the data"""
-        n_dim = len(self.shape)
-        if n_dim == 2:
+
+        if self.ndim == 2:
             from graphing.imagine import ImageDisplay
             im = ImageDisplay(self.data, **kws)
+            # `section` fails with 2d data
 
-        elif n_dim == 3:
+        elif self.ndim == 3:
             from graphing.imagine import VideoDisplay
             im = VideoDisplay(self.section, **kws)
 
@@ -85,16 +151,42 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
 
 
 class ImageSamplerHDU(_HDUExtra):
-    _sampler = None
+    # _sampler = None
 
-    @property  # todo: lazyproperty
+    @lazyproperty  # lazyproperty ??
     def sampler(self):
-        # reading subset of data for performance
-        self._sampler = BootstrapResample(self.section)
-        return self._sampler
+        """
+        Use this property to get sample images from the stack
 
+        >>> stack.sampler.median(10, 100)
+
+        """
+        #  allow higher dimensional data (multi channel etc), but not lower
+        #  than 2d
+        if self.ndim < 2:
+            raise ValueError('Cannot create image sampler for data with '
+                             f'{self.ndim} dimensiofcons.')
+
+        # ensure NE orientation
+        data = self.oriented
+
+        # make sure we pass 3d data to sampler. This is a hack so we can use
+        # the sampler to get thumbnails from data that is a 2d image,
+        # eg. master flats.  The 'sample' will just be the image itself.
+
+        if self.ndim == 2:
+            # insert axis in front
+            data = self.data[None]
+
+        return BootstrapResample(data)
+
+    @ftl.lru_cache()
     def get_sample_image(self, stat='median', depth=5):
-        # get sample image
+        # get sample image to a certain simulated exposure depth by averaging
+        # data
+
+        # FIXME: get this to work for SALTICAM
+
         n = int(np.ceil(depth // self.timing.t_exp))
 
         self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
@@ -106,40 +198,43 @@ class ImageSamplerHDU(_HDUExtra):
 
 
 class HDUExtra(ImageSamplerHDU):
-    pass
-
-
-# import os
-# from recipes import pprint
-
-# TODO: # each item in this container is a MultivariateTimeSeries containing
-#  changes of observed brightness (etc ...) over time
+    """"""
 
 
 class PPrintHelper(AttrTable):
     pass
 
 
-class PhotCampaign(ObjectArray1D, TypeEnforcer, SelfAwareContainer, AttrGrouper,
+class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
+                   SelfAwareContainer, AttrGrouper,
                    ReprContainerMixin, LoggingMixin):
     """
-    A class containing multiple CCD observations.  Useful for photometric
-    campaigns.
+    A class containing multiple CCD observations potentially from different
+    instruments and telescopes. Provides an interface for basic operations on
+    sets of image stacks such as obtained during photometric observing
+    campaigns. Each item in this container is a `astropy.io.fits.hdu.HDU` object
+    encapsulating the FITS data.
 
-    Each item in this container is a `HDU` object containing contained FITS data
-
-    Built in capabilities allow basic group, split and merge operations,
-    pretty printing in table format.
-
-
-    Class for collecting / sorting / grouping / heterogeneous set of CCD
-    observations
+    Built in capabilities include: 
+        * sort, select, filter, group, split and merge operations based on attributes of
+          the contained HDUs or arbitrary functions via :meth:`sort_by`,
+          :meth:`select_by`, :meth:`filter_by`, :meth:`group_by` and :meth:`join` methods
+        * Removing of duplicates :meth:`filter_duplicates` 
+        * Vectorized attribute lookup and method calling on the contained
+          objects courtesy of :class:`AttrMapper` via :meth:`attrs` and 
+          :meth:`calls`
+        * Pretty printing in table format via :meth:`pprint` method
+        * Image registration. ie. Aligning sample images from
+          the stacks with respect to each other via :meth:`coalign`
+        * Basic Astrometry. Aligning sample images from the stacks with 
+          respect to some survey image (eg DSS, SkyMapper) and infering WCS via
+          the :meth:`coalign_sky` method
 
     """
 
     # Initialize pprint helper
     pprinter = PPrintHelper(
-            ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
+        ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
 
     @classmethod
     # @profile(report='bars')
@@ -209,7 +304,7 @@ class PhotCampaign(ObjectArray1D, TypeEnforcer, SelfAwareContainer, AttrGrouper,
             hdus = []
 
         # make sure objects derive from _BaseHDU
-        TypeEnforcer.__init__(self, _BaseHDU)
+        # TypeEnforcer.__init__(self, _BaseHDU)
 
         # init container
         ObjectArray1D.__init__(self, hdus)
@@ -225,27 +320,56 @@ class PhotCampaign(ObjectArray1D, TypeEnforcer, SelfAwareContainer, AttrGrouper,
         assert other.__class__.__name__ == self.__class__.__name__
         return self.__class__(np.hstack((self.data, other.data)))
 
-    def coalign(self, depth=10, sample_stat='median', reference_index=None,
-                plot=False, **find_kws):
+    def _coalign(self, depth=10, sample_stat='median', reference_index=None,
+                 plot=False, **find_kws):
+
+        # check
+        assert not self.varies_by('telescope', 'instrument')
+
+        from obstools.image.registration import ImageRegister
+
+        # get sample images etc
+        images = self.calls('get_sample_image', sample_stat, depth)
+        fovs, angles = zip(*self.attrs('fov', 'pa'))
+        #
+        matcher = ImageRegister.from_images(images, fovs, **find_kws)
+
+        if plot:
+            matcher.mosaic(coords=matcher.xyt)
+
+        # return matcher, idx
+
+        # make sure we have the best possible alignment amongst sample images.
+        # register constellation of stars
+        matcher.register_constellation(plot=plot)
+        # for i in range(3):
+        matcher.refine(plot=plot)
+        matcher.recentre(plot=plot)
+        return matcher
+
+    def coalign(self, depth=10, sample_stat='median', plot=False, **find_kws):
         """
-        Perform image alignment of all images in this PhotCampaign by
+        Perform image alignment of all stacks in this PhotCampaign by
         the method of point set registration.  This is essentially a search
         heuristic that finds the positional and rotational offset between
         partially or fully overlapping images.  The implementation of the
-        image registration algorithm is handled inside the `ImageRegistration`
-        class.
+        image registration algorithm is handled inside the
+        :class:`ImageRegister` class.
 
         See: https://en.wikipedia.org/wiki/Image_registration for the basics
 
         Parameters
         ----------
+        depth: float
+            Exposure depth (in seconds) for the sample image
+        sample_stat: str
+            statistic to use when retrieving sample images
         reference_index: int
             index of observation to use as reference for aligning others.
             If `None`, the highest resolution image amongst the
             observations will be used.
-        depth:
-            Exposure depth (in seconds) for the sample image
-        sample_stat
+        plot: bool
+            Whether to plot diagnostic figures
 
         find_kws
 
@@ -253,58 +377,58 @@ class PhotCampaign(ObjectArray1D, TypeEnforcer, SelfAwareContainer, AttrGrouper,
         -------
 
         """
+        # group observations by telescope / instrument
+        groups, indices = self.group_by('telescope', 'instrument',
+                                        return_index=True)
 
-        from obstools.image.registration import ImageRegistration, \
-            roto_translate_yx
+        # start with the group having the most observations.  This will help
+        # later when we need to align the different groups with each other
+        keys, indices = zip(*indices.items())
+        seq = np.argsort(list(map(len, indices)))[::-1]
 
-        n_par = 3  # x, y, θ
-        n = len(self)
-        fovs = np.empty((n, 2))
-        scales = np.empty((n, 2))
-        angles = np.empty(n)
-        images = []
+        # create data containers
+        ng = len(groups)
+        registers = np.empty(ng, 'O')
 
-        # get sample images etc
-        for i, hdu in enumerate(self):
-            image = hdu.get_sample_image(sample_stat, depth)
-            images.append(image)
-            fovs[i] = fov = hdu.get_fov()
-            angles[i] = hdu.get_rotation()
-            scales[i] = fov / image.shape
+        # For each telescope, align images wrt each other
+        for i in seq:
+            run = groups[keys[i]]
+            registers[i] = run._coalign(depth, sample_stat, plot=plot,
+                                        **find_kws)
 
-        # align on highest res image if not specified
-        idx = reference_index
-        if reference_index is None:
-            idx = scales.argmin(0)[0]
-        others = set(range(n)) - {idx}
+        # return registers, seq
 
-        self.logger.info('Aligning %i images on image %i: %r', len(self), idx,
-                         self[idx].filename)
-        matcher = ImageRegistration(images[idx], fovs[idx], **find_kws)
-        for i in others:
-            # match image
-            p, yx = matcher(images[i], fovs[i],
-                            angles[i] - angles[idx],  # relative angles!
-                            plot=plot)
-        if plot:
-            matcher.mosaic(coords=matcher.yxt)
+        # match coordinates of registers against each other
+        imr = registers[seq[0]]
+        for i in seq[1:]:
+            reg = registers[i]
 
-        # return matcher, idx
+            imr.match_reg(reg)
+            imr.register_constellation()
+        
+        count = 0
+        lhr = 10
+        while (lhr > 1.01) and (count < 5):
+            _, lhr = imr.refine()
+            imr.recentre()
+            count += 1
+        
+        #
+        # imr.recentre(plot=plot)
+        # lhr = 2
+        # while lhr > 1.0005:
+        # _, lhr = imr.refine(plot=plot)
 
-        # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars
-        matcher.register_constellation(plot=True)
-        # make the cluster centres the target constellation
-        matcher.recentre(plot=True)
+        return imr
 
-        return matcher, idx
-
+    # TODO: coalign_survey
     def coalign_dss(self, depth=10, sample_stat='median', reference_index=0,
                     fov_dss=None, plot=False, **find_kws):
         """
-        Perform image alignment of all images in this ObservationList with
+        Perform image alignment of all images in this campaign with
         Digital Sky Survey image centred on the same field.  In astro-speak,
-        this is a first order wcs / astrometry estimation.
+        this is a first order wcs / astrometry estimation fitting only for 3
+        parfameters per frame: xy-offsets and rotation.
 
         Parameters
         ----------
@@ -317,76 +441,67 @@ class PhotCampaign(ObjectArray1D, TypeEnforcer, SelfAwareContainer, AttrGrouper,
 
         Returns
         -------
+        `ImageRegisterDSS` object
 
-        dss
-        params
-        yx:
-            coordinates of sources in each image
-        indices:
-        aligned_on:
-              index of base image on which others are aligned
         """
-        from obstools.image.registration import ImageRegistrationDSS, \
-            roto_translate_yx
+        from obstools.image.registration import ImageRegisterDSS
 
-        # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope', 'instrument',
-                                        return_index=True)
-
-        # create data containers
-        n = len(self)
-        images = np.empty(n, 'O')
-        params = np.empty((n, 3))
-        fovs = np.empty((n, 2))
-        coords = np.empty(n, 'O')
-        ng = len(groups)
-        aligned_on = np.empty(ng, int)
-        matchers = np.empty(ng, 'O')
-
-        # For each image group, align images wrt each other
-        # ensure that `params`, `fovs` etc maintains the same order as `self`
-        for i, (gid, run) in enumerate(groups.items()):
-            idx = indices[gid]
-            matchers[i], images[idx], fovs[idx], params[idx], coords[idx], ali \
-                = run.coalign(depth, sample_stat, plot=plot, **find_kws)
-
-            aligned_on[i] = idx[ali]
+        reg = self.coalign(depth, sample_stat, plot, **find_kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
         if fov_dss is None:
-            fov_dss = np.ceil(fovs.max(0)) * 1.2
+            fov_dss = np.ceil(np.max(reg.fovs, 0)) * 1.1
 
-        #
-        dss = ImageRegistrationDSS(self[reference_index].coords, fov_dss,
+        dss = ImageRegisterDSS(self[reference_index].coords, fov_dss,
                                    **find_kws)
 
-        for i, gid in enumerate(groups.keys()):
-            mo = matchers[i]
-            theta = self[aligned_on[i]].get_rotation()
-            p = dss.match_points(mo.yx, mo.fov, theta)
-            params[indices[gid]] += p
+        dss.match_reg(reg)
+        dss.register_constellation()
+        # dss.recentre(plot=plot)
+        # _, better = imr.refine(plot=plot)
+        return dss
 
-        # # transform coords
-        # for i, (yx, p) in enumerate(zip(coords, params)):
-        #     coords[i] = roto_translate_yx(yx, p)
+        # group observations by telescope / instrument
+        # groups, indices = self.group_by('telescope', 'instrument',
+        #                                 return_index=True)
 
-        # return dss, matchers, images, params, coords, indices, aligned_on
+        # start with the group having the most observations
 
-        # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars
-        pixel_size = matchers[0].pixel_size[0]
-        clustering = MeanShift(bandwidth=4 * pixel_size, cluster_all=False)
-        centres, σ_xy, xy_offsets, outliers, xy = register_constellation(
-                clustering, coords, pixel_size, plot=False,
-                pixel_size=pixel_size)
+        # create data containers
+        # n = len(self)
+        # images = np.empty(n, 'O')
+        # params = np.empty((n, 3))
+        # fovs = np.empty((n, 2))
+        # coords = np.empty(n, 'O')
+        # ng = len(groups)
+        # aligned_on = np.empty(ng, int)
+        # matchers = np.empty(ng, 'O')
 
-        # some of the offsets may be masked. ignore those
-        good = ~xy_offsets.mask.any(1)
-        params[good, 1::-1] -= xy_offsets[good]
-        # xy -= xy_offsets[:, None]
+        # # For each image group, align images wrt each other
+        # # ensure that `params`, `fovs` etc maintains the same order as `self`
+        # for i, (gid, run) in enumerate(groups.items()):
+        #     idx = indices[gid]
+        #     m = matchers[i] = run.coalign(depth, sample_stat, plot=plot,
+        #                                **find_kws)
 
-        # xy[:, ::-1].swapaxes(1, 2)
-        return dss, images, params, xy[:, ::-1], indices, aligned_on
+        #     aligned_on[i] = idx[m.idx]
+
+        # try:
+
+        #     #
+        #     dss = ImageRegisterDSS(self[reference_index].coords, fov_dss,
+        #                             **find_kws)
+
+        #     for i, gid in enumerate(groups.keys()):
+        #         mo = matchers[i]
+        #         theta = self[aligned_on[i]].get_rotation()
+        #         p = dss.match_points(mo.yx, mo.fov, theta)
+        #         params[indices[gid]] += p
+        # except:
+        #     from IPython import embed
+        #     embed()
+
+        return dss
 
 
 # class ObservationList(SelfAwareContainer, AttrGrouper, ReprContainerMixin,
