@@ -67,7 +67,7 @@ def gaussian2D(p, grid):
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]  # yx order
     yxm2 = yxm * yxm
     return z0 * np.exp(-(a * yxm2[1] - 2 * b * yxm[0] * yxm[1] + c * yxm2[0])) + d
-
+    # TODO check if einsum faster!!!
 
 # alias
 ellipticalGaussian = gaussian2D

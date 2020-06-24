@@ -25,6 +25,8 @@ class BootstrapResample(LoggingMixin):
         axis
         """
 
+
+
         #
         self.data = data
         self.axis = axis

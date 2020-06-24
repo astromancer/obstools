@@ -25,7 +25,8 @@ class MyHandler(object):
         logger = logging.getLogger(record.name)
         # The process name is transformed just to show that it's the listener
         # doing the logging to files and console
-        # record.processName = '%s (for %s)' % (mp.current_process().name, record.processName)
+        # record.processName = '%s (for %s)' % (mp.current_process().name,
+        #                                       record.processName)
         logger.handle(record)
 
 
