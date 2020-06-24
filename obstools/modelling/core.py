@@ -18,14 +18,16 @@ from recipes.logging import LoggingMixin
 from .utils import load_memmap, int2tup
 from .parameters import Parameters
 
+LN2PI_2 = np.log(2 * np.pi) / 2
 
-def echo(*_):
+
+def _echo(*_):
     return _
 
 
 def _sample_stat(data, statistic, sample_size, replace=True):
     return statistic(
-            np.random.choice(np.ma.compressed(data), sample_size, replace)
+        np.random.choice(np.ma.compressed(data), sample_size, replace)
     )
 
 
@@ -37,7 +39,7 @@ def nd_sampler(data, statistic, sample_size, axis=None, replace=True):
     elif isinstance(axis, numbers.Integral):
         size_each = sample_size // data.shape[axis]
         return np.apply_along_axis(
-                _sample_stat, axis, data, statistic, size_each, replace)
+            _sample_stat, axis, data, statistic, size_each, replace)
     else:
         raise ValueError('Invalid axis')
 
@@ -124,6 +126,66 @@ class OptionallyNamed(object):
         self._name = name
 
 
+class Likelihood(object):
+    pass
+
+
+class IID(Likelihood):
+    pass
+
+
+class GaussianLikelihood(Likelihood):
+
+    # def __init__(self, model):
+    #     self.k = model.n_dims
+
+    def __call__(self, p, data, grid=None, sigma=None):
+        # assume uncorrelated gaussian uncertainties on data
+
+        # TODO: allow sigma to be shaped
+        #   (1)         same uncertainty for all data points and all dimensions
+        #                  ---> IID
+        #   (n),        n data points, uncertainty same along each dimension
+        #   (n, k),     for n data points in k dimensions
+        #   (n, k, k)   for n data points full covariance matrix for each data
+        #               point
+        #
+
+        if sigma is None:
+            sigma_term = 0
+        else:
+            sigma_term = np.log(sigma).sum()
+
+        return (- data.size * LN2PI_2
+                # # TODO: einsum here for mahalanobis distance term
+                - 0.5 * self.wrss(p, data, grid, stddev)
+                - sigma_term)
+
+
+class PoissonLikelihood(Likelihood):
+    pass
+
+
+class Lp(object):
+    'todo'
+
+
+class L1:
+    pass
+
+
+class L2:
+    pass
+
+
+# rv('μ') ~ Gaussian()
+# MyModel(Model, GaussianLikelihood):
+
+
+def echo(*args, **kws):
+    return args
+
+
 class Model(OptionallyNamed, LoggingMixin):
     """Base class for fittable model"""
 
@@ -132,10 +194,11 @@ class Model(OptionallyNamed, LoggingMixin):
 
     # TODO: think of a way to easily fit for variance parameter(s)
 
-    dof = None  # sub-class should set  # todo determine intrinsically from p?
+    dof = None  # sub-class should set
+    # TODO determine intrinsically from p?
     base_dtype = float  # FIXME - remove this here
-    objective = None
-
+    sum_axis = None
+    # metric = L2               # TODO metric
     # minimizer = minimize
 
     # exception behaviour
@@ -143,9 +206,11 @@ class Model(OptionallyNamed, LoggingMixin):
     # warnings for nans / inf
     do_checks = True
     # masked array handling
-    compress_ma = None  # only if method == 'leastsq'
+    compress_ma = True  # only if method == 'leastsq'
 
-    def __call__(self, p, grid, *args, **kws):
+    # FIXME: Models with no parameters don't really fit this framework...
+
+    def __call__(self, p, *args, **kws):
         """
         Evaluate the model at the parameter (vector) `p`
 
@@ -160,13 +225,12 @@ class Model(OptionallyNamed, LoggingMixin):
         -------
 
         """
-        p, grid = self._checks(p, grid, *args, **kws)
-        return self.eval(p, grid)
+        return self.eval(*self._checks(p, *args, **kws), **kws)
 
-    def eval(self, p, grid, *args, **kws):
+    def eval(self, p, *args, **kws):
         """
-        This is the main compute method, while __call__ handles variable
-        checks etc. Subclasses can overwrite both as needed, but must
+        This is the main compute method, while __call__ handles additional
+        variable checks etc. Subclasses can overwrite both as needed, but must
         overwrite `eval`.  Important that `eval` has same signature as
         `__call__` since they will be dynamically swapped during `fit` for
         improving optimization performance.
@@ -182,8 +246,8 @@ class Model(OptionallyNamed, LoggingMixin):
         """
         raise NotImplementedError
 
-    def _checks(self, p, grid, *args, **kws):
-        return self._check_params(p), grid
+    def _checks(self, p, *args, **kws):
+        return self._check_params(p), args
 
     def _check_params(self, p):
         if len(p) != self.dof:
@@ -192,7 +256,10 @@ class Model(OptionallyNamed, LoggingMixin):
                              (len(p), self.dof, self))
         return p
 
-    def p0guess(self, data, grid=None, stddev=None):
+    # def _check_grid(self, grid):
+    #     return grid
+
+    def p0guess(self, data, *args, **kws):
         raise NotImplementedError
 
     def get_dtype(self):
@@ -204,125 +271,82 @@ class Model(OptionallyNamed, LoggingMixin):
 
         return [(self.get_name(), self.base_dtype, self.dof)]
 
-    def residuals(self, p, data, grid=None):
+    def residuals(self, p, data, *args):
         """
         Difference between data (observations) and model. a.k.a. deviation
         """
-        return data - self.__call__(p, grid)
-        # note explicit lookup for `__call__` since dynamically setting this
-        #  during `fit` will not work for `self(p, grid)`:
-        # see: https://docs.python.org/3/reference/datamodel.html#special-lookup
+        return data - self(p, *args)
 
-    def rs(self, p, data, grid=None):
+    def rs(self, p, data, *args):
         """squared residuals"""
-        return np.square(self.residuals(p, data, grid))
+        return np.square(self.residuals(p, data, *args))
 
-    def frs(self, p, data, grid=None):
+    def frs(self, p, data, *args):
         """squared residuals flattened to a vector"""
-        return self.rs(p, data, grid).flatten()
+        return self.rs(p, data, *args).flatten()
 
-    def rss(self, p, data, grid=None):
+    def rss(self, p, data, *args):
         """residual sum of squares"""
-        return self.rs(p, data, grid).sum()
+        return self.rs(p, data, *args).sum(self.sum_axis)
 
-    def wrs(self, p, data, grid=None, stddev=None):
-        """weighted squared residuals"""
-        # aka  sum of squares due to error
+    def wrs(self, p, data, *args, stddev=None):
+        """
+        weighted square residuals. aka sum of squares due to error (sic)
+        """
         if stddev is None:
-            return self.rs(p, data, grid)
-        return self.rs(p, data, grid) / stddev
+            return self.rs(p, data, *args)
+        return self.rs(p, data, *args) / stddev / stddev
 
-    def fwrs(self, p, data, grid=None, stddev=None):
+    def fwrs(self, p, data, *args, stddev=None):
         """weighted squared residuals vector"""
-        return self.wrs(p, data, grid, stddev).ravel()
+        return self.wrs(p, data, *args,  stddev).ravel()
 
-    def wrss(self, p, data, grid=None, stddev=None):
+    def wrss(self, p, data, *args, stddev=None):
         """weighted residual sum of squares. ie. The chi squared statistic χ²"""
-        return self.wrs(p, data, grid, stddev).sum()
+        return self.wrs(p, data, *args, stddev).sum(self.sum_axis)
 
     # FIXME: alias not inherited if overwritten in subclass
-    chisq = wrss  # chi2
+    chisq = wrss  # chi2 # chiSquare # χ2
 
-    def redchi(self, p, data, grid=None, stddev=None):  # chi2r
+    def redchi(self, p, data, *args, stddev=None):  # chi2r
         """Reduced chi squared statistic χ²ᵣ"""
         #  aka. mean square weighted deviation (MSWD)
-        chi2 = self.chisq(p, data, grid, stddev)
-        dof = data.size - self.dof
-        return chi2 / dof
+        return self.chisq(p, data, *args, stddev) / (data.size - self.dof)
 
-    def rsq(self, p, data, grid=None):
-        """
-        The coefficient of determination, denoted R2 or r2 and pronounced
-        "R squared", is the proportion of the variance in the dependent
-        variable that is predictable from the independent variable(s). It
-        provides a measure of how well observed outcomes are replicated by
-        the  model, based on the proportion of total variation of outcomes
-        explained by the model.
-        """
-        # total sum of squares
-        mu = data.mean()
-        tss = np.square(data - mu).sum()  # fixme shouldn't recompute during fit
-        rss = self.rss(p, data, grid)
-        return 1 - rss / tss
+    mswd = reduced_chi_squared = redchi  # χ2r
 
+    def logLikelihood(self, p, data, *args, stddev=None):
+        # assuming uncorrelated gaussian noise on data here
+        # https://en.wikipedia.org/wiki/Maximum_likelihood_estimation#Continuous_distribution,_continuous_parameter_space
+
+        # NOTE: optimizing with this objective is theoretically equivalent to
+        #  least-squares
+
+        # FIXME: more general metric here?
+        nl = (data.size * LN2PI_2 +
+              0.5 * self.wrss(p, data, *args, stddev=stddev))
+
+        if stddev is not None:
+            nl += np.log(stddev).sum()
+
+        return -nl
+
+    # def score(self, data, *args, **kws):
+    # The score is the gradient (the vector of partial derivatives) of log⁡ L(θ) 
+    
     # FIXME: alias not inherited if overwritten in subclass
-    coefficient_of_determination = rsq
-
-    def aic(self, p, data, grid, stddev):
-        """
-        Akaike information criterion. Assumes `p` is the parameter vector
-        corresponding to the maximum likelihood.
-        """
-        k = len(p) + 2
-        return 2 * (k - self.logLikelihood(p, data, grid, stddev))
-
-    def aicc(self, p, data, grid, stddev):
-        # "When the sample size is small, there is a substantial probability
-        # that AIC will select models that have too many parameters...
-        # AICc is essentially AIC with an extra penalty term for the number of
-        #  parameters"
-        #
-        # Assuming that the model is univariate, is linear in its parameters,
-        # and has normally-distributed residuals (conditional upon regressors),
-        # then the formula for AICc is as follows.
-        k = len(p)
-        n = data.size
-        return 2 * (k + (k * k + k) / (n - k - 1) -
-                    self.logLikelihood(p, data, grid, stddev))
-        # "If the assumption that the model is univariate and linear with normal
-        # residuals does not hold, then the formula for AICc will generally be
-        # different from the formula above. For some models, the precise formula
-        # can be difficult to determine. For every model that has AICc
-        # available, though, the formula for AICc is given by AIC plus terms
-        # that includes both k and k2. In comparison, the formula for AIC
-        # includes k but not k2. In other words, AIC is a first-order estimate
-        # (of the information loss), whereas AICc is a second-order estimate."
-        # -- from: https://en.wikipedia.org/wiki/Akaike_information_criterion
-
-    def bic(self, p, data, grid, stddev):
-        n = data.size
-        k = len(p)
-        return k * np.log(n) - 2 * self.logLikelihood(p, data, grid, stddev)
-
-    def logLikelihood(self, p, data, grid=None, stddev=None):
-        # assuming uncorrelated gaussian data here
-        if stddev is None:
-            sigma_term = 0
-        else:
-            sigma_term = np.log(stddev).sum()
-
-        n = data.size
-        return (-n / 2 * np.log(2 * np.pi)
-                - 0.5 * self.wrss(p, data, grid, stddev)
-                - sigma_term)
-
     llh = logLikelihood
 
-    def objective_mle(self, p, data, grid=None, stddev=None):
-        return -self.logLikelihood(p, data, grid, stddev)
+    def loss_mle(self, p, data, *args, **kws):
+        """Objective for Maximum Likelihood Estimation"""
+        # NOTE: will be a bit more efficient to skip adding the sigma term
+        # return (data.size * LN2PI_2
+        #         + 0.5 * self.wrss(p, data, *args, stddev=stddev, **kws))
 
-    def logProb(self, p, data, grid=None, stddev=None, logPrior=None,
-                prior_args=()):
+        return -self.logLikelihood(p, data, *args,  **kws)
+
+    def logProb(self, p, data, *args, logPrior=None,
+                prior_args=(), **kws):
         """
         Logarithm of posterior probability (up to a constant).
 
@@ -340,24 +364,141 @@ class Model(OptionallyNamed, LoggingMixin):
 
         """
 
-        # TODO: maybe manage through property ??
-        if logPrior:
+        if logPrior:  # TODO: maybe manage through property ??
             log_prior = logPrior(p, *prior_args)
 
             if not np.isfinite(log_prior):
                 return -np.inf
 
-            return self.logLikelihood(p, data, grid, stddev) + log_prior
+            return (self.logLikelihood(p, data, *args, **kws)
+                    + log_prior)
 
-        return self.logLikelihood(p, data, grid, stddev)
+        return self.logLikelihood(p, data, *args, **kws)
 
-    def pre_fit(self, p0, data, grid=None, stddev=None, *args, **kws):
+    def rsq(self, p, data, *args, **kws):
+        """
+        The coefficient of determination, denoted R2 or r2 and pronounced
+        "R squared", is the proportion of the variance in the dependent
+        variable that is predictable from the independent variable(s). It
+        provides a measure of how well observed outcomes are replicated by
+        the  model, based on the proportion of total variation of outcomes
+        explained by the model.
+        """
+        # total sum of squares
+        mu = data.mean()
+        # fixme shouldn't recompute during fit
+        tss = np.square(data - mu).sum()
+        rss = self.rss(p, data, *args, **kws)
+        return 1 - rss / tss
+
+    # FIXME: alias not inherited if overwritten in subclass
+    coefficient_of_determination = rsq
+
+    def aic(self, p, data, *args, **kws):
+        """
+        Akaike information criterion. Assumes `p` is the parameter vector
+        corresponding to the maximum likelihood.
+        """
+        k = len(p) + 2
+        return 2 * (k - self.logLikelihood(p, data, *args, **kws))
+
+    def aicc(self, p, data, *args, **kws):
+        # "When the sample size is small, there is a substantial probability
+        # that AIC will select models that have too many parameters...
+        # AICc is essentially AIC with an extra penalty term for the number of
+        #  parameters"
+        #
+        # Assuming that the model is univariate, is linear in its parameters,
+        # and has normally-distributed residuals (conditional upon regressors),
+        # then the formula for AICc is as follows.
+        k = len(p)
+        n = data.size
+        return 2 * (k + (k * k + k) / (n - k - 1) -
+                    self.logLikelihood(p, data, *args, **kws))
+        # "If the assumption that the model is univariate and linear with normal
+        # residuals does not hold, then the formula for AICc will generally be
+        # different from the formula above. For some models, the precise formula
+        # can be difficult to determine. For every model that has AICc
+        # available, though, the formula for AICc is given by AIC plus terms
+        # that includes both k and k2. In comparison, the formula for AIC
+        # includes k but not k2. In other words, AIC is a first-order estimate
+        # (of the information loss), whereas AICc is a second-order estimate."
+        # -- from: https://en.wikipedia.org/wiki/Akaike_information_criterion
+
+    def bic(self, p, data, *args):
+        n = data.size
+        k = len(p)
+        return k * np.log(n) - 2 * self.logLikelihood(p, data, *args, **kws)
+
+    # TODO: absorb grid, stddev into *args
+
+    def mle(self, data, p0=None, *args, **kws):
+        """
+        Maximum likelihood fit
+        """
+        return self.fit(data, p0, loss=self.loss_mle, *args,                        **kws)
+
+    def fit(self, data, p0=None, loss=None, *args,  **kws):
+        """
+        Minimize `loss` for `data` with uncertainties `stddev` on `grid` using
+        `scipy.minimize` routine
+
+        Parameters
+        ----------
+        p0
+        data
+        grid
+        stddev
+        args
+        kws
+
+        Returns
+        -------
+
+        """
+
+        # set default loss / objective
+        loss = loss or self.wrss  # fwrs for leastsq...
+
+        # post-processing args
+        post_args = kws.pop('post_args', ())
+        post_kws = kws.pop('post_kws', {})
+
+        # pre-processing
+        p0, data, args, _ = self.pre_fit(loss, p0, data, *args, **kws)
+
+        # TODO: move to HandleParameters Mixin??
+        type_, dtype = type(p0), p0.dtype
+
+        tmp = self._checks
+        self._checks = _echo
+        try:
+            # minimization
+            p = self._fit(loss, p0, data, *args, **kws)
+        except Exception as err:
+            raise err from None
+        finally:
+            # restore `_checks` before raising
+            self._checks = tmp
+            # del self.__call__  # deletes temp attribute on instance.
+
+        # post-processing
+        p = self.post_fit(p, *post_args, **post_kws)
+
+        # TODO: move to HandleParameters Mixin??
+        if p is not None:
+            # get back structured view if required
+            # for some strange reason `result.x.view(dtype, type_)` ends up
+            # with higher dimensionality. weird. # TODO BUG REPORT??
+            return p.view(dtype, type_)
+
+    def pre_fit(self, loss, p0, data, *args, **kws):
         """This will be run prior to the minimization routine"""
 
         # Parameter checks
         # ----------------
         if p0 is None:
-            p0 = self.p0guess(data, grid)
+            p0 = self.p0guess(data, *args)
             self.logger.debug('p0 guess: %s', p0)
         else:
             p0 = np.asanyarray(p0)
@@ -366,14 +507,21 @@ class Model(OptionallyNamed, LoggingMixin):
         # TODO: move to HandleParameters Mixin??
         if isinstance(p0, Parameters):
             p0 = p0.flattened
+        else:
+            # need to convert to float since we are using p0 dtype to type
+            # cast the results vector for structured parameters and user might
+            # have passed an array-like of integers
+            p0 = p0.astype(float)
 
         # check that call works.  This check here so that we can identify
-        # potential problems with the function call / arguments before
-        # entering the optimization routine.  Potential traceback here will
-        # be more readable.  This is also done here so we can check initially
-        # and then let the fitting run through `eval` instead of `__call__`
-        # and skip all the checks during optimization for performance gain.
-        self.eval(p0, grid, *args, **kws)
+        # potential problems with the function call / arguments before entering
+        # the optimization routine. Any potential errors that occur here will
+        # yield a more readable traceback.  This is also done here so we can
+        # check initially and then let the fitting run through `eval` instead of
+        # `__call__` and skip all the checks during optimization for performance
+        # gain.
+        p0, args = self._checks(p0, *args, **kws)
+        # loss(p0, data, *args, **kws)  # THIS IS ERROR PRONE!
 
         # Data checks
         # -----------
@@ -391,100 +539,32 @@ class Model(OptionallyNamed, LoggingMixin):
             #     self.logger.warning('Your data has masked elements.')
 
         # Remove masked data
-        compress_ma = self.compress_ma
-        if compress_ma is None:
-            compress_ma = (kws.get('method') == 'leastsq')
+        if np.ma.is_masked(data):
+            use = ~data.mask
+            # grid = grid[..., use]  # FIXME: may still be None at this point
+            # if stddev is not None:
+            #     stddev = stddev[use]
+            data = data.compressed()
 
-        if compress_ma:
-            if np.ma.is_masked(data):
-                use = ~data.mask
-                grid = grid[..., use]  # FIXME: may still be None at this point
-                if stddev is not None:
-                    stddev = stddev[use]
-                data = data.compressed()
+        return p0, data, args, kws
 
-        return p0, data, grid, stddev, args, kws
-
-    def fit(self, data, grid=None, stddev=None, p0=None, *args, **kws):
-        """
-        Minimize `objective` using `scipy.minimize`
-
-        Parameters
-        ----------
-        p0
-        data
-        grid
-        stddev
-        args
-        kws
-
-        Returns
-        -------
-
-        """
-
-        # set default objective
-        if self.objective is None:
-            self.objective = self.wrss  # fwrs for leastsq...
-
-        # post-processing args
-        post_args = kws.pop('post_args', ())
-        post_kws = kws.pop('post_kws', {})
-
-        # pre-processing
-        p0, data, grid, stddev, args, kws = self.pre_fit(
-                p0, data, grid, stddev, *args, **kws)
-
-        # TODO: move to HandleParameters Mixin??
-        type_, dtype = type(p0), p0.dtype
-
-        # dynamically set the '__call__` method to be `eval`: avoids  checks at
-        # every iteration of fit and speed the optimization process up a bit.
-        # note that the line below sets the `__call__` attribute on the
-        #  instance of this class, while the special __call__ method on the
-        #  class remains untouched, so `self(p, grid)` will still invoke the
-        #  original call method with all checks, but `self.__call__(p, grid)`
-        #  will invoke `self.eval` during the parameter optimization
-        # see: https://docs.python.org/3/reference/datamodel.html#special-lookup
-        self.__call__ = self.eval
-        # TODO: is it worth doing this HACK?  test
-        try:
-            # minimization
-            p = self._fit(p0, data, grid, stddev=None, *args, **kws)
-
-        except Exception as err:
-            # restore `__call__` before raising
-            del self.__call__  # deletes temp attribute on instance.
-            raise err from None
-
-        # post-processing
-        p = self.post_fit(p, *post_args, **post_kws)
-
-        # TODO: move to HandleParameters Mixin??
-        if p is not None:
-            # get back structured view if required
-            # for some strange reason `result.x.view(dtype, type_)` ends up
-            # with higher dimensionality. weird. # TODO BUG REPORT??
-            return p.view(dtype, type_)
-
-    def _fit(self, p0, data, grid, stddev=None, *args, **kws):
+    def _fit(self, loss, p0, data, *args, **kws):
         """Minimization worker"""
 
         # infix so we can easily wrap least squares optimization within the same
         # method
+        args = (data, ) + args
         if kws.get('method') == 'leastsq':
             kws.pop('method')
             #
-            p, cov_p, info, msg, flag = leastsq(
-                    self.fwrs, p0, (data, grid, stddev),
-                    full_output=True,
-                    **kws)
+            p, cov_p, info, msg, flag = leastsq(self.fwrs, p0, args,
+                                                full_output=True, **kws)
             success = (flag in [1, 2, 3, 4])
             # print('RESULT:', p)
         else:
             # minimization
-            result = minimize(self.objective, p0, (data, grid, stddev), *args,
-                              **kws)
+            result = minimize(loss, p0, args, **kws)
+
             p = result.x
             success = result.success
             msg = result.message
@@ -492,9 +572,10 @@ class Model(OptionallyNamed, LoggingMixin):
         if success:
             unchanged = np.allclose(p, p0)
             if unchanged:
+                # TODO: maybe also warn if any close ?
                 self.logger.warning('"Converged" parameter vector is '
                                     'identical to initial guess: %s', p0)
-            # TODO: maybe also warn if any close ?
+                msg = ''
             else:
                 self.logger.debug('Successful fit %s', self.name)
                 # TODO: optionally print fit statistics. npars, niters, gof,
@@ -503,7 +584,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
         # generate message for convergence failure
         from recipes import pprint
-        objective_repr = pprint.method(self.objective, submodule_depth=0)
+        objective_repr = pprint.method(loss, submodule_depth=0)
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
                     f'{objective_repr!r} failed to converge: {msg}')
 
@@ -859,7 +940,7 @@ class CompoundModel(Model):
         dtype = []
         for key in keys:
             dtype.append(
-                    self._adapt_dtype(self.models[key], ())
+                self._adapt_dtype(self.models[key], ())
             )
         return dtype
 
@@ -968,14 +1049,16 @@ class CompoundModel(Model):
         residuals = np.ma.getdata(data).copy() if reduce else None
 
         # optimize
-        self.fit_worker(data, grid, stddev, keys, p0, results, residuals, **kws)
+        self.fit_worker(data, grid, stddev, keys, p0,
+                        results, residuals, **kws)
 
         if reduce:
             return results, residuals
 
         return results
 
-    def fit_worker(self, data, grid, stddev, keys, p0, result, residuals, **kws):
+    def fit_worker(self, data, grid, stddev, keys, p0, result, residuals,
+                   **kws):
 
         # todo: check keys against self.models.keys()
 
@@ -993,7 +1076,7 @@ class CompoundModel(Model):
             if p0 is not None:
                 kws['p0'] = p0[model.name]
 
-            # select data -- does the same job as `SegmentationHelper.coslice`
+            # select data -- does the same job as `SegmentedImage.coslice`
             # sub = np.ma.array(data[seg])
             # sub[..., self.seg.masks[label]] = np.ma.masked
             # std = None if (stddev is None) else stddev[..., slice_]
@@ -1111,9 +1194,9 @@ class FixedGrid(object):
             grid = self.grid
         if grid is None:
             raise ValueError(
-                    'Please specify the coordinate grid for evaluation, '
-                    'or use the `set_grid` method prior to the first call to '
-                    'assign a coordinate grid.')
+                'Please specify the coordinate grid for evaluation, '
+                'or use the `set_grid` method prior to the first call to '
+                'assign a coordinate grid.')
         return grid
 
     # def residuals(self, p, data, grid=None):
