@@ -278,6 +278,16 @@ def view_neighbours(array, neighbourhood=7):
     copying data and therefore has multiple elements that refer to the same
     unique element in memory.
 
+    Examples
+    --------
+    >>> z = np.arange(4 * 5).reshape(4, 5)
+    >>> q = view_neighbours(z, 3)
+    >>> z[2, 4]  # 14
+    >>> q[2, 4]
+    The neighbourhood of element in (2, 4), out of bounds items are masked
+        [[8 9 --]
+         [13 14 --]
+         [18 19 --]]
 
     Parameters
     ----------
@@ -288,22 +298,24 @@ def view_neighbours(array, neighbourhood=7):
     -------
     masked array
     """
-    array = np.asanyarray(array)
-    mask = np.ma.getmaskarray(array)
-
     n = int(neighbourhood)  # neighborhood size
     assert n % 2, '`neighbourhood` should be an odd integer'
 
-    # ignore the edge items by padding masked elements.
-    # can't use np.pad since MaskedArray will silently be converted to masked
-    # array. This is a known issue: https://github.com/numpy/numpy/issues/8881
-    return np.ma.MaskedArray(
-            _view_neighbours(array, n, 0),
-            _view_neighbours(mask, n, True)
-    )
+    array = np.asanyarray(array)
+    view = _view_neighbours(array, n, 0)
+    if np.ma.isMA(array):
+        mask = np.ma.getmaskarray(array)
+        # ignore the edge items by padding masked elements.
+        # can't use np.pad since MaskedArray will silently be converted to
+        # array. This is a known issue:
+        #  https://github.com/numpy/numpy/issues/8881
+        return np.ma.MaskedArray(view, _view_neighbours(mask, n, True))
+    #
+    return view
 
 
 def _view_neighbours(array, n, pad_value=0):
+    # worker for
     pad_width = (n - 1) // 2
     padding = [(0, 0)] * (array.ndim - 2) + [(pad_width, pad_width)] * 2
     padded = np.pad(array, padding, mode='constant', constant_values=pad_value)
