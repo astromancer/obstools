@@ -140,126 +140,6 @@ def set_visible(artists, state=True):
 # ******************************************************************************
 
 
-class SeczTransform(Transform):
-    input_dims = 1
-    output_dims = 1
-    is_separable = False
-    has_inverse = False
-
-    def transform_non_affine(self, alt):
-        return 1. / np.cos(np.radians(90. - alt))
-
-
-class SeczFormatter(TransFormatter):
-    _transform = SeczTransform()
-
-    def __call__(self, x, pos=None):
-        # ignore negative numbers (below horizon)
-        if (x < 0):
-            return ''
-
-        return TransFormatter.__call__(self, x, pos)
-
-
-class VizAxes(SubplotHost):
-    """The standard axes class for visibility tracks"""
-
-    # def __init__(self, *args, **kw):
-
-    ##self.ytrans = SeczTransform()
-    ##self._aux_trans = btf(ReciprocalTransform(), IdentityTransform())
-
-    # kws.pop('site')
-
-    # date = '2016-07-08'
-    # lon = viz.siteLoc.longitude
-    # sid_trans = sidereal_transform(date, lon, 2)
-    # aux_trans = btf(sid_trans, IdentityTransform())
-
-    # SubplotHost.__init__(self, *args, **kw)
-    # self.parasite = self.twin(aux_trans)
-
-    def setup_ticks(self):
-        # Tick setup for both axes
-        minorTickSize = 8
-        for axis in (self.yaxis, self.parasite.yaxis):
-            axis.set_tick_params('both', tickdir='out')
-            axis.set_tick_params('minor', labelsize=minorTickSize, pad=5)
-
-        # TODO:  colors='' #For sidereal time axis
-        self.xaxis.set_tick_params('major', pad=15)
-        # self.yaxis.set_tick_params('minor', labelsize=minorTickSize, pad=5)
-
-        # Tick setup for main axes
-        #         self.xaxis.set_tick_params('major', pad=10)
-        #         self.yaxis.set_tick_params('minor', labelsize=6, pad=5)
-        dloc = AutoDateLocator()
-        # self.xaxis.tick_bottom()
-        self.xaxis.set_major_locator(dloc)
-        self.xaxis.set_minor_locator(AutoMinorLocator())
-        fmt = AutoDateFormatter(dloc)
-        fmt.scaled[1 / 24] = '%H:%M'
-        self.xaxis.set_major_formatter(fmt)
-
-        self.yaxis.set_minor_locator(AutoMinorLocator())
-        self.yaxis.set_major_formatter(DegreeFormatter())
-        self.yaxis.set_minor_formatter(DegreeFormatter())
-
-        # Tick setup for main axes
-
-        # self.parasite.axis['right'].major_ticklabels.set_visible(False)
-
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        # def set_formatters(self):
-
-        # self.xaxis.set_minor_formatter(ticker.ScalarFormatter())
-        #  self.parasite.xaxis.set_minor_locator(AutoMinorLocator())
-        self.parasite.xaxis.tick_top()
-        self.parasite.xaxis.offsetText.set_visible(False)
-
-        #
-        dloc = AutoDateLocator()
-        self.parasite.xaxis.set_major_locator(dloc)
-        fmt = AutoDateFormatter(dloc)
-        fmt.scaled[1 / 24] = '%H:%M'
-        self.parasite.xaxis.set_major_formatter(fmt)
-        # self.parasite.xaxis.set_minor_locator(AutoMinorLocator())
-
-        # fine grained formatting for coord display subtext
-        fineGrainDateFmt = AutoDateFormatter(dloc)
-        fineGrainDateFmt.scaled[1 / 24] = '%H:%M:%S'
-        self._xcoord_formatter = fineGrainDateFmt
-        self._ycoord_formatter = DegreeFormatter(precision=2)
-
-        # ticks for airmass axis
-        self.parasite.yaxis.tick_right()
-        airmassFmt = SeczFormatter(precision=2)
-        self.parasite.yaxis.set_major_formatter(airmassFmt)
-
-        self.parasite.yaxis.set_minor_locator(AutoMinorLocator())
-        self.parasite.yaxis.set_minor_formatter(airmassFmt)
-
-        # def set_locators(self):
-        # formatter_factory(AutoMinorLocator(n=5))
-        # self.xaxis.set_minor_locator(AutoMinorLocator(n=5))
-
-        # self.parasite.xaxis.set_minor_locator(AutoMinorLocator(n=5))
-
-    def format_coord(self, x, y):
-        # print('fmt')
-        # s = super().format_coord(x, y)
-        xs = self._xcoord_formatter(x)
-        ys = self._ycoord_formatter(y)
-
-        xt, _ = self.parasite.transAux.inverted().transform([x, y])
-        xts = self._xcoord_formatter(xt)
-
-        fmt = self.parasite.yaxis.get_major_formatter()
-        _, yt = fmt._transform.transform([x, y])  # HACK!!
-
-        return f'UTC={xs}\talt={ys}\tsid.T={xts}\tairmass={yt:.3f}'
-
-
 class Sun(object):
     """
     Object that encapsulates the visibility of the sun for the given frames
@@ -384,6 +264,129 @@ class Moon(object):
         codes = np.ones(len(x)) * 4
         codes[0] = 1
         return mplPath(verts, codes)
+
+
+class SeczTransform(Transform):
+    input_dims = 1
+    output_dims = 1
+    is_separable = False
+    has_inverse = False
+
+    def transform_non_affine(self, alt):
+        return 1. / np.cos(np.radians(90. - alt))
+
+
+class SeczFormatter(TransFormatter):
+    _transform = SeczTransform()
+
+    def __call__(self, x, pos=None):
+        # ignore negative numbers (below horizon)
+        if (x < 0):
+            return ''
+
+        return TransFormatter.__call__(self, x, pos)
+
+
+class VizAxes(SubplotHost):
+    """The standard axes class for visibility tracks"""
+
+    # def __init__(self, *args, **kw):
+
+    ##self.ytrans = SeczTransform()
+    ##self._aux_trans = btf(ReciprocalTransform(), IdentityTransform())
+
+    # kws.pop('site')
+
+    # date = '2016-07-08'
+    # lon = viz.siteLoc.longitude
+    # sid_trans = sidereal_transform(date, lon, 2)
+    # aux_trans = btf(sid_trans, IdentityTransform())
+
+    # SubplotHost.__init__(self, *args, **kw)
+    # self.parasite = self.twin(aux_trans)
+
+    def setup_ticks(self):
+        # Tick setup for both axes
+        minorTickSize = 8
+        for axis in (self.yaxis, self.parasite.yaxis):
+            axis.set_tick_params('both', tickdir='out')
+            axis.set_tick_params('minor', labelsize=minorTickSize, pad=5)
+
+        # TODO:  colors='' #For sidereal time axis
+        self.xaxis.set_tick_params('major', pad=15)
+        # self.yaxis.set_tick_params('minor', labelsize=minorTickSize, pad=5)
+
+        # Tick setup for main axes
+        #         self.xaxis.set_tick_params('major', pad=10)
+        #         self.yaxis.set_tick_params('minor', labelsize=6, pad=5)
+        dloc = AutoDateLocator()
+        # self.xaxis.tick_bottom()
+        self.xaxis.set_major_locator(dloc)
+        self.xaxis.set_minor_locator(AutoMinorLocator())
+        fmt = AutoDateFormatter(dloc)
+        fmt.scaled[1 / 24] = '%H:%M'
+        self.xaxis.set_major_formatter(fmt)
+
+        self.yaxis.set_minor_locator(AutoMinorLocator())
+        self.yaxis.set_major_formatter(DegreeFormatter())
+        self.yaxis.set_minor_formatter(DegreeFormatter())
+
+        # Tick setup for main axes
+
+        # self.parasite.axis['right'].major_ticklabels.set_visible(False)
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # def set_formatters(self):
+
+        # self.xaxis.set_minor_formatter(ticker.ScalarFormatter())
+        #  self.parasite.xaxis.set_minor_locator(AutoMinorLocator())
+        self.parasite.xaxis.tick_top()
+        self.parasite.xaxis.offsetText.set_visible(False)
+
+        #
+        dloc = AutoDateLocator()
+        self.parasite.xaxis.set_major_locator(dloc)
+        fmt = AutoDateFormatter(dloc)
+        fmt.scaled[1 / 24] = '%H:%M'
+        self.parasite.xaxis.set_major_formatter(fmt)
+        # self.parasite.xaxis.set_minor_locator(AutoMinorLocator())
+
+        # fine grained formatting for coord display subtext
+        fineGrainDateFmt = AutoDateFormatter(dloc)
+        fineGrainDateFmt.scaled[1 / 24] = '%H:%M:%S'
+        self._xcoord_formatter = fineGrainDateFmt
+        self._ycoord_formatter = DegreeFormatter(precision=2)
+
+        # ticks for airmass axis
+        self.parasite.yaxis.tick_right()
+        airmassFmt = SeczFormatter(precision=2)
+        self.parasite.yaxis.set_major_formatter(airmassFmt)
+
+        self.parasite.yaxis.set_minor_locator(AutoMinorLocator())
+        self.parasite.yaxis.set_minor_formatter(airmassFmt)
+
+        # def set_locators(self):
+        # formatter_factory(AutoMinorLocator(n=5))
+        # self.xaxis.set_minor_locator(AutoMinorLocator(n=5))
+
+        # self.parasite.xaxis.set_minor_locator(AutoMinorLocator(n=5))
+
+    def format_coord(self, x, y):
+        # print('fmt')
+        # s = super().format_coord(x, y)
+        xs = self._xcoord_formatter(x)
+        ys = self._ycoord_formatter(y)
+
+        xt, _ = self.parasite.transAux.inverted().transform([x, y])
+        xts = self._xcoord_formatter(xt)
+
+        fmt = self.parasite.yaxis.get_major_formatter()
+        _, yt = fmt._transform.transform([x, y])  # HACK!!
+
+        return f'UTC={xs}\talt={ys}\tsid.T={xts}\tairmass={yt:.3f}'
+
+
+
 
 
 class VizPlot(LoggingMixin):
@@ -536,10 +539,10 @@ class VizPlot(LoggingMixin):
 
         while not alive.isSet():
             # print('updating current time')
-            self._update_current_time()
+            self.update_current_time()
             time.sleep(interval)
 
-    def _update_current_time(self, draw=True):
+    def update_current_time(self, draw=True):
         now = Time.now()
         t = now.plot_date
         # update line position
@@ -564,10 +567,21 @@ class VizPlot(LoggingMixin):
 
     def add_coordinate(self, name, coo=None):
         """
-        Resolve coordinates from object name and add to cache. Issue a warning
-        when name cannot be resolved.
-        If coordinates provided, simply add to list with associated name
-        :returns True if successfully resolved name
+        Resolve coordinates from object name and add to cache. If coordinates 
+        provided, simply add to list with associated name.
+
+        Parameters
+        ----------
+        name : str
+            The object name
+        coo : str or SkyCoord, optional
+            The object coordinates (right ascention, declination) as a str that
+            be resolved by SkyCoord, or a SkyCoord object.
+
+        Returns
+        -------
+        SkyCoord
+            The object coordinates
         """
 
         if name in self.targetCoords:
@@ -581,10 +595,15 @@ class VizPlot(LoggingMixin):
         else:
             coo = get_coordinates(coo)
 
+        # add to list
         if coo:
             self.targetCoords[name] = coo
 
         return coo
+
+    def add_coordinates(self, names):
+        for name in names:
+            self.add_coordinate(name)
 
     def add_target(self, name, coo=None, update=True):
         success = self.add_coordinate(name, coo)
@@ -595,13 +614,40 @@ class VizPlot(LoggingMixin):
                 self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)
 
     def remove_target(self, name):
+        """
+        Remove the visibility track of target with name `name` from the plot
+
+        Parameters
+        ----------
+        name : str
+            The target name. Will result in an error if the target name is not
+            included in the plot
+        """
         if name in self.targetCoords:
             for dic in (self.targetCoords, self.tracks, self.plots,
                         self.labels, self.shortNames):
                 dic.pop(name)
 
-    def add_targets(self, names, coords=[]):
-        for name, coo in itt.zip_longest(names, coords):
+    def add_targets(self, names, coords=()):
+        """
+        Add visibility tracks of targets to the plot
+
+        Parameters
+        ----------
+        names : dict or list
+            The names of the objects. Will attempt to resolve the name via a
+            sesame query if coordinates are not provided
+        coords : list, optional
+            Sequence of coordinates (str or SkyCoord), by default ().  If
+            provided, these coordinates will be used and no lookup for the
+            name will occur.
+        """
+        if isinstance(names, dict):
+            itr = names.items()
+        else:
+            itr = itt.zip_longest(names, coords)
+
+        for name, coo in itr:
             self.add_target(name, coo, update=False)
 
         self.do_legend()
@@ -609,13 +655,12 @@ class VizPlot(LoggingMixin):
 
         # self.cid = self.canvas.mpl_connect('draw_event', self.fix_legend())
 
-    def add_coordinates(self, names):
-        for name in names:
-            self.add_coordinate(name)
-
     def plot_track(self, name):
-        """Calculate track and plot"""
-        # NOTE the difference between adding and plotting.
+        """
+        Calculate and plot the visibility track for an object whose coordinates
+        has already been resolved and cached.
+        """
+        
         coords = self.targetCoords[name]
 
         if name not in self.tracks:
@@ -1067,7 +1112,7 @@ class VizPlot(LoggingMixin):
 
         # update current time else it will disappear
         self.currentTimeThreadAlive.clear()  # suspend the current time thread
-        self._update_current_time(draw=False)  # will draw below
+        self.update_current_time(draw=False)  # will draw below
 
         if draw:
             self.draw_blit(self._vart)
