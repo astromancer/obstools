@@ -4,6 +4,7 @@ Tools for visualising object tracks across the night sky
 
 
 # std libs
+from PyQt5 import QtCore
 from recipes.logging import LoggingMixin
 import time
 import inspect
@@ -39,51 +40,41 @@ from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 # local libs
 from motley import profiling
 from recipes.containers.lists import sorter
+from recipes import pprint
 from ..utils import get_coordinates, get_site
 import more_itertools as mit
 
 
 # TODO: enable different projections, like Mercator etc...
-# FIXME: crashes randomly due to threading problems:
-#   QWidget::repaint: Recursive repaint detected
-#   QBackingStore::endPaint() called with active painter on backingstore paint device
-
 
 WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-# def OOOOh(t):
-#   """hours since midnight"""
-#   return (t - midnight).sec / 3600
+TIMEZONE = +2 * u.hour
 
 
-def local_time_str(t, tz=2 * u.hour, precision='m'):
-    scales = (24, 60, 60)
-    ix = 'hms'.index(precision)
-    t = (t + tz).to_datetime().timetuple()
-    tt = np.round(t[3:4 + ix])
-    inc = tt // scales[:ix + 1]
-    tt = (tt + inc) % scales[:ix + 1]
-    fmt = ':'.join(('{:02,d}',) * (ix + 1))
-    return fmt.format(*tt)
-
-    # timeTxt = (t+tz).iso.split()[1].split('.')[0]   # up to seconds
-    # timeTxt = ':'.join(timeTxt.split(':')[:ix+1])   # up to requested precision
-    # return (t+tz).iso.split()[1].split('.')[0]
+def local_time_str(t,  precision='m', tz=TIMEZONE):
+    t = t + tz - Time(t.isot.split('T')[0])
+    t = t.to('s').value
+    s = pprint.hms(t, 's', sep=':')
+    if s.endswith('60'):
+        print(t)
+    return s
 
 
-def vertical_txt(ax, s, t, y=1, precision='m', **kw):
+def vertical_txt(ax, s, t, y=1, precision='m', **kws):
     va = 'top'
     if y == 'top':
         y, va = 1, y
+
     if y == 'bottom':
         y, va = 0.01, y
 
-    s = '%s %s SAST' % (s, local_time_str(t, precision=precision))
+    parts = (s, local_time_str(t, precision), 'SAST')
+    s = ' '.join(filter(None, parts))
     txt = ax.text(t.plot_date, y, s,
                   rotation=90, ha='right', va=va,
                   transform=btf(ax.transData, ax.transAxes),
                   clip_on=True,
-                  **kw)
+                  **kws)
     return txt
 
 
@@ -137,9 +128,8 @@ def set_visible(artists, state=True):
     for art in mit.collapse(artists):
         art.set_visible(state)
 
+
 # ******************************************************************************
-
-
 class Sun(object):
     """
     Object that encapsulates the visibility of the sun for the given frames
@@ -169,8 +159,8 @@ class Sun(object):
         hdusk = np.vectorize(solver)(-11.99, 0, angles)
         hdawn = np.vectorize(solver)(0, 11.99, angles)
 
-        dusk = midnight + hdusk * u.h
-        dawn = midnight + hdawn * u.h
+        dusk = midnight + hdusk * u.hour
+        dawn = midnight + hdawn * u.hour
 
         up = OrderedDict(), OrderedDict()
         which = ['sun', 'civil', 'nautical', 'astronomical']
@@ -216,7 +206,7 @@ class Moon(object):
             rise_or_set = np.subtract(*malt[ix]) > 1
             s = 'moon{}'.format(['rise', 'set'][rise_or_set])
             hcross = brentq(ip, *crossint)
-            up[s] = midnight + hcross * u.h
+            up[s] = midnight + hcross * u.hour
 
         return up
 
@@ -386,7 +376,77 @@ class VizAxes(SubplotHost):
         return f'UTC={xs}\talt={ys}\tsid.T={xts}\tairmass={yt:.3f}'
 
 
+class CurrentTime(LoggingMixin):
+    """current time indicator"""
 
+    def __init__(self, ax, midnight, t0, lon, precision='s'):
+        # animated=True to prevent redrawing the canvas
+        self.ax = ax
+        self.lon = lon
+        self.precision = precision
+
+        # plot line
+        # animated=True to prevent redrawing the canvas
+        self.line, = ax.plot([midnight.plot_date] * 2, [0, 1],
+                             ls=':', c='g',
+                             transform=btf(ax.transData, ax.transAxes),
+                             animated=True)
+        self.sast = vertical_txt(ax, '', t0, y='bottom', color='g',
+                                 animated=True)
+        self.sidT = vertical_txt(ax, '', t0, y='top', color='c',
+                                 animated=True)
+
+        # threading Event controls whether
+        self.alive = threading.Event()
+        self.alive.set()
+
+    def __iter__(self):
+        yield from (self.line, self.sast, self.sidT)
+
+    def update(self):
+        """
+        Update the current time line and texts
+        """
+        self.logger.debug('updating')
+
+        now = Time.now()
+        t = now.plot_date
+        # update line position
+        self.line.set_xdata([t, t])
+
+        # update SAST text
+        sastTxt = f"{local_time_str(now, self.precision)} SAST"
+        self.sast.set_text(sastTxt)
+        self.sast.set_position((t, 0.01))
+        # update Sid.T text
+        sidT = now.sidereal_time('mean', self.lon)
+        self.sidT.set_text(f"{sidT.to_string(sep=':')[:5]} Sid.T")
+        self.sidT.set_position((t, 1))
+
+        # blit the figure if the current time is within range
+        tmin, tmax = self.ax.get_xlim()
+        if ((tmin < t) & (t < tmax)):
+            set_visible(self)
+
+
+class CurrentTimeWorker(QtCore.QObject):
+    """Task that updates current timestamp"""
+
+    signal = QtCore.pyqtSignal()
+
+    def __init__(self, func, alive):
+        super().__init__()
+        # Ensure thread safety with pyqtSignal
+        self.lock = threading.Lock()
+        self.signal.connect(func)
+        self.thread = threading.Thread(
+            target=self.run, args=(alive,))
+
+    def run(self, alive, interval=1):
+        """thread to update line indicating current time"""
+        while alive.is_set():
+            self.signal.emit()
+            time.sleep(interval)
 
 
 class VizPlot(LoggingMixin):
@@ -435,7 +495,7 @@ class VizPlot(LoggingMixin):
     # FIXME: legend being cut off
 
     # @profiling.histogram()
-    def __init__(self, targets=None, date=None, site='sutherland', tz=2 * u.h,
+    def __init__(self, targets=None, date=None, site='sutherland', tz=TIMEZONE,
                  **options):  # res
         """
 
@@ -463,7 +523,6 @@ class VizPlot(LoggingMixin):
         self.texts = Dict()
         self.vlines = Dict()
         self.shortNames = {}
-        self.legLineMap = {}
 
         # blitting setup
         self.saving = False  # save background on draw
@@ -479,7 +538,7 @@ class VizPlot(LoggingMixin):
         self.midnight = midnight = Time(self.date) - tz
 
         # time variable
-        self.hours = h = np.linspace(-12, 12, self.n_points_track) * u.h
+        self.hours = h = np.linspace(-12, 12, self.n_points_track) * u.hour
         self.t = t = midnight + h
         self.tp = t.plot_date
         self.frames = frames = AltAz(obstime=t, location=self.siteLoc)
@@ -497,73 +556,39 @@ class VizPlot(LoggingMixin):
         self.sun = Sun(frames, midnight)
         self.moon = Moon(frames, midnight)
 
-        # self._drawn = False
+        #
         self.figure, self.ax = self.setup_figure()
         self.canvas = self.figure.canvas
         ax = self.ax
+        self.legend0 = ax.get_legend()
+        self.legLineMap = {}
 
         self.highlighted = None
 
-        # current time indicator
-        # animated=True to prevent redrawing the canvas
-        self.vlines.now, = ax.plot([self.midnight.plot_date] * 2, [0, 1],
-                                   ls=':', c='g',
-                                   transform=btf(ax.transData, ax.transAxes),
-                                   animated=True)
-        self.texts.now.sast = vertical_txt(ax, '', t[0], y='bottom', color='g',
-                                           animated=True)
-        self.texts.now.sidT = vertical_txt(ax, '', t[0], y='top', color='c',
-                                           animated=True)
+        # current time indicator.
+        self.currentTime = CurrentTime(ax, midnight, t[0], self.siteLoc.lon)
+        self.currentTimeWorker = CurrentTimeWorker(self.update_current_time,
+                                                   self.currentTime.alive)
 
         # set all tracks and their labels as well as current time text invisible
         # before drawing, so we can blit
-        self.currentTimeArt = (self.vlines.now, self.texts.now.sast,
-                               self.texts.now.sidT)
-        self._vart = (self.currentTimeArt,
+        self._vart = (self.currentTime,
                       self.plots.values(), self.labels.values(),
                       self.legLineMap)
         set_visible(self._vart, False)
-
-        self.currentTimeThreadAlive = threading.Event()
-        self.currentTimeThread = threading.Thread(
-            target=self.show_current_time,
-            args=(self.currentTimeThreadAlive,))
 
         # HACK
         self.cid = self.canvas.mpl_connect('draw_event', self._on_first_draw)
         self.canvas.mpl_connect('draw_event', self._on_draw)
         # At this point the background with everything except the tracks is saved
 
-    def show_current_time(self, alive, interval=3):
-        """thread to update line indicating current time"""
+    def update_current_time(self):
+        self.currentTime.update()
 
-        while not alive.isSet():
-            # print('updating current time')
-            self.update_current_time()
-            time.sleep(interval)
-
-    def update_current_time(self, draw=True):
-        now = Time.now()
-        t = now.plot_date
-        # update line position
-        self.vlines.now.set_xdata([t, t])
-
-        # update SAST text
-        sastTxt = f"{local_time_str(now, precision='m')} SAST"
-        self.texts.now.sast.set_text(sastTxt)
-        self.texts.now.sast.set_position((t, 0.01))
-        # update Sid.T text
-        sidT = now.sidereal_time('mean', self.siteLoc.lon)
-        sidTTxt = f"{sidT.to_string(sep=':')[:5]} Sid.T"
-        self.texts.now.sidT.set_text(sidTTxt)
-        self.texts.now.sidT.set_position((t, 1))
-
-        # blit the figure if the current time is within range
-        tmin, tmax = self.ax.get_xlim()
-        if ((tmin < t) & (t < tmax)) and draw:
-            # blit figure
-            set_visible(self.currentTimeArt)
-            self.draw_blit(self.currentTimeArt, bg=self.background2)
+        # redraw the canvas
+        # with self.currentTimeWorker.lock:  # deadlock??
+        # blit figure
+        self.draw_blit(self.currentTime, bg=self.background2)
 
     def add_coordinate(self, name, coo=None):
         """
@@ -660,7 +685,7 @@ class VizPlot(LoggingMixin):
         Calculate and plot the visibility track for an object whose coordinates
         has already been resolved and cached.
         """
-        
+
         coords = self.targetCoords[name]
 
         if name not in self.tracks:
@@ -768,8 +793,8 @@ class VizPlot(LoggingMixin):
                             bottom=0.075)
         # setup axes with
         ax = VizAxes(fig, 111)
-        sid_trans = sidereal_transform(self.date, self.siteLoc.lon)  # gitude)
-        aux_trans = btf(sid_trans, IdentityTransform())
+        aux_trans = btf(sidereal_transform(self.date, self.siteLoc.lon),
+                        IdentityTransform())
         ax.parasite = ax.twin(aux_trans)
 
         # ax.autoscale(False)
@@ -785,7 +810,6 @@ class VizPlot(LoggingMixin):
         sun, moon = self.sun, self.moon
         for i, twilight in enumerate(zip(sun.dusk.items(), sun.dawn.items())):
             desc, times = zip(*twilight)
-
             ax.axvspan(*Time(times).plot_date, color=str(0.25 * (3 - i)))
 
             for words, t in zip(desc, times):
@@ -793,14 +817,15 @@ class VizPlot(LoggingMixin):
 
         # Indicate moonrise / set
         intervals = list(zip(sun.dusk.values(), sun.dawn.values()))[::-1]
-        cols = ['y', 'y', 'orange', 'orange']
+        colours = ['y', 'y', 'orange', 'orange']
         c = 'y'  # in case the `moon.up` dict is empty
         for rise_set, time in moon.up.items():
             # pick colours that are readable against grey background
             for i, (r, s) in enumerate(intervals):
                 if r < time < s:
-                    c = cols[i]
+                    c = colours[i]
 
+            # vertival line for moonrise
             self.vlines[rise_set] = ax.axvline(time.plot_date, c=c, ls='--')
             self.texts[rise_set] = vertical_txt(
                 ax, rise_set, time, y='bottom', color=c)
@@ -830,8 +855,9 @@ class VizPlot(LoggingMixin):
         # ax.xaxis.set_major_formatter(AutoDateFormatter(dloc))
         # ax.yaxis.set_minor_formatter(DegreeFormatter())
 
-        just_before_sunset = (sun.set - 0.25 * u.h).plot_date
-        just_after_sunrise = (sun.rise + 0.25 * u.h).plot_date
+        qrth = 0.25 * u.hour
+        just_before_sunset = (sun.set - qrth).plot_date
+        just_after_sunrise = (sun.rise + qrth).plot_date
         ax.set_xlim(just_before_sunset, just_after_sunrise)
         ax.set_ylim(-10, 90)
 
@@ -840,29 +866,28 @@ class VizPlot(LoggingMixin):
         # ax.parasite.viewLim.intervalx = qq[:,0]
 
         # which part of the visibility curves are visible within axes
-        self._lt = (just_before_sunset < self.tp) & (
-            self.tp < just_after_sunrise)
+        self._lt = ((just_before_sunset < self.tp) &
+                    (self.tp < just_after_sunrise))
 
         # labels for axes
         ax.set_ylabel('Altitude', fontweight='bold')
         ax.parasite.set_ylabel('Airmass', fontweight='bold')
 
-        # sun / moon legend
+        # legend at bottom of sun / moon
         leg = ax.legend(bbox_to_anchor=(1.05, 0), loc=3,
                         borderaxespad=0., frameon=True)
         leg.get_frame().set_edgecolor('k')
         ax.add_artist(leg)
 
         ax.grid()
-
         return fig, ax
 
     def site_info_txt(self):
         # eg:
         lat = self.siteLoc.lat  # itude
         lon = self.siteLoc.lon  # gitude
-        ns = 'NS'[bool(lat > 0)]
-        ew = 'WE'[bool(lon > 0)]
+        ns = 'NS'[int(lat > 0)]
+        ew = 'WE'[int(lon > 0)]
 
         lat = abs(lat).to_string(precision=0, format='latex')
         lon = abs(lon).to_string(precision=0, format='latex')
@@ -1010,7 +1035,7 @@ class VizPlot(LoggingMixin):
         #         txt.set_usetex(True)
         #  TODO: mpl feature request to usetex in legend
 
-        # self.legLineMap = {}
+        #
         for legline, origline in zip(leg.get_lines(), self.plots.values()):
             legline.set_pickradius(10)
             legline.set_picker(True)
@@ -1111,14 +1136,13 @@ class VizPlot(LoggingMixin):
         plotLine.set_zorder(plotLine.get_zorder() * factor)
 
         # update current time else it will disappear
-        self.currentTimeThreadAlive.clear()  # suspend the current time thread
-        self.update_current_time(draw=False)  # will draw below
-
+        self.currentTime.alive.clear()  # suspend the current time thread
+        self.currentTime.update()
         if draw:
             self.draw_blit(self._vart)
 
         # re-activate the current time thread
-        self.currentTimeThreadAlive.set()
+        self.currentTime.alive.set()
 
     def _on_draw(self, event):
         self.count += 1
@@ -1131,8 +1155,8 @@ class VizPlot(LoggingMixin):
         #     self._legend_fix_req = False
 
     def _on_first_draw(self, event):
-        # HACK! this method creates the SAST labels upon the first call to draw
-        # as well as starting the currentTimeThread
+        # This method creates the SAST labels upon the first call to draw
+        # as well as starting the currentTime.thread
         self.logger.debug('FIRST DRAW')
 
         fig = self.figure
@@ -1152,7 +1176,7 @@ class VizPlot(LoggingMixin):
         self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)
 
         # canvas.draw()
-        self.currentTimeThread.start()
+        self.currentTimeWorker.thread.start()
 
     def save_background(self, event=None):
         # save the background for blitting
@@ -1163,6 +1187,7 @@ class VizPlot(LoggingMixin):
         self.background = self.canvas.copy_from_bbox(self.figure.bbox)
 
     def draw_blit(self, *artists, bg=None):
+        # print('draw_blit')
         self.canvas.restore_region(bg or self.background)
         renderer = self.canvas.get_renderer()
         for art in mit.collapse(artists):
@@ -1170,9 +1195,10 @@ class VizPlot(LoggingMixin):
         self.canvas.blit(self.figure.bbox)
 
     def closing(self, event):
-        # stop the currentTimeThread
-        self.currentTimeThreadAlive.set()
-        # self.currentTimeThread.join()  # NOTE: will potentially wait for 30s
+        # stop the currentTime.thread
+        self.currentTime.alive.clear()
+        self.currentTimeWorker.thread.join()
+        # NOTE: will potentially wait for `interval` seconds before closing
 
     def connect(self):
         # Setup legend picking
