@@ -1,5 +1,5 @@
-Visibility tracks for celestial bodies
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Visibility tracks for celestial bodies
+
 
 ```python
 
@@ -17,4 +17,4 @@ vis.add_targets({'NEOWISE': '09 57 49 +46 28 56',
 vis.connect()
 ```
 
-![](/data/example.png)
+![Example](https://github.com/astromancer/obstools/tree/master/obstools/plan/data/example.png?raw=True "Example Visibility Tracks")
