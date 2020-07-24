@@ -17,4 +17,4 @@ vis.add_targets({'NEOWISE': '09 57 49 +46 28 56',
 vis.connect()
 ```
 
-![Example](https://github.com/astromancer/obstools/tree/master/obstools/plan/data/example.png?raw=True "Example Visibility Tracks")
+![Example](/data/example.png "Example Visibility Tracks")
