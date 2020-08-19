@@ -1,9 +1,6 @@
-from obstools.image.registration import (MultivariateGaussians,
-GaussianMixtureModel,
-                                   CoherentPointDrift, SkyImage, ImageRegister,
-                                        #  ImageRegistrationDSS,
-rigid
-                                               )
+from obstools.image.registration import (
+    MultivariateGaussians, GaussianMixtureModel, CoherentPointDrift,
+    SkyImage, ImageRegister, rigid)
 from recipes.transforms import rotate
 from astropy.coordinates import SkyCoord
 from pathlib import Path
@@ -34,26 +31,27 @@ def make_id(name, n):
         yield f'{name}{i}'
 
 
-# dynamically generate some simple fixtures for combinatorial
+# dynamically generate some simple fixtures for combinatorial tests
 for name, params in dict(
-    xy=[((5, 10), (5, 6), (8, 2))],
-    sigmas=[1,
-            (1, 0.5),
-            (1, 0.5, 0.6),
-            ((0.5, 0.1),
-             (0.5, 0.6),
-             (0.8, 0.2))
-            ],
-    amplitudes=[10,
-                (1, 2, 3)
-                ]
-).items():
+        xy=[((5, 10), (5, 6), (8, 2))],
+        sigmas=[1,
+                (1, 0.5),
+                (1, 0.5, 0.6),
+                ((0.5, 0.1),
+                 (0.5, 0.6),
+                 (0.8, 0.2))
+                ],
+        amplitudes=[10,
+                    (1, 2, 3)
+                    ]
+        ).items():
     exec(textwrap.dedent(
         f"""
         @pytest.fixture(params=params, ids=make_id(name, len(params)))
         def {name}(request):
             return request.param
         """))
+
 
 
 @pytest.fixture
@@ -275,6 +273,8 @@ class TestImageRegister:
     def test_refine(self):
         self.reg.refine()
         self.reg.recentre()
+
+    # TODO: test switch idx, mosaic should be identical with text removed
 
 
 # *images, slot_image = load_test_data('images.npz')

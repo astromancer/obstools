@@ -13,16 +13,17 @@ methods are implemented for doing this:
   brute force search with gaussian mixtures on points
 """
 
+from scipy.interpolate import NearestNDInterpolator
 from obstools.modelling import Model
 import numbers
-from recipes.containers import ItemGetter, OfType, AttrMapper
+from recipes.containers import ItemGetter, OfType, AttrMapper, AttrProp
 import collections as col
 from recipes.misc import duplicate_if_scalar
 import functools as ftl
 import logging
 import multiprocessing as mp
 import itertools as itt
-import warnings
+import warnings, re
 
 import numpy as np
 
@@ -36,7 +37,7 @@ from astropy.utils import lazyproperty
 from recipes.containers.dicts import AttrDict
 from obstools.image.segmentation import SegmentedImage
 from obstools.phot.campaign import HDUExtra
-from pySHOC.utils import get_coordinates, get_dss, STScIServerError
+from ..utils import get_coordinates, get_dss, STScIServerError
 
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
@@ -55,6 +56,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
 from . import transforms as trans
+
+from motley.profiling import profile
+
 
 logger = logging.getLogger(get_module_name(__file__))
 
@@ -95,6 +99,14 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=5,
     return seg, coords, counts
 
 
+def interpolate_nn(a, where):
+    good = ~where
+    grid = np.moveaxis(np.indices(a.shape), 0, -1)
+    nn = NearestNDInterpolator(grid[good], a[good])
+    a[where] = nn(grid[where])
+    return a
+
+
 # def match_pixels(self, image, fov, p0):
 #     """Match pixels directly"""
 #     sy, sx = self.data.shape
@@ -113,77 +125,6 @@ def detect_measure(image, mask=False, background=None, snr=3., npixels=5,
 #     result = minimize(ftl.partial(objective_pix, target, values, yx, bins),
 #                       p0)
 #     return result
-
-def is_square(a):
-    shape = np.shape(a)
-    return np.equals(shape[0], shape).all()
-
-
-def is_2d_symmetric(a):
-    if not is_square(a):
-        return False
-
-    # faster to just check the transpose than extract tril / triu
-    return np.allclose(a, a.T)
-
-
-def is_positive_definite(a):
-    return np.all(np.linalg.eigvalsh(a) > 0)
-
-
-def covariance_matrix(stddev, k=None):  # TODO: as an array subclass ??
-    """
-    Construct a covariance matrix from a vector of standard deviations
-
-    Parameters
-    ----------
-    stddev : float or array-like
-        standard deviation(s). The square of these numbers are the diagonal
-        components of the covariance matrix
-    k : int, optional
-        Dimensionality of the returned covariance matrix. This argument is only
-        used if the input `stddev` array has size 0 or 1
-
-    Returns
-    -------
-    np.ndarray
-        A (k, k) symmetric covariance matrix
-
-    Raises
-    ------
-    ValueError
-        If the input has masked elements
-    """
-    if np.ma.is_masked(stddev):
-        raise ValueError('Masked arrays not allowed')
-
-    stddev = np.asarray(stddev)
-    shape = stddev.shape
-    if stddev.ndim > 2:
-        raise ValueError(
-            f'Input has invalid number of dimensions {stddev.ndim}')
-
-    if stddev.ndim in (0, 1):
-        # check positive definite
-        if (stddev <= 0).any():
-            raise ValueError(f'`stddev` must be positive non-zero.')
-
-        var = np.square(stddev)
-        if k is None:
-            return np.diag(var)
-        else:
-            return np.diag(np.broadcast_to(var, k))
-
-    # if we are here the input array is 2d.  Make sure it's square symmetric,
-    # positive definite
-    if not is_square(stddev):
-        raise ValueError(f'Input array is not square. shape: {shape}')
-    if not is_2d_symmetric(stddev):
-        raise ValueError('Input array is not symmetric')
-    if not is_positive_definite(stddev):
-        raise ValueError('Input array is not positive definite')
-
-    return stddev
 
 
 class MultivariateGaussians(Model):
@@ -690,26 +631,26 @@ def gridsearch_alt(func, args, grid, axes=..., output=None):
     return output, (i, j), grid[:, i, j]
 
 
-def cross_index(coo_trg, coo, dmax=0.2):
-    # identify points matching points between sets by checking distances
-    # this will probably only work if the frames are fairly well aligned
-    dr = cdist(coo_trg, coo)
+# def cross_index(coo_trg, coo, dmax=0.2):
+#     # identify points matching points between sets by checking distances
+#     # this will probably only work if the frames are fairly well aligned
+#     dr = cdist(coo_trg, coo)
 
-    # if thresh is None:
-    #     thresh = np.percentile(dr, dr.size / len(coo))
+#     # if thresh is None:
+#     #     thresh = np.percentile(dr, dr.size / len(coo))
 
-    dr[(dr > dmax) | (dr == 0)] = np.nan
+#     dr[(dr > dmax) | (dr == 0)] = np.nan
 
-    ur, uc = [], []
-    for i, d in enumerate(dr):
-        dr[i, uc] = np.nan
-        if ~np.isnan(d).all():
-            # closest star not yet matched with another
-            jmin = np.nanargmin(d)
-            ur.append(i)
-            uc.append(jmin)
+#     ur, uc = [], []
+#     for i, d in enumerate(dr):
+#         dr[i, uc] = np.nan
+#         if ~np.isnan(d).all():
+#             # closest star not yet matched with another
+#             jmin = np.nanargmin(d)
+#             ur.append(i)
+#             uc.append(jmin)
 
-    return ur, uc
+#     return ur, uc
 
 
 # def match_cube(self, filename, object_name=None, coords=None):
@@ -963,9 +904,13 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
 
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
     for k, v in dict(s=25,
-                     marker='.',
-                     facecolors='none').items():
+                     marker='.').items():
         scatter_kws.setdefault(k, v)
+
+    if scatter_kws.get('marker') in '.o':
+        scatter_kws.setdefault('facecolors', 'none')
+    else:
+        scatter_kws.setdefault('facecolors', colours)
     #
     art = ax.scatter(*features[core_sample_indices_].T,
                      edgecolors=colours, **scatter_kws)
@@ -994,8 +939,8 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
 def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     """
     Measure the relative positions of detected stars from the individual
-    location measurements in xy.  Use the locations of the most-often
-    detected individual objects
+    location measurements in xy. Use the locations of the most-often
+    detected individual objects.
 
     Parameters
     ----------
@@ -1039,10 +984,11 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
         logger.info('Ignoring %i/%i (%.1f%%) nan values for position '
                     'measurement', n_ignore, n, (n_ignore / n) * 100)
 
-    n_detections_per_star = np.empty(n_stars, int)
+    n_detections_per_star = np.zeros(n_stars, int)
     w = np.where(~bad)[1]
+    u = np.unique(w)
+    n_detections_per_star[u] = np.bincount(w)[u]
 
-    n_detections_per_star[np.unique(w)] = np.bincount(w)
     f_det = (n_detections_per_star / n_use)
     use_stars = f_det > detect_freq_min
     i_use, = np.where(use_stars)
@@ -1071,7 +1017,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
         xyc[nansc] = np.ma.masked
 
     # delay centre compute for fainter stars until after re-centering
-    centres = np.empty((n_stars, 2))  # ma.masked_all
+    centres = δxy = np.ma.masked_all((n_stars, 2)) # np.empty((n_stars, 2))  # ma.masked_all
     for i, j in enumerate(i_use):
         centres[j] = geometric_median(xyc[:, i])
 
@@ -1222,8 +1168,8 @@ def group_features(labels, *features):
     return tuple(grouped)
 
 
-def report_measurements(xy, centres, σ_xy, xy_offsets, counts=None,
-                        detect_frac_min=None, count_thresh=None, logger=logger):
+def report_measurements(xy, centres, σ_xy,  xy_offsets=None,
+                        counts=None, detect_frac_min=None, count_thresh=None, logger=logger):
     # report on relative position measurement
     import operator as op
 
@@ -1310,9 +1256,10 @@ def report_measurements(xy, centres, σ_xy, xy_offsets, counts=None,
                              totals=[0],
                              formatters=formatters)
 
-    # fix formatting with percentage in total.  Still need to think of a
-    # cleaner solution for this
-    tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
+    # fix formatting with percentage in total.
+    # TODO Still need to think of a cleaner solution for this
+    tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
+    # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
 
     logger.info('\n' + str(tbl) + extra)
     return tbl
@@ -1389,16 +1336,16 @@ class SkyImage(object):
         *xyo, theta = params
         return Affine2D().scale(scale).rotate(theta).translate(*xyo)
 
-    @lazyproperty
-    def grid(self):
-        return np.indices(self.data.shape)
+    # @lazyproperty
+    # def grid(self):
+    #     return np.indices(self.data.shape)
 
-    def grid2(self, p, scale):
-        """transformed grid"""
+    def grid(self, p, scale):
+        """transformed pixel location grid cartesian xy coordinates"""
         g = np.indices(self.data.shape).reshape(2, -1).T[:, ::-1]
         return trans.affine(g, p, scale)
 
-    def plot(self, ax=None, p=(0, 0, 0), frame=True, **kws):
+    def plot(self, ax=None, p=(0, 0, 0), scale='fov', frame=True, **kws):
         """
         Display the image in the axes, applying the affine transformation for
         parameters `p`
@@ -1408,11 +1355,16 @@ class SkyImage(object):
         kws.setdefault('sliders', False)
         kws.setdefault('cbar', False)
 
-        # get extent - adjusted to pixel centers.
-        extent = np.c_[[0., 0.], self.fov[::-1]]
-        half_pixel_size = self.pixel_scale / 2
-        extent -= half_pixel_size[None].T
-        kws['extent'] = extent.ravel()
+        if scale is 'fov':
+            # get extent - adjusted to pixel centers.
+            extent = np.c_[[0., 0.], self.fov[::-1]]
+            half_pixel_size = self.pixel_scale / 2
+            extent -= half_pixel_size[None].T
+            urc = extent[:, 1]
+            kws['extent'] = extent.ravel()
+        else:
+            half_pixel_size = 0.5
+            urc = self.fov[::-1]
 
         # plot
         im = ImageDisplay(self.data, ax=ax, **kws)
@@ -1430,7 +1382,7 @@ class SkyImage(object):
                 frame_kws.update(frame)
 
             *xy, theta = p
-            frame = Rectangle(xy - half_pixel_size, *self.fov[::-1],
+            frame = Rectangle(np.subtract(xy, half_pixel_size), *urc,
                               np.degrees(theta), **frame_kws)
             im.ax.add_patch(frame)
 
@@ -1462,20 +1414,7 @@ def _echo(_):
     return _
 
 
-class AttrProp(object):
-    """Descriptor for vectorized attribute getting on `AttrMapper` subclasses"""
 
-    def __init__(self, name, convert=_echo):
-        self.name = name
-        self.convert = convert
-
-    def __get__(self, obj, kls=None):
-        if obj is None:
-            # class attribute lookup
-            return self
-
-        # instance attribute lookup
-        return self.convert(obj.attrs(self.name))
 
 
 # ensure we get lists back from getitem lookup since the initializer below works
@@ -1527,6 +1466,7 @@ class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
 
     # properties: vectorized attribute getters on `SkyImage`
     images = AttrProp('data')
+    shapes = AttrProp('data.shape', np.array)
     detections = AttrProp('seg')
     coms = AttrProp('xy')
     fovs = AttrProp('fov', np.array)
@@ -1594,8 +1534,41 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return self.scales[self.idx]
 
     @property
+    def params(self):
+        return np.array(self._params)
+
+    @params.setter
+    def params(self, params):
+        self._params = list(params)
+
+    @property
     def rscale(self):
         return self.scales / self.pixel_scale
+
+    @property
+    def idx(self):
+        return self._idx
+
+    @idx.setter
+    def idx(self, idx):
+        idx = int(idx)
+        n = len(self)
+        if idx < 0:
+            idx += n
+
+        if idx > n:
+            raise ValueError('Invalid index for reference frame')
+
+        par = self.params
+        rscale = self.rscale[idx]
+
+        self._xy = (self._xy - par[idx, :2]) / rscale
+
+        par[:, :2] /= rscale
+        par -= par[idx]
+        self._params = list(par)
+
+        self._idx = idx
 
     @property
     def xy(self):
@@ -1632,6 +1605,24 @@ class ImageRegister(ImageContainer, LoggingMixin):
         parameters and group them according to the cluster identified labels
         """
         return group_features(self.labels, self.xyt)[0]
+
+    @property
+    def source_indices(self):
+        if self.labels is None:
+            raise Exception('Unregistered')
+
+        # group_features(self.labels, self.labels)[0]
+        return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
+
+    @property
+    def corners(self):
+        corners = np.empty((len(self), 4, 2))
+        frame_size = self.fovs / self.pixel_scale
+        for i, (p, fov) in enumerate(zip(self.params, frame_size)):
+            c = np.array([[0, 0], fov[::-1]])
+            xy = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
+            corners[i] = trans.affine(xy, p)
+        return corners
 
     @lazyproperty
     def model(self):
@@ -1675,7 +1666,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         reg.register_constellation()
         return reg
 
-
     def __init__(self, images=(), fovs=(), params=(), **find_kws):
         """
         Initialize an image register.
@@ -1710,14 +1700,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # NOTE passing a reference index is only meaningful if the class is
         #  initialized with a set of images
-        self.idx = 0
+        self._idx = 0
         self.targetCoordsPix = None
         self.sigmas = None
         self._xy = None
         # keep track of minimal separation between sources
         self._min_dist = np.inf
 
-        self.params = []
+        self._params = []
         # self.grids = TransformedImageGrids(self)
 
         # self._sigma_guess = self.guess_sigma(self.xy)
@@ -1791,7 +1781,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # aggregate
         self.append(image)
-        self.params.append(p)
+        self._params.append(p)
         # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
         # self.logger.debug('sigma guess: %s' % self._sigma_guess)
 
@@ -1817,12 +1807,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
         ratio = self.pixel_scale / imr.pixel_scale
         xy = self.xy * ratio
 
-        params = np.array(self.params)
+        params = self.params
         params[:, :2] *= ratio
-        # self.params = list(params)
-
-        # for cx in self.coms:
-        #     cx *= ratio
+        # NOTE: this does not edit internal `_params` since array is made
+        # through the `params` property
 
         # note this means reg.mosaic will no longer work without fov keyword
         #  since we have changed the scale and it substitutes image shape for
@@ -1870,7 +1858,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         reg.copy()
 
-
         # use `match points` so we don't aggregate data just yet
         # xy = rotate(xy.T, rotation).T
         p = self.match_points(xy, rotation)
@@ -1881,7 +1868,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # finally aggregate the results from the new register
         self.extend(reg.data)
-        self.params.extend(params)
+        self._params.extend(params)
 
         # convert back to original coords
         # reg.convert_to_pixels_of(reg)
@@ -1989,10 +1976,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         self.xy = self.get_centres()
 
-    def get_clf(self):
+    def get_clf(self, *args, **kws):
         from sklearn.cluster import MeanShift
         # minimal distance between stars distance
-        return MeanShift(bandwidth=self.min_dist() / 3, cluster_all=False)
+        for k, v in dict(bandwidth=self.min_dist() / 2,
+                         cluster_all=False).items():
+            kws.setdefault(k, v)
+
+        return MeanShift(**kws)
 
     def cluster_id(self, clustering):
         # clustering to cross-identify stars
@@ -2021,7 +2012,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #                     '`register_constellation` to fit clustering model '
         #                     'to the measured centre-of-mass points')
 
-    def plot_clusters(self, show_bandwidth=True):
+    def plot_clusters(self, show_bandwidth=True, **kws):
         """
         Plot the identified sources (clusters) in a single frame
         """
@@ -2038,7 +2029,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
         ax.set_title(f'Position Measurements (CoM) {n} frames')
 
-        art = plot_clusters(ax, np.vstack(self.xyt), self.labels)
+        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, **kws)
         self._colour_sequence_cache = art.get_edgecolors()
 
         # bandwidth size indicator.
@@ -2093,7 +2084,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # some of the offsets may be masked. ignore those
             good = ~xy_offsets.mask.any(1)
             for i in np.where(good)[0]:
-                self.params[i][:-1] -= xy_offsets[i]
+                self._params[i][:-1] -= xy_offsets[i]
 
             self.xy = centres
             self.sigmas = xy_std
@@ -2144,7 +2135,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             self.register_constellation()
 
         xyt = self.xyt
-        params = np.array(self.params)
+        params = self.params
         # guess sigma:  needs to be larger than for brute search `_dxy_hop`
         # since we are searching a smaller region of parameter space
         # self.model.sigma = dist_flat(self.xy).min() / 3
@@ -2168,7 +2159,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # decide whether to accept new params!
         if better:
             # recompute cluster centers
-            self.params = list(params)
+            self.params = params
             self.update_centres()
 
         if plot:
@@ -2212,36 +2203,110 @@ class ImageRegister(ImageContainer, LoggingMixin):
         axes[0].hist(x, pixels, bins=250)
         axes[1].hist(y, pixels, bins=250)
 
-    def _stack_pixels(self, indices=...):
-        if indices is ...:
-            indices = range(len(self.images))
+    # @profile(report='bars')
+    def _stack_pixels(self, images=None, image_func=_echo):
 
-        sizes = [self.images[i].size for i in indices]
-        secs = map(slice, sizes, sizes[1:] + [None])
-        n = sum(sizes)
+        if images is None:
+            images = np.arange(len(self))
+
+        # polymorphic `images`: arrays or ints
+        types = set(map(type, images))
+        assert len(types), 'List of images is empty'
+
+        if isinstance(types.pop(), numbers.Integral):
+            indices = np.asarray(images)
+            images = self.images
+        else:
+            indices = np.arange(len(images))
+
+        # check if image func expects an integer
+        # image_func = image_func or _echo
+        # image func expects an image, so we wrap it so we can simply
+        # pass an integer below
+        ann = list(image_func.__annotations__.values())
+        if len(ann) and isinstance(ann[0], int):
+            def image_func(i, *args, **kws):
+                return image_func(images[i], *args, **kws)
+
+        sizes = self.shapes[indices].prod(1)
+        n = sizes.sum()
+        idx = np.cumsum(sizes)
+        sec = map(slice, [0] + list(idx), idx)
+
         grid = np.empty((n, 2))
         pixels = np.empty(n)
-        for i, sec in zip(indices, secs):
-            grid[sec] = self.grids[i]
-            pixels[sec] = self.images[i].ravel()
+        for i, s in zip(indices, sec):
+            grid[s] = self[i].grid(self.params[i], self.rscale[i])
+            pixels[s] = image_func(i).ravel()
 
         return grid, pixels
 
-    def stack_stat(self, stat='mean', indices=...):
-        if indices is ...:
-            indices = range(len(self.images))
+    # @profile(report='bars')
+    def binned_statistic(self, images=None, stat='mean', bins=None,
+                         image_func=None, interpolate=False):
 
-        grid = []
-        pixels = []
-        scales = self.scales
-        for i in indices:
-            grid.extend(self.grids[i])
-            pixels.extend(self.images[i].ravel())
+        grid, pixels = self._stack_pixels(images, image_func)
 
-        grid = np.array(grid)
-        bins = np.round(grid.ptp(0) * scales.min() / scales[0]).astype(int)
+        if bins is None:
+            bins = np.floor(grid.ptp(0)).astype(int)
 
+        # compute stat
         bs = binned_statistic_2d(*grid.T, pixels, stat, bins)
+
+        # interpolate nans
+        if interpolate:
+            interpolate_nn(bs.statistic, np.isnan(bs.statistic))
+
+        return grid, bs
+
+    def global_seg(self, circularize=True):
+        """
+        Get the global segmentation for all sources across all frames in this 
+        register. The returned SegmentedImage will be relative to the same
+        reference image as the register (as given by the attribute `idx`)
+
+        Parameters
+        ----------
+        circularize : bool, optional
+            Whether the source segments should be made circular, by default True
+
+        Returns
+        -------
+        obstools.image.segmentation.SegmentedImage
+            The global segmented image
+        """
+
+        # get pixel labels
+        def relabel(i: int):
+            """
+            Relabel segmented image for global segmentation
+            """
+            seg = self[i].seg.clone()  # copy!
+            seg.relabel_many(seg.labels, sidx[i] + 1)
+            return seg.data
+
+        sidx = self.source_indices
+        grid, pixels = self._stack_pixels(image_func=relabel)
+
+        xn, yn = np.ceil(grid.ptp(0) / self.rscale[self.idx]).astype(int)
+        x0, y0 = grid.min(0)
+        x1, y1 = grid.max(0)
+        bins = np.ogrid[x0:x1:xn * 1j], np.ogrid[y0:y1:yn * 1j]
+        # np.ogrid[y0:y1:yn * 1j]
+        # bins = tuple(map(np.squeeze, np.ogrid[x0:x1:xn * 1j, y0:y1:yn * 1j]))
+
+        r = np.full((xn + 1, yn + 1), -1)
+        indices = (np.digitize(g, b) for g, b in zip(grid.T, bins))
+        for i, j, px in zip(*indices, pixels):
+            r[i, j] = max(r[i, j], px)
+
+        #
+        interpolate_nn(r, r == -1)
+
+        seg = SegmentedImage(r.T)
+        if circularize:
+            return seg.circularize()
+        return seg
 
     def _dxy_hop(self, xy, rotation=0., plot=False):
         # This is a strategic brute force search along all the offset values
@@ -2408,13 +2473,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         mos = MosaicPlotter.from_register(self)
         # params are in units of pixels convert to units of `fov` (arcminutes)
-        params = np.array(self.params)
+        params = self.params
         params[:, :2] *= self.pixel_scale
         mos.mosaic(params, names,  **kws)
 
         if number_sources:
+            off = -4 * self.rscale.min(0) * self.pixel_scale
             mos.mark_sources(self.xy * self.pixel_scale,
-                             marker=None, xy_offset=-4 * self.pixel_scale)
+                             marker=None,
+                             xy_offset=off)
 
         return mos
 
