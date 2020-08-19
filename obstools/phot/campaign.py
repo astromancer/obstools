@@ -1,7 +1,12 @@
 # std libs
+import fnmatch as fnm
+import inspect
+from recipes.oo.null import Null
 import functools as ftl
 import itertools as itt
 from pathlib import Path
+from collections import UserList, Container, Iterable
+import glob
 
 # third-party libs
 import numpy as np
@@ -12,13 +17,13 @@ from astropy.utils import lazyproperty
 # local libs
 from recipes.logging import LoggingMixin
 from recipes.containers import (SelfAwareContainer, AttrGrouper,
-                                AttrMapper, AttrTable, Grouped,
+                                AttrMapper, Grouped,
                                 ReprContainer, ReprContainerMixin, OfType,
-                                ObjectArray1D
-                                )
+                                ItemGetter, AttrProp, is_property)
+from motley.table import AttrTable
 from obstools.image.sample import BootstrapResample
 from obstools.image.calibration import ImageCalibration, keep
-
+from recipes import io
 
 # from sklearn.cluster import MeanShift
 # from obstools.image.registration import register_constellation
@@ -32,26 +37,43 @@ from obstools.image.calibration import ImageCalibration, keep
 #  containing changes of observed brightness (etc ...) over time
 
 
-class FilenameHelper(AttrMapper):
-    def __init__(self, parent):
-        self.parent = parent
-
-    @property
-    def names(self):
-        return [Path(hdu._file.name).name for hdu in self.parent]
-
-    @property
-    def paths(self):
-        return [Path(hdu._file.name) for hdu in self.parent]
-
-
 # class ImageRegisterMixin(object):
 #     'todo maybe'
 
 
-class ReprCampaign(ReprContainer):
-    def item_str(self, hdu):
-        return hdu.filename
+class FnHelp:
+    # def __init_subclass(cls):
+
+    def __init__(self, hdu):
+        kls = Null if hdu._file is None else Path
+        self._path = kls(hdu._file.name)
+
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def name(self):
+        return str(self.path.name)
+
+    @property
+    def stem(self):
+        return str(self.path.stem)
+
+
+class FileHelper(UserList,  AttrMapper):  # OfType(FnHelp)
+    def __new__(cls, campaign):
+        obj = super().__new__(cls)
+        # use all
+        foo = campaign._allowed_types[0]._FnHelper
+        for name, p in inspect.getmembers(foo, is_property):
+            # print('creating property', name)
+            setattr(cls, f'{name}s', AttrProp(name))
+
+        return obj
+
+    def __init__(self, campaign):
+        super().__init__(campaign.attrs('file'))
 
 
 class _HDUExtra(PrimaryHDU, LoggingMixin):
@@ -59,15 +81,11 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
     Some extra methods and properties that help PhotCampaign
     """
 
-    @property
-    def filepath(self):  # fixme. won't work if self._file is None!!!
-        return Path(self._file.name)
+    _FnHelper = FnHelp
 
     @property
-    def filename(self):
-        if self._file is not None:
-            return self.filepath.stem
-        return 'None'
+    def file(self):
+        return self._FnHelper(self)
 
     @property
     def ishape(self):
@@ -141,12 +159,14 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
 
         elif self.ndim == 3:
             from graphing.imagine import VideoDisplay
+            # FIXME: this does not work since VideoDisplay tries to interpret
+            #  `self.section` as an array
             im = VideoDisplay(self.section, **kws)
 
         else:
             raise TypeError('Data is not image or video.')
 
-        im.figure.canvas.set_window_title(self.filepath.name)
+        im.figure.canvas.set_window_title(self.file.name)
         return im
 
 
@@ -165,7 +185,7 @@ class ImageSamplerHDU(_HDUExtra):
         #  than 2d
         if self.ndim < 2:
             raise ValueError('Cannot create image sampler for data with '
-                             f'{self.ndim} dimensiofcons.')
+                             f'{self.ndim} dimensions.')
 
         # ensure NE orientation
         data = self.oriented
@@ -181,17 +201,32 @@ class ImageSamplerHDU(_HDUExtra):
         return BootstrapResample(data)
 
     @ftl.lru_cache()
-    def get_sample_image(self, stat='median', depth=5):
-        # get sample image to a certain simulated exposure depth by averaging
-        # data
+    def get_sample_image(self, stat='median', min_depth=5):
+        """
+        Get sample image to a certain minimum simulated exposure depth by 
+        averaging data
 
+
+        Parameters
+        ----------
+        stat : str, optional
+            The statistic to use when computing the sample image, by default 
+            'median'
+        min_depth : int, optional
+            Minimum simulated exposure depth, by default 5 seconds
+
+        Returns
+        -------
+        [type]
+            [description]
+        """
         # FIXME: get this to work for SALTICAM
 
-        n = int(np.ceil(depth // self.timing.t_exp))
+        n = int(np.ceil(min_depth // self.timing.exp)) or 1
 
         self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
-                         f'{float(depth):.1f} seconds) for sample image from '
-                         f'{self.filepath.name!r}')
+                         f'{float(min_depth):.1f} seconds) for sample image '
+                         f'from {self.file.name!r}')
 
         sampler = getattr(self.sampler, stat)
         return self.calibrated(sampler(n, n))
@@ -205,9 +240,55 @@ class PPrintHelper(AttrTable):
     pass
 
 
-class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
-                   SelfAwareContainer, AttrGrouper,
-                   ReprContainerMixin, LoggingMixin):
+class ItemFilenameGetterMixin(ItemGetter):
+    """
+    Mixin that allows retrieving items from the campaign by indexing with a 
+    filenames (string). eg: run['SHA_20200729.0010']
+    """
+
+    def __getitem__(self, key):
+        if isinstance(key, (str, Path)):
+            original = key = str(key)
+            # If key is a pattern, always return a sequence of items - this
+            # means items will be wrapped in the container at the superclass
+            multiple = glob.has_magic(key)
+
+            files = self.files.names
+            for trial in (key, f'{key}.fits'):
+                key = list(map(files.index, fnm.filter(files, trial)))
+                if key:
+                    if not multiple:
+                        key = key.pop()
+                    break
+            else:
+                raise IndexError(f'Could not resolve {original!r} '
+                                 'as filename(s) in the campaign')
+
+        elif isinstance(key, (list, tuple)):
+            if set(map(type, key)) == {str}:
+                # handle list / tuple of filenames
+                key = list(map(self.files.names.index, key))
+                # line above will raise IndexError for invalid filenames
+
+        return super().__getitem__(key)
+
+
+# class ArrayLike1D(ItemGetter, ItemFilenameGetterMixin, UserList):
+    # pass
+
+class ReprCampaign(ReprContainer):
+    max_lines = 25
+    max_items = 100
+
+    def item_str(self, hdu):
+        return hdu.file.name
+
+
+class PhotCampaign(SelfAwareContainer, ReprContainerMixin,
+                   ItemFilenameGetterMixin,
+                   UserList, OfType(_BaseHDU),
+                   AttrGrouper,
+                   LoggingMixin):
     """
     A class containing multiple CCD observations potentially from different
     instruments and telescopes. Provides an interface for basic operations on
@@ -215,7 +296,7 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
     campaigns. Each item in this container is a `astropy.io.fits.hdu.HDU` object
     encapsulating the FITS data.
 
-    Built in capabilities include: 
+    Built in capabilities include:
         * sort, select, filter, group, split and merge operations based on attributes of
           the contained HDUs or arbitrary functions via :meth:`sort_by`,
           :meth:`select_by`, :meth:`filter_by`, :meth:`group_by` and :meth:`join` methods
@@ -237,8 +318,59 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
 
     @classmethod
-    # @profile(report='bars')
-    def load(cls, filenames, loader=_BaseHDU.readfrom, **kws):
+    def load(cls, files_or_dir, recurse=False, extensions=('fits',), **kws):
+        """
+        Load files into the campaign
+
+        Parameters
+        ----------
+        files : str or Path or Container or Iterable
+            The filename(s) or directory to load. Can also be a glob pattern of
+            filenames to load eg: '/path/SHA_20200715.000[1-5].fits' or any
+            iterable that yields successive filenames
+        extensions : tuple, optional
+            The file extensions to consider if `files` is a directory, by 
+            default ('fits',).  All files ending on any of the extensions in
+            this list will be included
+        recurse : bool
+            Whether to step down into sub-directories to find files
+
+        Returns
+        -------
+        PhotCampaign
+        """
+        kws.setdefault('loader', _BaseHDU.readfrom, )
+        files = files_or_dir
+
+        # resolve input from text file with list of file names
+        if isinstance(files, str) and files.startswith('@'):
+            files = io.read_lines(files.lstrip('@'))
+
+        if isinstance(files, (str, Path)):
+            if Path(files).is_file():
+                files = [files]
+            else:
+                try:
+                    files = io.iter_files(files, extensions, recurse)
+                except ValueError:
+                    raise ValueError(
+                        f'{files!r} could not be resolved as either a single '
+                        'filename, a glob pattern, or a directory') from None
+
+        if not isinstance(files, (Container, Iterable)):
+            raise TypeError(f'Invalid input type {type(files)} for `files`')
+
+        obj = cls.load_files(files, **kws)
+        if len(obj) == 0:
+            # although we could load an empty run here, least surprise
+            # dictates throwing an error
+            raise ValueError(f'Could not resolve any valid files with '
+                             f'extensions: {extensions} from input {files!r}')
+
+        return obj
+
+    @classmethod
+    def load_files(cls, filenames, loader=_BaseHDU.readfrom, **kws):
         """
         Load data from file(s).
 
@@ -254,12 +386,16 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         # cls.logger.info('Loading..')
         # kws.setdefault('memmap', True)
 
+        from time import time
+        from recipes import pprint
+
         # sanitize filenames:  input filenames may contain None - remove these
         filenames = filter(None, filenames)
         hdus = []
         said = False
         i = 0
-        for i, name in enumerate(filenames, 1):
+        # note sort filenames here by alphanumeric order
+        for i, name in enumerate(sorted(filenames), 1):
             if name is None:
                 if not said:
                     cls.logger.info('Filtering filenames that are `None`')
@@ -267,39 +403,24 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
                 continue
 
             # load the HDU
-            # cls.logger.info('Loading %s', name)
+            cls.logger.debug('Loading %s: %s', name,
+                             pprint.hms(time() % 86400))
             hdu = loader(name, **kws)
             hdus.append(hdu)
 
         cls.logger.info('Loaded %i files', i)
         return cls(hdus)
 
-    @classmethod
-    def load_dir(cls, path, extensions=('fits',)):
-        """
-        Load all files with given extension(s) from a directory
-        """
-        path = Path(path)
-        if not path.is_dir():
-            raise IOError('%r is not a directory' % str(path))
-
-        if isinstance(extensions, str):
-            extensions = extensions,
-
-        #
-        iterators = (path.glob(f'*.{ext.lstrip(".")}') for ext in extensions)
-        obj = cls.load(itt.chain(*iterators))
-
-        if len(obj) == 0:
-            # although we could load an empty run here, least surprise
-            # dictates throwing an error
-            raise IOError("Directory %s contains no valid '*.fits' files"
-                          % str(path))
-
-        return obj
-
     def __init__(self, hdus=None):
+        """
+        Initialize a PhotCampaign from a list of hdus
 
+        Parameters
+        ----------
+        hdus : list of astropy.io.fits.hdu.PrimaryHDU, optional
+            The list of HDU objects that make up the observational campaign.
+            The default is None, which creates an empty campaign
+        """
         if hdus is None:
             hdus = []
 
@@ -307,17 +428,26 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         # TypeEnforcer.__init__(self, _BaseHDU)
 
         # init container
-        ObjectArray1D.__init__(self, hdus)
+        UserList.__init__(self, hdus)
 
         # init helpers
-        self.files = FilenameHelper(self)
         self._repr = ReprCampaign(self, sep=' | ')  # TODO: merge with PPrint??
+
+    @property
+    def files(self):
+        return FileHelper(self)
 
     def pprint(self, attrs=None, **kws):
         return self.pprinter(self, attrs, **kws)
 
     def join(self, other):
-        assert other.__class__.__name__ == self.__class__.__name__
+        if isinstance(other, self.new_groups().__class__):
+            other = other.to_list()
+        
+        if not isinstance(other, self.__class__):
+            raise TypeError(
+                f'Cannot join {type(other)!r} with {self.__class__!r}')
+
         return self.__class__(np.hstack((self.data, other.data)))
 
     def _coalign(self, depth=10, sample_stat='median', reference_index=None,
@@ -405,14 +535,14 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
 
             imr.match_reg(reg)
             imr.register_constellation()
-        
+
         count = 0
         lhr = 10
         while (lhr > 1.01) and (count < 5):
             _, lhr = imr.refine()
             imr.recentre()
             count += 1
-        
+
         #
         # imr.recentre(plot=plot)
         # lhr = 2
@@ -423,7 +553,7 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
 
     # TODO: coalign_survey
     def coalign_dss(self, depth=10, sample_stat='median', reference_index=0,
-                    fov_dss=None, plot=False, **find_kws):
+                    fov=None, plot=False, **find_kws):
         """
         Perform image alignment of all images in this campaign with
         Digital Sky Survey image centred on the same field.  In astro-speak,
@@ -435,7 +565,7 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         depth
         sample_stat
         reference_index: int
-        fov_dss: float or 2-tuple
+        fov: float or 2-tuple
             Field of view for DSS image
         find_kws
 
@@ -449,12 +579,10 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         reg = self.coalign(depth, sample_stat, plot, **find_kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
-        if fov_dss is None:
-            fov_dss = np.ceil(np.max(reg.fovs, 0)) * 1.1
+        if fov is None:
+            fov = np.ceil(np.max(reg.fovs, 0)) * 1.1
 
-        dss = ImageRegisterDSS(self[reference_index].coords, fov_dss,
-                                   **find_kws)
-
+        dss = ImageRegisterDSS(self[reference_index].coords, fov, **find_kws)
         dss.match_reg(reg)
         dss.register_constellation()
         # dss.recentre(plot=plot)
@@ -504,106 +632,6 @@ class PhotCampaign(ObjectArray1D, OfType(_BaseHDU),
         return dss
 
 
-# class ObservationList(SelfAwareContainer, AttrGrouper, ReprContainerMixin,
-#                       LoggingMixin):
-#     """
-#     Class for collecting / sorting / grouping / heterogeneous set of CCD
-#     observations
-#     """
-#
-#     @classmethod
-#     def load(cls, filenames, **kws):
-#         """
-#         Load data from file(s).
-#
-#         Parameters
-#         ----------
-#         filenames
-#
-#         Returns
-#         -------
-#
-#         """
-#
-#         cls.logger.info('Loading data')
-#
-#         # sanitize filenames:  input filenames may contain None - remove these
-#         filenames = filter(None, filenames)
-#         hdus = []
-#         for i, name in enumerate(filenames):
-#             hdu = _BaseHDU.readfrom(name, **kws)  # note can pass header!!!!
-#             hdus.append(hdu)
-#
-#             # set the pretty printer as same object for all shocObs in the Run
-#             # obs.pprinter = cls.pprinter
-#
-#         return cls(hdus)
-#
-#     @classmethod
-#     def load_dir(cls, path, extensions=('fits',)):
-#         """
-#         Load all files with given extension(s) from a directory
-#         """
-#         path = Path(path)
-#         if not path.is_dir():
-#             raise IOError('%r is not a directory' % str(path))
-#
-#         if isinstance(extensions, str):
-#             extensions = extensions,
-#
-#         #
-#         iterators = (path.glob(f'*.{ext.lstrip(".")}') for ext in extensions)
-#         obj = cls.load(itt.chain(*iterators))
-#
-#         if len(obj) == 0:
-#             # although we could load an empty run here, least surprise
-#             # dictates throwing an error
-#             raise IOError("Directory %s contains no valid '*.fits' files"
-#                           % str(path))
-#
-#         return obj
-#
-#     def __init__(self, hdus=None):
-#
-#         if hdus is None:
-#             hdus = []
-#
-#         # init helpers
-#         self.files = FilenameHelper()
-#         self._repr = ReprContainer(self, sep='|', brackets=None)
-#         #
-#         for i, hdu in enumerate(hdus):
-#             if not isinstance(hdu, _BaseHDU):
-#                 raise TypeError('%s items must derive from `_BaseHDU`. Item %i '
-#                                 'is of type %r'
-#                                 % (self.__class__.__name__, i, type(hdu)))
-#             self.files.append(Path(hdu._file.name))
-#
-#         # put hdu objects in array to ease item getting.
-#         self.data = np.empty(len(hdus), dtype='O')
-#         self.data[:] = hdus
-#
-#         # self.label = label
-#
-#     def __len__(self):
-#         return len(self.data)
-#
-#     def __getitem__(self, key):
-#         """
-#         Can be indexed numerically, or by corresponding filename / basename.
-#         """
-#         if isinstance(key, str):
-#             if not key.endswith('.fits'):
-#                 key += '.fits'
-#             key = self.files.names.index(key)
-#             return self.data[key]
-#
-#         elif isinstance(key, slice):
-#             return self.__class__(self.data[key])
-#         else:
-#             return self.data[key]
-
-
 class ObsGroups(Grouped, LoggingMixin):
     """
     Emulates dict to hold multiple ObservationList instances keyed by their
@@ -614,5 +642,18 @@ class ObsGroups(Grouped, LoggingMixin):
     enabling flexible looping over various such groupings.
     """
 
-    def __init__(self, default_factory=PhotCampaign, *a, **kw):
-        super().__init__(default_factory, *a, **kw)
+    def __init__(self, factory=PhotCampaign, *a, **kw):
+        super().__init__(factory, *a, **kw)
+
+    def to_list(self):
+        out = self.factory()
+        for item in self.values():
+            if item is None:
+                continue
+            if isinstance(item, PrimaryHDU):
+                out.append(item)
+            elif isinstance(item, out.__class__):
+                out.extend(item)
+            else:
+                raise TypeError(f'{item.__class__}')
+        return out
