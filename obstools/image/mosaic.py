@@ -5,7 +5,7 @@ from graphing.imagine import ImageDisplay
 
 from obstools.image.registration import (ImageRegistrationDSS,
                                          ImageContainer, SkyImage)
-import obstools.image.transforms as trf
+import obstools.image.transforms as trans
 
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
@@ -15,26 +15,29 @@ def get_corners(p, fov):
     """Get corners relative to DSS coordinates. xy coords anti-clockwise"""
     c = np.array([[0, 0], fov[::-1]])  # lower left, upper right xy
     # corners = np.c_[c[0], c[:, 1], c[1], c[::-1, 0]].T  # / clockwise yx
-    # corners = roto_translate_yx(corners, p)
     corners = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
-    corners = trf.rigid(corners, p)
-    return corners  # return xy ! [:, ::-1]
+    corners = trans.rigid(corners, p)
+    return corners
 
 
-def _get_ulc(p, fov):
-    return trf.rigid([0, fov[0]], p).squeeze()
-
-
-def get_ulc(params, fovs):
+def ulc(p, fov):
     """
-    Get upper left corners of off all frames given roto-translation
-    parameters and field of view
+    Get upper left corner given rigid transform parameters and image field of
+    vi
     """
-    ulc = np.empty((len(params), 2))
-    for i, (p, fov) in enumerate(zip(params, fovs)):
-        ulc_ = np.array([[0, fov[0]]])
-        ulc[i] = trf.rigid(ulc_, p)
-    return ulc[:, 0].min(), ulc[:, 1].max()  # xy
+    return trans.rigid([0, fov[0]], p).squeeze()
+
+
+# def get_ulc(params, fovs):
+#     """
+#     Get upper left corners of all frames given roto-translation
+#     parameters and field of view
+#     """
+#     ulc = np.empty((len(params), 2))
+#     for i, (p, fov) in enumerate(zip(params, fovs)):
+#         ulc_ = np.array([[0, fov[0]]])
+#         ulc[i] = trf.rigid(ulc_, p)
+#     return ulc[:, 0].min(), ulc[:, 1].max()  # xy
 
 
 def plot_transformed_image(ax, image, fov=None, p=(0, 0, 0), frame=True,
@@ -265,7 +268,7 @@ class MosaicPlotter(ImageContainer):
         kws.setdefault('frame', self.default_frame)
         art = self.art[name] = image.plot(self.ax, p, **kws)
         self.params.append(p)
-
+# 
         # if coords is not None:
         #     line, = self.ax.plot(*coords.T, 'x')
         # plot_points.append(line)
@@ -372,7 +375,7 @@ class MosaicPlotter(ImageContainer):
         _kws = {}
         _kws.update(self.label_props)
         _kws.update(kws)
-        return self.ax.text(*_get_ulc(p, fov), name,
+        return self.ax.text(*ulc(p, fov), name,
                             rotation=np.degrees(p[-1]),
                             rotation_mode='anchor',
                             va='top',
@@ -452,7 +455,7 @@ class MosaicPlotter(ImageContainer):
         txt = self.image_label
         if i < n:
             txt.set_text(f'{i}: {self.names[i]}')
-            xy = _get_ulc(self.params[i], 0.98 * self.fovs[i])
+            xy = ulc(self.params[i], 0.98 * self.fovs[i])
             txt.set_position(xy)
 
         #
