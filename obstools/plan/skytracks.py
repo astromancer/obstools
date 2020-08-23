@@ -15,7 +15,7 @@ import threading
 import itertools as itt
 from pathlib import Path
 from functools import partial
-from datetime import datetime, timedelta, date as Date
+from datetime import datetime
 from collections import OrderedDict, defaultdict
 
 # third-party libs
@@ -51,6 +51,7 @@ from recipes.string import rreplace
 from ..utils import get_coordinates, get_site
 from .limits import TelescopeLimits
 import more_itertools as mit
+from .utils import nearest_midnight_date, get_midnight
 
 
 # TODO: enable different projections, like Mercator etc...
@@ -62,6 +63,7 @@ celestialCache = cachePath / 'celestials.pkl'
 frameCache = cachePath / 'frames.pkl'
 
 #
+TODAY = nearest_midnight_date()
 HOME_SITE = 'SAAO'
 TIMEZONE = +2 * u.hour  # SAST is UTC + 2
 WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -69,9 +71,11 @@ SECONDS_PER_DAY = 86400
 SIDEREAL_RATE = (366.24 / 365.24)
 # A mean sidereal day is 23 hours, 56 minutes, 4.0916 seconds
 # (23.9344699 hours or 0.99726958 mean solar days)
+HOUR_RANGE = (-12, 12)  # default range for plotting 
 
 # '\degree' symbol for latex
 rcParams['text.latex.preamble'] = r'\usepackage{gensymb}'
+
 
 
 def site_info_txt(site, tel):
@@ -173,93 +177,6 @@ def vertical_txt(ax, s, t, y=1, precision='m0', **kws):
     #          path_effects.Normal()])
 
 
-def nearest_midnight_date(t=None, switch_hour=9):
-    """
-    Get the date of local midnight time which is nearest the input time `t`
-    (defaults to current time if not given).
-
-    Parameters
-    ----------
-    t : None or Time or Date, optional
-        The default behaviour of this function changes depending on the time of
-        day the function is called (this is convenient for helping to plan an
-        observing schedule):
-        if calling during early morning hours (presumably at telescope):
-            time returned is current day local midnight 00:00:00
-            (ie. a few hours in the past)
-        if calling during afternoon hours:
-            time returned is midnight of the next calendar day
-            (ie. The next local midnight, a few hours in the future)
-    switch_hour : int, optional
-        The hour from midnight at which the swich from past to future occurs,
-        by default 9.  ie. If this function is called before 9am local time,
-        the previous midnight time is returned, while the next midnight will be
-        returned if the call takes place after 9am.
-
-    Returns
-    -------
-    datetime.Date
-        [description]
-    """
-    if t is None:
-        t = datetime.now()  # current local time
-        h = t.hour
-    elif isinstance(t, Time):
-        t = t.datetime
-        h = t.hour
-    elif isinstance(t, Date):
-        h = 0
-    else:
-        raise TypeError('Input time is of invalid type')
-
-    day_inc = int(h > switch_hour)  # int((now.hour - 12) > 12)
-    midnight = datetime(t.year, t.month, t.day, 0, 0, 0)
-    return midnight + timedelta(day_inc)
-
-
-def nearest_midnight_time(t=None, switch_hour=9):
-    """Return time of nearest midnight UTC"""
-    return Time(nearest_midnight_date(t, switch_hour))
-
-
-@ftl.lru_cache()
-def get_midnight(date, longitude):
-    """
-    Get midnight time from a date. The time returned by this function will
-    usually be the midnight time following the specified input date. This logic
-    allows one to specify the night on which your observations will be starting
-    as input.  If date is None, the current date will be used, which means the
-    next upcoming local midnight will be returned as midnight time.
-
-    Parameters
-    ----------
-    date : str or Date or Time or None
-        Calander date. If None, current local date is used.
-    longitude : [type]
-        [description]
-
-    Returns
-    -------
-    Date
-        The input date resolved as a `datetime.Date` object
-    Time
-        Time of local midnight
-    Time
-        Sidereal time of local midnight
-    """
-
-    if date is None:
-        date = nearest_midnight_date()
-        midnight = Time(date) - TIMEZONE
-    else:
-        # adjust date for working on the evening of the specified date
-        time = Time(date)
-        date = time.to_datetime()
-        midnight = time + 1 * u.day
-
-    mid_sid = midnight.sidereal_time('mean', longitude)
-    return date, midnight, mid_sid
-
 
 def sidereal_transform(t, longitude):
     """
@@ -303,7 +220,7 @@ def sidereal_transform(t, longitude):
 #     uth = (sidt - self.mid_sid.value) / SIDEREAL_RATE
 #     return self.midnight + TimeDelta(uth / 24)
 
-# def get_track(target, site=HOME_SITE, date=None):
+# def get_track(target, site=HOME_SITE, date=TODAY):
 #     _, midnight, _ = get_midnight(date, get_site(site).lon)
 #     sun.get_rise_set(site, date)
 #     t = midnight + np.linspace(*range, n) * u.hour
@@ -335,7 +252,7 @@ class CelestialTrack:
     n_points = 100
     name = short_name = None    # place holders
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points, limits=None):
         """
         Create the track for this celestial body on the `date` at `site`.
@@ -385,7 +302,7 @@ class CelestialTrack:
         self.track = self.get_track(self.range, self.n_points)
         self.interpolator = interp1d(self.hours, self.track.alt.degree)
 
-    def get_track(self, hours=(-12, 12), n_points=n_points):
+    def get_track(self, hours=HOUR_RANGE, n_points=n_points):
         # TODO: multiprocess for performance ?
         self.hours = np.linspace(*hours, n_points)
         t = self.midnight + self.hours * u.hour
@@ -405,7 +322,7 @@ class CelestialTrack:
         # Function to help calculate rise set times as well as times for
         # civil / nautical / astronomical twilight
 
-        # site=None, date=None,
+        # site=None, date=TODAY,
         # site = site or self.site
         # date = date or self.date
 
@@ -462,10 +379,18 @@ class CelestialTrack:
         """
         sidt = self.coords.ra.hour + ha
         h = (sidt - self.mid_sid.value) / SIDEREAL_RATE
-        return h + 24 * np.any(h < -12)
+        # return (h + 24) % 24
+        # if np.any(h > 12):
+        #     return h - 24
+        if np.any(h < -12):
+            h += 24
+        if np.any(h > 12):
+            h -= 24
+        # h[h < -12] += 24
+        return h 
 
     def plot(self, ax, annotate=True, **kws):
-        # site=HOME_SITE, date=None, limits=None,
+        # site=HOME_SITE, date=TODAY, limits=None,
         # track = self.get_track(hours, n_points)
 
         # site = get_site(site)
@@ -496,29 +421,32 @@ class CelestialTrack:
             idx = np.hstack([np.digitize(t_crit, t), len(t)])
 
             i0, t0, y0 = 0, None, None
-            ls = (':', '--', '-', '--', ':')
+            yy, tt = defaultdict(list), defaultdict(list)
             for i, (i1, t1, y1) in enumerate(
-                    itt.zip_longest(idx, t_crit, y_crit)):
+                    itt.zip_longest(idx, t_crit, y_crit), -2):
                 # get line segments
-                tt = np.hstack([t0, t[i0:i1], t1])
-                yy = np.hstack([y0, y[i0:i1], y1])
+                i = abs(i)
+                tt[i].extend(mit.collapse([t0, t[i0:i1], t1, None]))
+                yy[i].extend(mit.collapse([y0, y[i0:i1], y1, None]))
                 i0, t0, y0 = i1, t1, y1
 
+            
+            for i, dashes in enumerate(((), (4, 2), (2, 7))):
                 # plot
-                label = (self.name if i == 2 else None)
-                line, = ax.plot(tt, yy, **{**kws, **dict(ls=ls[i])})
+                label = (None if i else self.name)
+                t , y= tt[i] ,  yy[i]
+                line, = ax.plot(t, y, **{**kws, **dict(dashes=dashes)})
                 colour = kws['color'] = line.get_color()
                 art.append(line)
-
-            # plot critical points
-            idx = np.array([[0, -1], [1, 2]])
-            for i, (t, y) in enumerate(zip(t_crit[idx], y_crit[idx])):
-                points, = ax.plot(t, y, 'o',
-                                  color=colour,
-                                  mfc=['none', colour][i],
-                                  mew=1.5,
-                                  ms=5.5)
-                art.append(points)
+                
+                # plot critical points
+                if i:
+                    points, = ax.plot((t[0], t[-2]), (y[0], y[-2]), 'o',
+                                    color=colour,
+                                    mfc=['none', colour][i - 1],
+                                    mew=1.5,
+                                    ms=5.5)
+                    art.append(points)
         else:
             # main track
             kws.setdefault('ls', '-')
@@ -556,7 +484,7 @@ class CelestialTrack:
 
         # same colour for line and text
         # colour = self.plots[name].get_color()
-        kws = {**dict(size='small',
+        kws = {**dict(size=10,
                       fontweight='black',
                       rotation_mode='anchor',
                       clip_on=True,
@@ -610,8 +538,8 @@ class ObjTrack(CelestialTrack):
 
     n_points = CelestialTrack.n_points
 
-    def __init__(self, name, coords=None, site=HOME_SITE, date=None,
-                 hours=(-12, 12), n_points=n_points, limits=None):  #
+    def __init__(self, name, coords=None, site=HOME_SITE, date=TODAY,
+                 hours=HOUR_RANGE, n_points=n_points, limits=None):  #
         self.name = name
         self.short_name = short_name(name)
         self._coords = coords
@@ -663,7 +591,7 @@ class Sun(EclipticBody):
                 **dict(color='orangered',
                        marker='o')}
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points):
         #
         super().__init__(site, date, hours, n_points)
@@ -705,7 +633,7 @@ class Moon(EclipticBody):
     get_coords = staticmethod(get_moon)
     n_points = 100
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points):
         # get moon rise/set times, phase, illumination etc...
         super().__init__(site, date, hours, n_points)
@@ -838,7 +766,7 @@ class Clock(LoggingMixin):
         """
         Update the current time line and texts
         """
-        self.logger.debug('updating')
+        print('updating')
 
         now = Time.now()
         t = now.plot_date
@@ -860,6 +788,8 @@ class Clock(LoggingMixin):
         tmin, tmax = self.ax.get_xlim()
         if (tmin < t) & (t < tmax):
             set_visible(self)
+        
+        print('done update')
 
 
 class ClockWork(QtCore.QObject):
@@ -981,7 +911,7 @@ class VizAxes(SubplotHost):
         return f'UTC={xs}\talt={ys}\tsid.T={xts}\tairmass={yt:.3f}'
 
 
-class Visibilities(LoggingMixin):
+class SkyTracks(LoggingMixin):
     """
     A tool for plotting visibility tracks of celestial objects to aid
     observational planning and scheduling.
@@ -1007,14 +937,14 @@ class Visibilities(LoggingMixin):
 
     Examples
     --------
-    >>> vis = Visibilities()
-    >>> vis.add_target('FO Aqr')
-    >>> vis.add_target('NOI-105276', '20:31:25.8 -19:08:35.0')
-    >>> vis.add_targets('SN 1987A', 'M31')
-    >>> vis.connect()
+    >>> viz = SkyTracks()
+    >>> viz.add_target('FO Aqr')
+    >>> viz.add_target('NOI-105276', '20:31:25.8 -19:08:35.0')
+    >>> viz.add_targets('SN 1987A', 'M31')
+    >>> viz.connect()
     """
 
-    n_points_track = 100
+    n_points_track = 200
 
     # FIXME: legend being cut off
     # FIXME Current time thread stops working after hover, and in general sporadically...
@@ -1033,7 +963,7 @@ class Visibilities(LoggingMixin):
 
     # @profiling.histogram()
 
-    def __init__(self, targets=None, date=None, site=HOME_SITE,
+    def __init__(self, targets=None, date=TODAY, site=HOME_SITE,
                  tel=None, tz=TIMEZONE, cmap='gist_ncar', colours=(),
                  use_blit=True):
         """
@@ -1074,7 +1004,6 @@ class Visibilities(LoggingMixin):
         self.legLineMap = {}
 
         # local midnight in UTC
-        self._date = date
         self.date, self.midnight, self.mid_sid = get_midnight(
             date, self.site.lon)
 
@@ -1082,12 +1011,12 @@ class Visibilities(LoggingMixin):
         # The next two lines are potentially slow running once for every new
         # (date, site) combo
         # getting sun, moon coordinates needs to happen before setup_figure
-        self.sun = sun = Sun(site, date, n_points=self.n_points_track)
+        self.sun = sun = Sun(site, date)
         self.time_range = Time([sun.set, sun.rise]) + [-1/4, 1/4] * u.hour
         self.hour_range = tuple((self.time_range - sun.midnight).to('h').value)
 
         # frames = get_frames(date, site, interval, self.n_points_track)
-        self.moon = Moon(site, date, n_points=self.n_points_track)
+        self.moon = Moon(site, date)
 
         # Visibility limits for telescope / site
         self.limits = self.tel = None
@@ -1205,8 +1134,9 @@ class Visibilities(LoggingMixin):
 
         #
         self.targets[name] = track = ObjTrack(name, coords,
-                                              self.site.name, self._date,
-                                              self.hour_range,
+                                              self.site.name, 
+                                              self.midnight,
+                                              self.hour_range, #  HOUR_RANGE
                                               self.n_points_track,
                                               self.limits)
         track.plot(self.ax)
@@ -1374,7 +1304,7 @@ class Visibilities(LoggingMixin):
         xticklabels = ax.xaxis.get_majorticklabels()
         xticklocs = ax.xaxis.get_majorticklocs()
         fmt = ax.xaxis.get_major_formatter()
-        sast_lbls = map(fmt, xticklocs - self.tz.value / 24.)
+        sast_lbls = map(fmt, xticklocs + self.tz.value / 24.)
         for sast, tck in zip(sast_lbls, xticklabels):
             # FIXME: does not update when zooming / panning!  better to have
             # another parasite axes

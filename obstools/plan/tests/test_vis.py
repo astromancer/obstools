@@ -1,6 +1,6 @@
 import itertools as itt
 import matplotlib.pyplot as plt
-from obstools.plan.visibilities import Visibilities
+from obstools.plan import SkyTracks
 from obstools.plan.limits import HARD_LIMITS, SOFT_LIMITS, TelescopeLimits
 import pytest
 import re
@@ -84,7 +84,7 @@ def test_example3():
             'FL Cet',
             'FO Aqr']
 
-    vis = Visibilities(MCVs, date='2020-08-14', colors='jet')  #
+    vis = SkyTracks(MCVs, date='2020-08-14', colors='jet')  #
     vis.canvas.draw()
     return vis.figure
 
@@ -133,6 +133,6 @@ class TestLimits:
 
 
 # def test_limits():
-#     vis = Visibilities(MCVs, date='2020-08-14', colors='jet', tel='1m')  #
+#     vis = SkyTracks(MCVs, date='2020-08-14', colors='jet', tel='1m')  #
 #     vis.canvas.draw()
 #     return vis.figure
