@@ -2,7 +2,18 @@ import site
 import inspect
 import subprocess
 from pathlib import Path
+import os
 
+def get_site():
+    dest = site.getsitepackages()[0]
+    if os.access(dest, os.W_OK):
+        return dest
+
+    dest = site.getusersitepackages()
+    if os.access(dest, os.W_OK):
+        return dest
+    
+    raise Exception(f'{dest} not writable')
 
 def link_install_cheat():
     """
@@ -18,11 +29,10 @@ def link_install_cheat():
 
     pkg_name = src.name
     src = str(src / src.name)
-    dest = site.getusersitepackages()
-    dest = str(Path(dest) / pkg_name)
+    dest = str(Path(get_site()) / pkg_name)
 
     print('linking', src, dest)
-    ok = subprocess.call(['ln', '-sf', src, dest])
+    ok = subprocess.call(['ln', '-sfn', src, dest])
     # ln -s path/to/repo/eeg `python3 -m site --user-site`/eeg
     if ok == 0:
     	print('Installed', pkg_name, 'at', dest, 'via cheat')
