@@ -1,0 +1,7 @@
+Test images from J1928 include SAAO 1.9m, 1.0m, SALTICAM slot mode
+
+images.npz:
+    21 image arrays
+
+fovs.npz
+    21 arrays - field-of-view along array rows, columns in arcminutes
