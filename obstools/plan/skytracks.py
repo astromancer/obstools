@@ -15,7 +15,7 @@ import threading
 import itertools as itt
 from pathlib import Path
 from functools import partial
-from datetime import datetime, timedelta, date as Date
+from datetime import datetime
 from collections import OrderedDict, defaultdict
 
 # third-party libs
@@ -51,6 +51,7 @@ from recipes.string import rreplace
 from ..utils import get_coordinates, get_site
 from .limits import TelescopeLimits
 import more_itertools as mit
+from .utils import nearest_midnight_date, get_midnight
 
 
 # TODO: enable different projections, like Mercator etc...
@@ -62,6 +63,7 @@ celestialCache = cachePath / 'celestials.pkl'
 frameCache = cachePath / 'frames.pkl'
 
 #
+TODAY = nearest_midnight_date()
 HOME_SITE = 'SAAO'
 TIMEZONE = +2 * u.hour  # SAST is UTC + 2
 WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -69,6 +71,7 @@ SECONDS_PER_DAY = 86400
 SIDEREAL_RATE = (366.24 / 365.24)
 # A mean sidereal day is 23 hours, 56 minutes, 4.0916 seconds
 # (23.9344699 hours or 0.99726958 mean solar days)
+HOUR_RANGE = (-12, 12)  # default range for plotting
 
 # '\degree' symbol for latex
 rcParams['text.latex.preamble'] = r'\usepackage{gensymb}'
@@ -173,94 +176,6 @@ def vertical_txt(ax, s, t, y=1, precision='m0', **kws):
     #          path_effects.Normal()])
 
 
-def nearest_midnight_date(t=None, switch_hour=9):
-    """
-    Get the date of local midnight time which is nearest the input time `t`
-    (defaults to current time if not given).
-
-    Parameters
-    ----------
-    t : None or Time or Date, optional
-        The default behaviour of this function changes depending on the time of
-        day the function is called (this is convenient for helping to plan an
-        observing schedule):
-        if calling during early morning hours (presumably at telescope):
-            time returned is current day local midnight 00:00:00
-            (ie. a few hours in the past)
-        if calling during afternoon hours:
-            time returned is midnight of the next calendar day
-            (ie. The next local midnight, a few hours in the future)
-    switch_hour : int, optional
-        The hour from midnight at which the swich from past to future occurs,
-        by default 9.  ie. If this function is called before 9am local time,
-        the previous midnight time is returned, while the next midnight will be
-        returned if the call takes place after 9am.
-
-    Returns
-    -------
-    datetime.Date
-        [description]
-    """
-    if t is None:
-        t = datetime.now()  # current local time
-        h = t.hour
-    elif isinstance(t, Time):
-        t = t.datetime
-        h = t.hour
-    elif isinstance(t, Date):
-        h = 0
-    else:
-        raise TypeError('Input time is of invalid type')
-
-    day_inc = int(h > switch_hour)  # int((now.hour - 12) > 12)
-    midnight = datetime(t.year, t.month, t.day, 0, 0, 0)
-    return midnight + timedelta(day_inc)
-
-
-def nearest_midnight_time(t=None, switch_hour=9):
-    """Return time of nearest midnight UTC"""
-    return Time(nearest_midnight_date(t, switch_hour))
-
-
-@ftl.lru_cache()
-def get_midnight(date, longitude):
-    """
-    Get midnight time from a date. The time returned by this function will
-    usually be the midnight time following the specified input date. This logic
-    allows one to specify the night on which your observations will be starting
-    as input.  If date is None, the current date will be used, which means the
-    next upcoming local midnight will be returned as midnight time.
-
-    Parameters
-    ----------
-    date : str or Date or Time or None
-        Calander date. If None, current local date is used.
-    longitude : [type]
-        [description]
-
-    Returns
-    -------
-    Date
-        The input date resolved as a `datetime.Date` object
-    Time
-        Time of local midnight
-    Time
-        Sidereal time of local midnight
-    """
-
-    if date is None:
-        date = nearest_midnight_date()
-        midnight = Time(date) - TIMEZONE
-    else:
-        # adjust date for working on the evening of the specified date
-        time = Time(date)
-        date = time.to_datetime()
-        midnight = time + 1 * u.day
-
-    mid_sid = midnight.sidereal_time('mean', longitude)
-    return date, midnight, mid_sid
-
-
 def sidereal_transform(t, longitude):
     """
     Initialize matplotlib transform for local time -> sidereal time conversion
@@ -291,26 +206,6 @@ def sidereal_transform(t, longitude):
         p0 + mid_sid.hour / 24, 0).inverted()
 
 
-# @memoize.to_file(frameCache)
-# def get_frames(date, site, hrange=(-12, 12), n_points=50):
-#     _, midnight, _ = get_midnight(date, site.lon)
-#     t = midnight + np.linspace(*hrange, n_points) * u.hour
-#     return AltAz(obstime=t, site=site)
-
-
-# def ha_to_ut(self, ra, ha):
-#     sidt = ra + ha
-#     uth = (sidt - self.mid_sid.value) / SIDEREAL_RATE
-#     return self.midnight + TimeDelta(uth / 24)
-
-# def get_track(target, site=HOME_SITE, date=None):
-#     _, midnight, _ = get_midnight(date, get_site(site).lon)
-#     sun.get_rise_set(site, date)
-#     t = midnight + np.linspace(*range, n) * u.hour
-#     frames = AltAz(obstime=t, site=site)
-#     alt = coords.transform_to(frames).alt.degree
-
-
 def short_name(name):
     if jparser.search(name):
         return jparser.shorten(name)
@@ -335,7 +230,7 @@ class CelestialTrack:
     n_points = 100
     name = short_name = None    # place holders
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points, limits=None):
         """
         Create the track for this celestial body on the `date` at `site`.
@@ -385,7 +280,7 @@ class CelestialTrack:
         self.track = self.get_track(self.range, self.n_points)
         self.interpolator = interp1d(self.hours, self.track.alt.degree)
 
-    def get_track(self, hours=(-12, 12), n_points=n_points):
+    def get_track(self, hours=HOUR_RANGE, n_points=n_points):
         # TODO: multiprocess for performance ?
         self.hours = np.linspace(*hours, n_points)
         t = self.midnight + self.hours * u.hour
@@ -405,7 +300,7 @@ class CelestialTrack:
         # Function to help calculate rise set times as well as times for
         # civil / nautical / astronomical twilight
 
-        # site=None, date=None,
+        # site=None, date=TODAY,
         # site = site or self.site
         # date = date or self.date
 
@@ -462,10 +357,18 @@ class CelestialTrack:
         """
         sidt = self.coords.ra.hour + ha
         h = (sidt - self.mid_sid.value) / SIDEREAL_RATE
-        return h + 24 * np.any(h < -12)
+        # return (h + 24) % 24
+        # if np.any(h > 12):
+        #     return h - 24
+        if np.any(h < -12):
+            h += 24
+        if np.any(h > 12):
+            h -= 24
+        # h[h < -12] += 24
+        return h
 
     def plot(self, ax, annotate=True, **kws):
-        # site=HOME_SITE, date=None, limits=None,
+        # site=HOME_SITE, date=TODAY, limits=None,
         # track = self.get_track(hours, n_points)
 
         # site = get_site(site)
@@ -496,29 +399,34 @@ class CelestialTrack:
             idx = np.hstack([np.digitize(t_crit, t), len(t)])
 
             i0, t0, y0 = 0, None, None
-            ls = (':', '--', '-', '--', ':')
+            yy, tt = defaultdict(list), defaultdict(list)
             for i, (i1, t1, y1) in enumerate(
-                    itt.zip_longest(idx, t_crit, y_crit)):
+                    itt.zip_longest(idx, t_crit, y_crit), -2):
                 # get line segments
-                tt = np.hstack([t0, t[i0:i1], t1])
-                yy = np.hstack([y0, y[i0:i1], y1])
+                i = abs(i)
+                tt[i].extend(mit.collapse([t0, t[i0:i1], t1, None]))
+                yy[i].extend(mit.collapse([y0, y[i0:i1], y1, None]))
                 i0, t0, y0 = i1, t1, y1
 
+            # main / soft / hard
+            label = self.name
+            for i, dashes in enumerate(((), (4, 2), (2, 7))):
                 # plot
-                label = (self.name if i == 2 else None)
-                line, = ax.plot(tt, yy, **{**kws, **dict(ls=ls[i])})
+                t, y = tt[i],  yy[i]
+                line, = ax.plot(t, y,
+                                **{**kws,
+                                   # mark critical points
+                                   **dict(label=label,
+                                          dashes=dashes,
+                                          marker='o',
+                                          markevery=len(t) - 2,
+                                          mfc=['none', colour][bool(i - 1)],
+                                          mew=1.5,
+                                          ms=5.5)})
                 colour = kws['color'] = line.get_color()
                 art.append(line)
+                label = None
 
-            # plot critical points
-            idx = np.array([[0, -1], [1, 2]])
-            for i, (t, y) in enumerate(zip(t_crit[idx], y_crit[idx])):
-                points, = ax.plot(t, y, 'o',
-                                  color=colour,
-                                  mfc=['none', colour][i],
-                                  mew=1.5,
-                                  ms=5.5)
-                art.append(points)
         else:
             # main track
             kws.setdefault('ls', '-')
@@ -556,7 +464,7 @@ class CelestialTrack:
 
         # same colour for line and text
         # colour = self.plots[name].get_color()
-        kws = {**dict(size='small',
+        kws = {**dict(size=10,
                       fontweight='black',
                       rotation_mode='anchor',
                       clip_on=True,
@@ -610,8 +518,8 @@ class ObjTrack(CelestialTrack):
 
     n_points = CelestialTrack.n_points
 
-    def __init__(self, name, coords=None, site=HOME_SITE, date=None,
-                 hours=(-12, 12), n_points=n_points, limits=None):  #
+    def __init__(self, name, coords=None, site=HOME_SITE, date=TODAY,
+                 hours=HOUR_RANGE, n_points=n_points, limits=None):  #
         self.name = name
         self.short_name = short_name(name)
         self._coords = coords
@@ -663,7 +571,7 @@ class Sun(EclipticBody):
                 **dict(color='orangered',
                        marker='o')}
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points):
         #
         super().__init__(site, date, hours, n_points)
@@ -705,7 +613,7 @@ class Moon(EclipticBody):
     get_coords = staticmethod(get_moon)
     n_points = 100
 
-    def __init__(self, site=HOME_SITE, date=None, hours=(-12, 12),
+    def __init__(self, site=HOME_SITE, date=TODAY, hours=HOUR_RANGE,
                  n_points=n_points):
         # get moon rise/set times, phase, illumination etc...
         super().__init__(site, date, hours, n_points)
@@ -822,23 +730,24 @@ class Clock(LoggingMixin):
                              transform=btf(ax.transData, ax.transAxes),
                              animated=True)
         self.sast = vertical_txt(ax, '', t0, y='bottom', color='g',
-                                 animated=True)
-        self.sidT = vertical_txt(ax, '', t0, y='top', color='c',
-                                 animated=True)
-
+                                 animated=True, fontweight='bold')
+        self.sidt = vertical_txt(ax, '', t0, y='top', color='c',
+                                 animated=True, fontweight='bold')
+        # not visible initially
+        # set_visible(self, False)
+        
         # threading Event controls whether
         self.alive = threading.Event()
-        self.alive.set()
 
     def __iter__(self):
         """All artists associated with the clock"""
-        yield from (self.line, self.sast, self.sidT)
+        yield from (self.line, self.sast, self.sidt)
 
     def update(self):
         """
         Update the current time line and texts
         """
-        self.logger.debug('updating')
+        # print('updating')
 
         now = Time.now()
         t = now.plot_date
@@ -846,20 +755,22 @@ class Clock(LoggingMixin):
         self.line.set_xdata([t, t])
 
         # update SAST text
-        sast = f"{local_time_str(now, self.precision)} SAST"
+        sast = local_time_str(now, self.precision)
         self.sast.set_text(sast)
         self.sast.set_position((t, 0.01))
 
         # update Sid.T text
         sidt = now.sidereal_time('mean', self.lon).hour * 3600
         sidt = f"{ppr.hms(sidt, self.precision, ':')} Sid.T"
-        self.sidT.set_text(sidt)
-        self.sidT.set_position((t, 1))
+        self.sidt.set_text(sidt)
+        self.sidt.set_position((t, 1))
 
         # blit the figure if the current time is within range
         tmin, tmax = self.ax.get_xlim()
         if (tmin < t) & (t < tmax):
             set_visible(self)
+
+        # print('done update')
 
 
 class ClockWork(QtCore.QObject):
@@ -981,7 +892,7 @@ class VizAxes(SubplotHost):
         return f'UTC={xs}\talt={ys}\tsid.T={xts}\tairmass={yt:.3f}'
 
 
-class Visibilities(LoggingMixin):
+class SkyTracks(LoggingMixin):
     """
     A tool for plotting visibility tracks of celestial objects to aid
     observational planning and scheduling.
@@ -1007,17 +918,18 @@ class Visibilities(LoggingMixin):
 
     Examples
     --------
-    >>> vis = Visibilities()
-    >>> vis.add_target('FO Aqr')
-    >>> vis.add_target('NOI-105276', '20:31:25.8 -19:08:35.0')
-    >>> vis.add_targets('SN 1987A', 'M31')
-    >>> vis.connect()
+    >>> viz = SkyTracks()
+    >>> viz.add_target('FO Aqr')
+    >>> viz.add_target('NOI-105276', '20:31:25.8 -19:08:35.0')
+    >>> viz.add_targets('SN 1987A', 'M31')
+    >>> viz.connect()
     """
 
-    n_points_track = 100
+    n_points_track = 200
 
     # FIXME: legend being cut off
     # FIXME Current time thread stops working after hover, and in general sporadically...
+    # FIXME: from thread: SystemError: ../Objects/tupleobject.c:85: bad argument to internal function
     # TODO: ephemerides
     # TODO: non-overlapping labels
     # TODO: labels not legible if crossing twilight boundaries. emphasise
@@ -1026,25 +938,31 @@ class Visibilities(LoggingMixin):
     # TODO: let text labels for tracks curve along the track - long labels
     # TODO: Moon / sun pickable
     # TODO: hover bubble with name of track under mouse
-    # TODO: horizon for different telescopes
     # TODO: watch_file
     # TODO: set_date !!
     # TODO: scroll through dates
 
     # @profiling.histogram()
 
-    def __init__(self, targets=None, date=None, site=HOME_SITE,
+    def __init__(self, targets=None, date=TODAY, site=HOME_SITE,
                  tel=None, tz=TIMEZONE, cmap='gist_ncar', colours=(),
                  use_blit=True):
         """
-        [summary]
+        Plot visibility tracks for a list of `targets` on a `date` at the an
+        observing `site`, optionally including telescope `tel` specific limits.
 
         Parameters
         ----------
         targets : [type], optional
             [description], by default None
         date : [type], optional
-            [description], by default None
+            If given, midnight time of that date will be used. If not given,
+            either the upcoming midnight or previous midnight will be used
+            depending on the current (call) time. The hour (in local time) which
+            the switch from past to future occurs, is by default 9am. This
+            ensures that the tracks for the intended date are plotted when using
+            this class during observations in the morning hours at the
+            telescope. see: `utils.nearest_midnight_date`
         site : [type], optional
             [description], by default HOME_SITE
         tel : [type], optional
@@ -1074,7 +992,6 @@ class Visibilities(LoggingMixin):
         self.legLineMap = {}
 
         # local midnight in UTC
-        self._date = date
         self.date, self.midnight, self.mid_sid = get_midnight(
             date, self.site.lon)
 
@@ -1082,12 +999,12 @@ class Visibilities(LoggingMixin):
         # The next two lines are potentially slow running once for every new
         # (date, site) combo
         # getting sun, moon coordinates needs to happen before setup_figure
-        self.sun = sun = Sun(site, date, n_points=self.n_points_track)
+        self.sun = sun = Sun(site, date)
         self.time_range = Time([sun.set, sun.rise]) + [-1/4, 1/4] * u.hour
         self.hour_range = tuple((self.time_range - sun.midnight).to('h').value)
 
         # frames = get_frames(date, site, interval, self.n_points_track)
-        self.moon = Moon(site, date, n_points=self.n_points_track)
+        self.moon = Moon(site, date)
 
         # Visibility limits for telescope / site
         self.limits = self.tel = None
@@ -1123,7 +1040,7 @@ class Visibilities(LoggingMixin):
 
         # set all tracks and their labels as well as current time text invisible
         # before drawing, so we can blit
-        set_visible(self.art, False)
+        set_visible((self.art, self.clock), False)
 
         # HACK
         self.cid = self.canvas.mpl_connect('draw_event', self._on_first_draw)
@@ -1143,7 +1060,7 @@ class Visibilities(LoggingMixin):
     @property
     def art(self):
         """All artists that need to be redrawn upon interaction"""
-        return (self.clock, self.targets.values(), self.legLineMap)
+        return (self.targets.values(), self.legLineMap)
 
     def moon_distances(self, t=None):
         """
@@ -1192,7 +1109,7 @@ class Visibilities(LoggingMixin):
         for name, coo in itr:
             self.add_target(name, coo, update=False)
 
-        self.set_colour_cycle(self.colours, self.cmap)
+        self.apply_colours()
         self.do_legend()
         self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)
 
@@ -1205,14 +1122,15 @@ class Visibilities(LoggingMixin):
 
         #
         self.targets[name] = track = ObjTrack(name, coords,
-                                              self.site.name, self._date,
-                                              self.hour_range,
+                                              self.site.name,
+                                              self.midnight,
+                                              self.hour_range,  # HOUR_RANGE
                                               self.n_points_track,
                                               self.limits)
         track.plot(self.ax)
 
         if update:
-            self.set_colour_cycle(self.colours, self.cmap)
+            self.apply_colours()
             self.do_legend()
             self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)
 
@@ -1240,15 +1158,15 @@ class Visibilities(LoggingMixin):
             self.add_annotation(name)
 
         # now the canvas will redraw automatically
-        set_visible(self.art)
+        set_visible((self.art, self.clock))
         self.saving = True
 
     def setup_figure(self, figsize=(15, 7.5)):
 
         fig = plt.figure(figsize=figsize)
-        fig.subplots_adjust(top=0.94,
+        fig.subplots_adjust(right=0.8,  # 0.65 if self.one_line_legend else 0.8,
+                            top=0.94,
                             left=0.05,
-                            right=0.8,  # 0.65 if self.one_line_legend else 0.8,
                             bottom=0.075)
         # setup axes with
         ax = VizAxes(fig, 111)
@@ -1340,33 +1258,33 @@ class Visibilities(LoggingMixin):
         ax.grid(ls=':')
         return fig, ax
 
-    def set_colour_cycle(self, colours=(), cmap=None):
-        # Ensure we plot with unique colours
-        n = len(self.targets)
+    def set_cmap(cmap):
+        self.cmap = plt.get_cmap(cmap)
+        self.set_colours()
 
-        # default behaviour - use colourmap
-        if (len(colours) == 0) and (cmap is None):
-            cmap = self.default_cmap
+    def get_colours(self):
+        if len(self.colours):
+            return self.colours
 
-        # if colour map given or colours not given and default colour sequence
-        # insufficient
-        if (  # colour map given - superceeds colours arg
-            (cmap is not None)
-                # colours not given
-                or ((not len(colours))
-                    # default colour sequence insufficient for uniqueness
-                    and len(rcParams['axes.prop_cycle']) < n)):
+        cm = plt.get_cmap(self.cmap)
+        return cm(np.linspace(0, 1, len(self.targets)))
 
-            cm = plt.get_cmap(cmap)
-            colours = cm(np.linspace(0, 1, n))
+    def set_colours(self, colours):
+        # colour sequence insufficient for uniqueness
+        nc, nt = len(colours), len(self.targets)
+        if nc < nt:
+            self.logger.info('Given colour sequence less than number of '
+                             f'plots ({nc} < {nt}). Colours will repeat.')
 
-        # Colours provided explicitly and no colourmap given
-        elif len(colours) < n:
-            'Given colour sequence less than number of time series. Colours '
-            'will repeat'
+        self.colours = colours
+        self.apply_colours()
 
-        if len(colours):
-            self.ax.set_prop_cycle(color=colours)
+    def apply_colours(self):
+        for c, target in zip(self.get_colours(), self.targets.values()):
+            for artist in mit.collapse(target.art):
+                artist.set_color(c)
+
+        # self.ax.set_prop_cycle(color=)
 
     def make_time_ticks(self):
         # Create ticklabels for SAST
@@ -1374,7 +1292,7 @@ class Visibilities(LoggingMixin):
         xticklabels = ax.xaxis.get_majorticklabels()
         xticklocs = ax.xaxis.get_majorticklocs()
         fmt = ax.xaxis.get_major_formatter()
-        sast_lbls = map(fmt, xticklocs - self.tz.value / 24.)
+        sast_lbls = map(fmt, xticklocs + self.tz.value / 24.)
         for sast, tck in zip(sast_lbls, xticklabels):
             # FIXME: does not update when zooming / panning!  better to have
             # another parasite axes
@@ -1604,8 +1522,7 @@ class Visibilities(LoggingMixin):
     def _on_first_draw(self, event):
         # This method creates the SAST labels upon the first call to draw
         # as well as starting the currentTime.thread
-        self.logger.debug('FIRST DRAW')
-
+        # print('FIRST DRAW')
         fig = self.figure
         canvas = fig.canvas
 
@@ -1617,17 +1534,17 @@ class Visibilities(LoggingMixin):
 
         # save background without tracks
         self.save_background()
-        set_visible(self.art, True)
+        set_visible((self.art, self.clock), True)
         self.draw_blit(*self.art)
         # save background with tracks
-        self.background2 = self.canvas.copy_from_bbox(
-            self.figure.bbox)        # canvas.draw()
+        self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)      
+        # canvas.draw()
 
     def save_background(self, event=None):
         # save the background for blitting
         self.logger.debug('save_background')
         # make tracks invisible
-        set_visible(self.art, False)
+        set_visible((self.art, self.clock), False)
         self.canvas.draw()
         self.background = self.canvas.copy_from_bbox(self.figure.bbox)
 
@@ -1647,10 +1564,11 @@ class Visibilities(LoggingMixin):
 
     def connect(self):
         # Setup legend picking
-        self.canvas.mpl_connect('pick_event', self._on_pick)
-        self.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        # self.canvas.mpl_connect('pick_event', self._on_pick)
+        # self.canvas.mpl_connect('motion_notify_event', self._on_motion)
         self.canvas.mpl_connect('close_event', self.close)
         self.canvas.mpl_connect('resize_event', self._on_resize)
 
         # start clock
+        self.clock.alive.set()
         self.clockWork.thread.start()
