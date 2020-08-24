@@ -30,7 +30,7 @@ import more_itertools as mit
 
 def get_readme_code():
     path = (Path(__file__).parent / '../README.md').resolve()
-    regex = re.compile("```python(.*?Vis.*?)```", re.S)
+    regex = re.compile("```python(.*?SkyTracks.*?)```", re.S)
     for code in regex.finditer(path.read_text()):
         yield code.group(1)
 
@@ -50,10 +50,10 @@ def get_readme_code():
 def test_readme_example(code):
     locals_ = {}
     exec(code, None, locals_)
-    vis = locals_['vis']
-    vis.canvas.draw()
-    # vis.close()
-    return vis.figure
+    viz = locals_['viz']
+    viz.canvas.draw()
+    # viz.close()
+    return viz.figure
 
 # ---------------------------------------------------------------------------- #
 
@@ -84,9 +84,9 @@ def test_example3():
             'FL Cet',
             'FO Aqr']
 
-    vis = SkyTracks(MCVs, date='2020-08-14', colors='jet')  #
-    vis.canvas.draw()
-    return vis.figure
+    viz = SkyTracks(MCVs, date='2020-08-14', cmap='jet')  #
+    viz.canvas.draw()
+    return viz.figure
 
 
 # class TestCelestialTrack:
@@ -110,7 +110,7 @@ class TestLimits:
         assert SOFT_LIMITS[ok] == SOFT_LIMITS[expected]
 
     @pytest.mark.parametrize('tel', (1, 1.9))
-    @pytest.mark.mpl_image_compare(baseline_dir='images', remove_text=True)
+    @pytest.mark.mpl_image_compare(baseline_dir='images')
     def test_plot(self, tel):
         limits = TelescopeLimits(tel)
         art = limits.plot()
@@ -133,6 +133,6 @@ class TestLimits:
 
 
 # def test_limits():
-#     vis = SkyTracks(MCVs, date='2020-08-14', colors='jet', tel='1m')  #
-#     vis.canvas.draw()
-#     return vis.figure
+#     viz = SkyTracks(MCVs, date='2020-08-14', colors='jet', tel='1m')  #
+#     viz.canvas.draw()
+#     return viz.figure
