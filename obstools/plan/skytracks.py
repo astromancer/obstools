@@ -717,7 +717,7 @@ class Clock(LoggingMixin):
     Vertical line and clock on axes indicating current time
     """
 
-    def __init__(self, ax, midnight, t0, lon, precision='s0'):
+    def __init__(self, ax, t0, lon, precision='s0'):
         #
         self.ax = ax
         self.lon = lon
@@ -725,7 +725,7 @@ class Clock(LoggingMixin):
 
         # plot line
         # animated=True to prevent redrawing the canvas
-        self.line, = ax.plot([midnight.plot_date] * 2, [0, 1],
+        self.line, = ax.plot([t0.plot_date] * 2, [0, 1],
                              ls=':', c='g',
                              transform=btf(ax.transData, ax.transAxes),
                              animated=True)
@@ -1035,7 +1035,7 @@ class SkyTracks(LoggingMixin):
         self.highlighted = None
 
         # current time indicator.
-        self.clock = Clock(ax, self.midnight, Time.now(), self.site.lon)
+        self.clock = Clock(ax, Time.now(), self.site.lon)
         self.clockWork = ClockWork(self.update_clock, self.clock.alive)
 
         # set all tracks and their labels as well as current time text invisible
@@ -1083,7 +1083,6 @@ class SkyTracks(LoggingMixin):
 
     def update_clock(self):
         self.clock.update()
-
         # redraw the canvas
         # with self.clockWork.lock:  # deadlock??
         # blit figure
@@ -1534,8 +1533,9 @@ class SkyTracks(LoggingMixin):
 
         # save background without tracks
         self.save_background()
-        set_visible((self.art, self.clock), True)
-        self.draw_blit(*self.art)
+        set_visible(self.art, True)
+        self.draw_blit(*self.art)  
+        # clock intentionally not drawn here - will draw in thread
         # save background with tracks
         self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)      
         # canvas.draw()
