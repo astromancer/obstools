@@ -735,7 +735,7 @@ class Clock(LoggingMixin):
                                  animated=True, fontweight='bold')
         # not visible initially
         # set_visible(self, False)
-        
+
         # threading Event controls whether
         self.alive = threading.Event()
 
@@ -1248,9 +1248,12 @@ class SkyTracks(LoggingMixin):
         ax.set_ylabel('Altitude', fontweight='bold')
         ax.parasite.set_ylabel('Airmass', fontweight='bold')
 
-        # legend at bottom of sun / moon
-        leg = ax.legend(bbox_to_anchor=(1.05, 0), loc=3,
+        # legend at top for moon
+        mc, = moon.curves
+        mc.set_mec('k') # Give moon legend marker a black edge for aesthetic
+        leg = ax.legend(bbox_to_anchor=(1.05, 1.015), loc=3,
                         borderaxespad=0., frameon=True)
+        mc.set_mec(mc.get_mfc())               
         leg.get_frame().set_edgecolor('k')
         ax.add_artist(leg)
 
@@ -1534,10 +1537,10 @@ class SkyTracks(LoggingMixin):
         # save background without tracks
         self.save_background()
         set_visible(self.art, True)
-        self.draw_blit(*self.art)  
+        self.draw_blit(*self.art)
         # clock intentionally not drawn here - will draw in thread
         # save background with tracks
-        self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)      
+        self.background2 = self.canvas.copy_from_bbox(self.figure.bbox)
         # canvas.draw()
 
     def save_background(self, event=None):
