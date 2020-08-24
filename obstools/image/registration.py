@@ -23,7 +23,8 @@ import functools as ftl
 import logging
 import multiprocessing as mp
 import itertools as itt
-import warnings, re
+import warnings
+import re
 
 import numpy as np
 
@@ -47,7 +48,7 @@ from recipes.logging import LoggingMixin
 
 from scipy.stats import binned_statistic_2d, mode
 
-from motley.profiling.timers import timer
+# from motley.profiling.timers import timer
 from recipes.introspection.utils import get_module_name
 from scipy.spatial import cKDTree
 # from sklearn.cluster import MeanShift
@@ -57,7 +58,7 @@ from matplotlib.patches import Circle
 
 from . import transforms as trans
 
-from motley.profiling import profile
+# from motley.profiling import profile
 
 
 logger = logging.getLogger(get_module_name(__file__))
@@ -293,7 +294,7 @@ class MultivariateGaussians(Model):
         return self._check_params(p), self._check_grid(xy)
 
     def _check_params(self, p):
-        if (p is None) or (p is ()):
+        if (p is None) or (p == ()):
             # default parameter values for evaluation
             return np.zeros(self.dof)
         return p
@@ -1017,7 +1018,8 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
         xyc[nansc] = np.ma.masked
 
     # delay centre compute for fainter stars until after re-centering
-    centres = δxy = np.ma.masked_all((n_stars, 2)) # np.empty((n_stars, 2))  # ma.masked_all
+    # np.empty((n_stars, 2))  # ma.masked_all
+    centres = δxy = np.ma.masked_all((n_stars, 2))
     for i, j in enumerate(i_use):
         centres[j] = geometric_median(xyc[:, i])
 
@@ -1355,7 +1357,7 @@ class SkyImage(object):
         kws.setdefault('sliders', False)
         kws.setdefault('cbar', False)
 
-        if scale is 'fov':
+        if scale == 'fov':
             # get extent - adjusted to pixel centers.
             extent = np.c_[[0., 0.], self.fov[::-1]]
             half_pixel_size = self.pixel_scale / 2
@@ -1414,14 +1416,6 @@ def _echo(_):
     return _
 
 
-
-
-
-# ensure we get lists back from getitem lookup since the initializer below works
-# differently to standard containers
-ItemGetter.set_returned_type(list)
-
-
 class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
     def __init__(self, images=(), fovs=()):
         """
@@ -1463,6 +1457,10 @@ class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
 
         # initialize container
         super().__init__(images)
+
+        # ensure we get lists back from getitem lookup since the initializer
+        # works differently to standard containers
+        self.set_returned_type(list)
 
     # properties: vectorized attribute getters on `SkyImage`
     images = AttrProp('data')
@@ -1935,7 +1933,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return p
 
     def register_constellation(self, clustering=None, plot=False):
-
+        # TODO: rename register / cluster
         # clustering + relative position measurement
         clustering = clustering or self.get_clf()
         self.cluster_id(clustering)
@@ -1943,7 +1941,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.xy = self.xyt_block.mean(0)
 
         if plot:
-
             #
             art = self.plot_clusters()
             ax = art.axes
@@ -1978,12 +1975,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def get_clf(self, *args, **kws):
         from sklearn.cluster import MeanShift
-        # minimal distance between stars distance
-        for k, v in dict(bandwidth=self.min_dist() / 2,
-                         cluster_all=False).items():
-            kws.setdefault(k, v)
 
-        return MeanShift(**kws)
+        # minimal distance between stars distance
+        return MeanShift(**{**kws, **dict(bandwidth=self.min_dist() / 2,
+                                          cluster_all=False)})
 
     def cluster_id(self, clustering):
         # clustering to cross-identify stars
@@ -2359,7 +2354,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     # TODO: relative brightness
 
-    @timer
+    # @timer
     def match_points_brute(self, xy, rotation=0., gridsize=(50, 50),
                            plot=False):
         # grid search with gmm loglikelihood objective
