@@ -11,7 +11,7 @@ def nearest_midnight_date(t=None, switch_hour=9):
 
     Parameters
     ----------
-    t : None or Time or Date, optional
+    t : astropy.time.Time or datetime.datetime or datetime.date or str, optional
         The default behaviour of this function changes depending on the time of
         day the function is called (this is convenient for helping to plan an
         observing schedule):
@@ -23,7 +23,7 @@ def nearest_midnight_date(t=None, switch_hour=9):
             (ie. The next local midnight, a few hours in the future)
     switch_hour : int, optional
         The hour from midnight at which the swich from past to future occurs,
-        by default 9.  ie. If this function is called before 9am local time,
+        by default 9. ie. If this function is called before 9am local time,
         the previous midnight time is returned, while the next midnight will be
         returned if the call takes place after 9am.
 
@@ -34,14 +34,16 @@ def nearest_midnight_date(t=None, switch_hour=9):
     """
     if t is None:
         t = datetime.now()  # current local time
-        h = t.hour
+    elif isinstance(t, str):
+        t = datetime.fromisoformat(t)
     elif isinstance(t, Time):
         t = t.datetime
-        h = t.hour
-    elif isinstance(t, datetime):
+
+    # 
+    if isinstance(t, datetime):
         h = t.hour
     elif isinstance(t, Date):
-        h = switch_hour             # use evening of given DATE
+        h = 0            # use evening of given DATE
     else:
         raise TypeError('Input time is of invalid type')
 
