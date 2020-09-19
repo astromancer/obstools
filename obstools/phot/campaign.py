@@ -1,12 +1,16 @@
 # std libs
+from recipes.oo.meta import classmaker
+import re
+from recipes.string import rreplace
 import fnmatch as fnm
 import inspect
 from recipes.oo.null import Null
 import functools as ftl
 import itertools as itt
 from pathlib import Path
-from collections import UserList, Container, Iterable
+from collections import UserList, abc
 import glob
+import operator as op
 
 # third-party libs
 import numpy as np
@@ -16,18 +20,19 @@ from astropy.utils import lazyproperty
 
 # local libs
 from recipes.logging import LoggingMixin
-from recipes.containers import (SelfAwareContainer, AttrGrouper,
-                                AttrMapper, Grouped,
-                                ReprContainer, ReprContainerMixin, OfType,
+from recipes.containers import (AttrGrouper, AttrMapper, Grouped,
+                                PrettyPrinter, PPrintContainer, OfType,
                                 ItemGetter, AttrProp, is_property)
 from motley.table import AttrTable
 from obstools.image.sample import BootstrapResample
 from obstools.image.calibration import ImageCalibration, keep
 from recipes import io
+from recipes.oo import SelfAware
+from recipes.regex import glob_to_regex
+from recipes.string import match_brackets
 
-# from sklearn.cluster import MeanShift
-# from obstools.image.registration import register_constellation
-
+# translation for special "[22:34]" type file globbing
+REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
 
 # TODO: multiprocess generic methods
 # TODO: Create an abstraction layer that can split and merge multiple time
@@ -41,12 +46,21 @@ from recipes import io
 #     'todo maybe'
 
 
+
+# def _get_file_name(hdu):
+#     # gets the item string for pprinting Campaign
+#     return hdu.file.name
+#
+
+
 class FnHelp:
     # def __init_subclass(cls):
 
     def __init__(self, hdu):
-        kls = Null if hdu._file is None else Path
-        self._path = kls(hdu._file.name)
+        if hdu._file is None:
+            self._path = Null()
+        else:
+            self._path = Path(hdu._file.name)  #
 
     @property
     def path(self):
@@ -54,19 +68,19 @@ class FnHelp:
 
     @property
     def name(self):
-        return str(self.path.name)
+        return str(self._path.name)
 
     @property
     def stem(self):
-        return str(self.path.stem)
+        return str(self._path.stem)
 
 
 class FileHelper(UserList,  AttrMapper):  # OfType(FnHelp)
     def __new__(cls, campaign):
         obj = super().__new__(cls)
         # use all
-        foo = campaign._allowed_types[0]._FnHelper
-        for name, p in inspect.getmembers(foo, is_property):
+        kls = campaign._allowed_types[0]._FnHelper
+        for name, p in inspect.getmembers(kls, is_property):
             # print('creating property', name)
             setattr(cls, f'{name}s', AttrProp(name))
 
@@ -233,76 +247,109 @@ class ImageSamplerHDU(_HDUExtra):
 
 
 class HDUExtra(ImageSamplerHDU):
-    """"""
-
-
-class PPrintHelper(AttrTable):
     pass
 
 
-class ItemFilenameGetterMixin(ItemGetter):
+# class PPrintHelper(AttrTable):
+#     pass
+
+
+class ItemGlobber(ItemGetter):
     """
-    Mixin that allows retrieving items from the campaign by indexing with a 
-    filenames (string). eg: run['SHA_20200729.0010']
+    Mixin that allows retrieving items from the campaign by indexing with
+    filename(s) or glob expressions
+
+    Examples
+    --------
+    >>> run['SHA_20200729.0010']
+    >>> run['*10.fits']
+    >>> run['*1[0-5].fits']
+    >>> run['*0[^1-7].*']    # same as     run['*0[!1-7].*']
+    >>> run['*1?.fits']
+    >>> run['*0{01,22}.*']
+    >>> run['*0{0?,1?}.*']
+    >>> run['*{0[1-9],1[0-9]}.*']
+    >>> run['*1{12..21}.*']
+
+    For the full set of globbing expression syntax see:
+        https://linuxhint.com/bash_globbing_tutorial/
     """
+
+
 
     def __getitem__(self, key):
+        getitem = super().__getitem__
+        original = key
+        
         if isinstance(key, (str, Path)):
-            original = key = str(key)
             # If key is a pattern, always return a sequence of items - this
             # means items will be wrapped in the container at the superclass
-            multiple = glob.has_magic(key)
+            key = str(key)
 
+            is_glob = glob.has_magic(key)
+            special = bool(match_brackets(key, '{}'))
+
+            # handle filename
             files = self.files.names
-            for trial in (key, f'{key}.fits'):
-                key = list(map(files.index, fnm.filter(files, trial)))
-                if key:
-                    if not multiple:
-                        key = key.pop()
-                    break
-            else:
-                raise IndexError(f'Could not resolve {original!r} '
-                                 'as filename(s) in the campaign')
+            if not (is_glob | special):
+                # trial key and key with fits extension added to support
+                # both 'SHA_20200729.0010' and 'SHA_20200729.0010.fits'
+                # patterns for convenience
+                if key in files:
+                    return getitem(files.index(key))
 
-        elif isinstance(key, (list, tuple)):
+                if f'{key}.fits' in files:
+                    return getitem(files.index(f'{key}.fits'))
+
+            else:
+                # handle special numeric range specification here
+                if special:
+                    key = list(io.bash_expansion(key))
+
+                elif is_glob:
+                    key = list(fnm.filter(files, key))
+
+        # all the cases handeled above should resolve to list of filenames
+        if isinstance(key, (list, tuple)):
+            # if not all are strings, TypeError will happend at super
             if set(map(type, key)) == {str}:
                 # handle list / tuple of filenames
                 key = list(map(self.files.names.index, key))
                 # line above will raise IndexError for invalid filenames
 
+            if len(key) == 0:
+                raise IndexError(f'Could not resolve {original!r} '
+                                 'as filename(s) in the campaign')
+
         return super().__getitem__(key)
 
 
-# class ArrayLike1D(ItemGetter, ItemFilenameGetterMixin, UserList):
-    # pass
 
-class ReprCampaign(ReprContainer):
-    max_lines = 25
-    max_items = 100
-
-    def item_str(self, hdu):
-        return hdu.file.name
+# metaclass to avoid conflicts
+class CampaignType(SelfAware, OfType):
+    pass
 
 
-class PhotCampaign(SelfAwareContainer, ReprContainerMixin,
-                   ItemFilenameGetterMixin,
-                   UserList, OfType(_BaseHDU),
+class PhotCampaign(PPrintContainer,
+                   ItemGlobber,
+                   UserList, CampaignType(_BaseHDU),
                    AttrGrouper,
                    LoggingMixin):
     """
     A class containing multiple CCD observations potentially from different
     instruments and telescopes. Provides an interface for basic operations on
-    sets of image stacks such as obtained during photometric observing
-    campaigns. Each item in this container is a `astropy.io.fits.hdu.HDU` object
-    encapsulating the FITS data.
+    sets of image stacks obtained during photometric observing campaigns. Each
+    item in this container is a `astropy.io.fits.hdu.HDU` object encapsulating
+    the FITS data and header information.
 
     Built in capabilities include:
-        * sort, select, filter, group, split and merge operations based on attributes of
-          the contained HDUs or arbitrary functions via :meth:`sort_by`,
-          :meth:`select_by`, :meth:`filter_by`, :meth:`group_by` and :meth:`join` methods
+        * sort, select, filter, group, split and merge operations based on
+          attributes of the contained HDUs or arbitrary functions via
+          :meth:`sort_by`, :meth:`select_by`, :meth:`filter_by`,
+          :meth:`group_by` and :meth:`join` methods
         * Removing of duplicates :meth:`filter_duplicates` 
         * Vectorized attribute lookup and method calling on the contained
-          objects courtesy of :class:`AttrMapper` via :meth:`attrs` and 
+          objects courtesy of :class:`AttrMapper` via :meth:`attrs` and
           :meth:`calls`
         * Pretty printing in table format via :meth:`pprint` method
         * Image registration. ie. Aligning sample images from
@@ -312,13 +359,22 @@ class PhotCampaign(SelfAwareContainer, ReprContainerMixin,
           the :meth:`coalign_sky` method
 
     """
+    # init helpers
+    
+    # Pretty representations for __str__ and __repr__
+    pretty = PrettyPrinter(max_lines=25,
+                           max_items=100,
+                           sep=' | ',
+                           item_str=op.attrgetter('file.name'))
 
     # Initialize pprint helper
-    pprinter = PPrintHelper(
+    table = AttrTable(
         ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
 
+    #
     @classmethod
-    def load(cls, files_or_dir, recurse=False, extensions=('fits',), **kws):
+    def load(cls, files_or_dir, recurse=False, extensions=('fits', 'FITS'),
+             **kws):
         """
         Load files into the campaign
 
@@ -350,14 +406,21 @@ class PhotCampaign(SelfAwareContainer, ReprContainerMixin,
             if Path(files).is_file():
                 files = [files]
             else:
-                try:
-                    files = io.iter_files(files, extensions, recurse)
-                except ValueError:
-                    raise ValueError(
-                        f'{files!r} could not be resolved as either a single '
-                        'filename, a glob pattern, or a directory') from None
+                # is_special = 
+                files = str(files)
 
-        if not isinstance(files, (Container, Iterable)):
+                if all(map(files.__contains__, '{}')):
+                    files = io.bash_expansion(files)
+                else:
+                    try:
+                        files = io.iter_files(files, extensions, recurse)
+                    except ValueError:
+                        raise ValueError(
+                            f'{files!r} could not be resolved as either a '
+                            'single filename, a glob pattern, or a directory'
+                            ) from None
+
+        if not isinstance(files, (abc.Container, abc.Iterable)):
             raise TypeError(f'Invalid input type {type(files)} for `files`')
 
         obj = cls.load_files(files, **kws)
@@ -424,26 +487,20 @@ class PhotCampaign(SelfAwareContainer, ReprContainerMixin,
         if hdus is None:
             hdus = []
 
-        # make sure objects derive from _BaseHDU
-        # TypeEnforcer.__init__(self, _BaseHDU)
-
         # init container
-        UserList.__init__(self, hdus)
-
-        # init helpers
-        self._repr = ReprCampaign(self, sep=' | ')  # TODO: merge with PPrint??
+        super().__init__(hdus)
 
     @property
     def files(self):
         return FileHelper(self)
 
     def pprint(self, attrs=None, **kws):
-        return self.pprinter(self, attrs, **kws)
+        print(self.table(self, attrs, **kws))
 
     def join(self, other):
         if isinstance(other, self.new_groups().__class__):
             other = other.to_list()
-        
+
         if not isinstance(other, self.__class__):
             raise TypeError(
                 f'Cannot join {type(other)!r} with {self.__class__!r}')
