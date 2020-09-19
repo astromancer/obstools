@@ -25,8 +25,9 @@ class CalibrationImage:
 
         if value is not None:
             # ensure consistent orientation
+            # note getting array here!!
             assert len(value.shape) == 2, 'Calibration image must be 2d'
-            value = value.oriented[:]      # note getting array here!!
+            value = value.oriented[:]
 
         setattr(instance, self.name, value)
 
