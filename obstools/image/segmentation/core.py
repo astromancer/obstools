@@ -3,6 +3,9 @@ Extensions for segmentation images
 """
 
 # std libs
+import more_itertools as mit
+import collections as col
+import types
 import inspect
 import logging
 import warnings
@@ -22,7 +25,7 @@ from photutils.segmentation import SegmentationImage  # , Segment
 
 # local libs
 from recipes.logging import LoggingMixin
-from recipes.introspection.utils import get_module_name
+from recipes.logging import get_module_logger
 from obstools.phot.utils import LabelGroupsMixin
 from obstools.image.utils import shift_combine
 from recipes.containers.dicts import pformat
@@ -35,7 +38,7 @@ from recipes.containers.dicts import pformat
 
 
 # module level logger
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
 
 #
 # simple container for 2-component objects
@@ -45,6 +48,19 @@ yxTuple = namedtuple('yxTuple', ['y', 'x'])
 def is_lazy(_):
     return isinstance(_, lazyproperty)
 
+
+def _echo(_):
+    return _
+
+
+def image_sub(background_estimator):
+    if background_estimator in (None, False):
+        return _echo
+
+    def sub(image):
+        return image - background_estimator(image)
+
+    return sub
 
 # def autoreload_isinstance_hack(obj, kls):
 #     for parent in obj.__class__.mro():
@@ -368,7 +384,7 @@ class vdict(dict):
     def __getitem__(self, key):
         # dispatch on np.ndarray for vectorized item getting with arbitrary
         # nesting
-        if isinstance(key, (np.ndarray, list, tuple)):
+        if isinstance(key, (np.ndarray, list, tuple)):  # Container and not str??
             return [self[_] for _ in key]
 
         if key in (Ellipsis, None):
@@ -554,7 +570,6 @@ class Sliced(vdict):
 
 
 # import functools as ftl
-import types
 
 
 # class Centrality():
@@ -577,7 +592,7 @@ class MaskedStatsMixin(object):
                   'mean', 'median',
                   'minimum', 'minimum_position',
                   'maximum', 'maximum_position',
-                  'extrema',
+                  #   'extrema', # return signature is different, so don't support
                   'variance', 'standard_deviation',
                   'center_of_mass']
     _aliases = {'minimum': 'min',
@@ -626,7 +641,7 @@ class MaskedStatistic(object):
     def __get__(self, seg, objtype=None):
 
         if seg is None:  # called from class
-            return self  
+            return self
 
         # bind this class to the seg instance from whence the lookup came.
         # Essentially this binds the first argument `seg` in `__call__` below
@@ -634,27 +649,52 @@ class MaskedStatistic(object):
 
     def __call__(self, seg, image, labels=None):
         # handling of masked pixels for all statistical methods done here
-        seg._check_image(image)
+        seg._check_input_data(image)
         labels = seg.resolve_labels(labels, allow_zero=True)
 
-        if np.ma.is_masked(image):
-            # ignore masked pixels
-            seg_data = seg.data.copy()
-            seg_data[image.mask] = seg.max_label + 1
-            # this label will not be used for statistic computation
+        worker = self.worker_ma if np.ma.is_masked(image) else self.worker
+        if image.ndim == 2:
+            result = worker(image, seg, labels)
+        else:
+            # TODO: may as well parallelize here!!
+            result = [worker(im, seg, labels) for im in image]
+
+        # ensure return array or masked array and not list.
+        return np.asanyarray(result)
+
+    def worker(self, image, seg, labels):
+        return self.func(image, seg.data, labels)
+
+    def worker_ma(self, image, seg, labels):
+        # ignore masked pixels
+        seg_data = seg.data
+        original = seg_data[image.mask]
+        seg_data[image.mask] = seg.max_label + 1
+        # this label will not be used for statistic computation
+
+        # wrap the compute in an exception clause since we would like to restore
+        # the segmentation data if anything goes wrong during the compute
+        try:
+            # compute
             result = self.func(image, seg_data, labels)
-            # now have to check which labels may be completely masked in
+        except:
+            raise
+        else:
+            # now we have to check which labels may be completely masked in
             # image data, so we can mask those in output
-            mask = (ndimage.sum(np.logical_not(image.mask), seg.data, labels)
-                    == 0)
+            mask = (ndimage.sum(np.logical_not(image.mask),
+                                seg_data, labels) == 0)
             # get output mask
             # for functions that return array-like results per segment (eg.
             # com), we have to up-cast the mask
-            result, mask = np.broadcast_arrays(result, mask[None].T)
+            if mask.any():
+                result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
+            else:
+                mask = False
             return np.ma.MaskedArray(result, mask)
-        else:
-            # ensure return array and not list. labels always array here
-            return np.array(self.func(image, seg.data, labels))
+        finally:
+            # restore the original labels of the masked pixels
+            seg.data[image.mask] = original
 
 
 def radial_source_profile(image, seg, labels=None):
@@ -666,9 +706,6 @@ def radial_source_profile(image, seg, labels=None):
         r = np.sqrt(np.square(g - com[i, None].T).sum(0))
         profiles.append((r, sub))
     return profiles
-
-
-import collections as col
 
 
 class SegmentMasks(col.defaultdict):  # SegmentMasks
@@ -1264,6 +1301,7 @@ class SegmentedImage(SegmentationImage,  # base
 
     # Data extraction
     # --------------------------------------------------------------------------
+    # TODO: cutout       better name?  
     def select_subset(self, start, shape, type_=None):
         """
         FIXME: this description not accurate - padding happens
@@ -1444,7 +1482,8 @@ class SegmentedImage(SegmentationImage,  # base
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
         if flags.any() and flatten:
-            raise ValueError("Use either `masked` or `flatten`. Can't do both.")
+            raise ValueError(
+                "Use either `masked` or `flatten`. Can't do both.")
 
         # function that yields the result. neat little trick avoid unit tuples
         unpack = (next if n == 1 else tuple)
@@ -1469,15 +1508,32 @@ class SegmentedImage(SegmentationImage,  # base
 
     # Image methods
     # --------------------------------------------------------------------------
-    def _check_image(self, image):
+    def _check_input_data(self, data):
+        """
+        Check that input data has correct dimensions for compute
+
+        Parameters
+        ----------
+        data : [type]
+            [description]
+
+        Raises
+        ------
+        ValueError
+            If the input data has incorrect shape for compute
+        """
 
         # convert list etc to array, but keep masked arrays
-        image = np.asanyarray(image)
+        data = np.asanyarray(data)
 
         # check shapes same
-        if image.shape != self.shape:
-            raise ValueError('Arrays does not have the same shape as '
-                             'segmentation image')
+        shape = self.shape
+        # print(data.ndim, data.shape, self.shape, data.shape[-len(shape):])
+        if (2 > data.ndim > 4) or (data.shape[-len(shape):] != shape):
+            raise ValueError('Arrays does not have the correct shape for '
+                             'computation with segmentation data. Input data '
+                             f'shape: {data.shape}, segmentation data shape '
+                             f'{shape}')
 
         # TODO: maybe use numpy.broadcast_arrays if you want to do stats on
         #  higher dimensional data sets using this class.  You will have to
@@ -1522,19 +1578,19 @@ class SegmentedImage(SegmentationImage,  # base
         """
 
         data = self.data if image is None else image
-        self._check_image(data)
+        self._check_input_data(data)
         return list(self.coslice(data, labels=labels, masked=masked))
 
-    def flux(self, image, labels=None, labels_bg=(0,),
-             statistic_bg='median'):  #
+    def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):  #
         """
-        An estimate of the net (background subtracted) source counts
+        An estimate of the net (background subtracted) source counts, and its
+        associated uncertainty
 
         Parameters
         ----------
         image: ndarray
         labels: sequence of int
-        labels_bg: sequence of int, np.ndarray, SegmentationImage
+        bg: sequence of int, np.ndarray, SegmentationImage
             if sequence, must be of length 1 or same length as `labels`
             if array of dimensionality 2, must be same shape as image
 
@@ -1544,43 +1600,76 @@ class SegmentedImage(SegmentationImage,  # base
         -------
 
         """
-        self._check_image(image)
+        self._check_input_data(image)
         labels = self.resolve_labels(labels)
 
-        # for convenience, allow `labels_bg` to be a SegmentedImage!
-        # todo: 3d array for overlapping bg regions?
-        if isinstance(labels_bg, np.ndarray) and labels_bg.shape == image.shape:
-            labels_bg = self.__class__(labels_bg)
+        # estimate sky counts and noise from data
+        counts, counts_bg_pp, n_pix_src, n_pix_bg = self._flux(image, labels, bg)
+        
+        # bg subtracted source counts
+        signal = counts - counts_bg_pp * n_pix_src
 
-        if isinstance(labels_bg, SegmentationImage):
-            assert labels_bg.nlabels == len(labels)
-            seg_bg = labels_bg.copy()
+        # revised CCD equation from Merlin & Howell '95
+        noise = np.sqrt(signal +  # ← poisson.      sky + instrument ↓
+                        n_pix_src * (1 + n_pix_src / n_pix_bg) * counts_bg_pp)
+
+        return signal, noise
+
+    def _flux(self, image, labels=None, bg=(0,), stat='median'):
+
+        # TODO: 3d array for overlapping bg regions?
+        if isinstance(bg, np.ndarray) and (bg.shape == image.shape):
+            bg = self.__class__(bg)
+
+        # for convenience, allow `bg` to be a SegmentedImage!
+        if isinstance(bg, SegmentationImage):
+            assert bg.nlabels == len(labels)
+            seg_bg = bg.copy()
             # exclude sources from bg segmentation!
             seg_bg.data[self.to_binary(labels)] = 0
         else:
-            labels_bg = self.resolve_labels(labels_bg, allow_zero=True)
+            # bg is a list of labels
+            bg = self.resolve_labels(bg, allow_zero=True)
             n_obj = len(labels)
-            n_bg = len(labels_bg)
+            n_bg = len(bg)
             if n_bg not in (n_obj, 1):
-                raise ValueError(
-                        'Unequal number of background / object labels (%i / %i)'
-                        % (n_bg, n_obj))
+                raise ValueError('Unequal number of background / object labels '
+                                 f'({n_bg} / {n_obj})')
             seg_bg = self
 
         # resolve background counts estimate function
-        statistic_bg = statistic_bg.lower()
+        stat = stat.lower()
         known_estimators = ('mean', 'median')
-        if isinstance(statistic_bg, str) and (statistic_bg in known_estimators):
-            counts_bg_pp = getattr(seg_bg, statistic_bg)(image)
-            counts_bg = counts_bg_pp * self.sum(np.ones_like(image), labels)
-        else:  # TODO: allow callable?
-            raise ValueError('Invalid value for parameter `statistic_bg`.')
+        if stat not in known_estimators:
+            # TODO: allow callable?
+            raise ValueError('Invalid value for parameter background statistic '
+                             f'`stat`: {stat}')
+
+        # get background stat
+        counts_bg_pp = getattr(seg_bg, stat)(image)
+        ones = np.ones_like(image)
+        n_pix_bg = seg_bg.sum(ones, bg)
+        n_pix_src = self.sum(ones, labels)
+        # counts_bg = counts_bg_pp * n_pix_src
 
         # mean counts per binned pixel (src + bg)
         counts = self.sum(image, labels)
-        return counts - counts_bg
+        return counts, counts_bg_pp, n_pix_src, n_pix_bg
 
-    def flux_sort(self, image, labels=None, labels_bg=(0,), bg_stat='median'):
+    def snr(self, image, labels=None, bg=(0,)):
+        """
+        A signal-to-noise ratio estimate.  Calculates the SNR by taking the
+        ratio of total background subtracted flux to the total estimated
+        uncertainty (including poisson, sky, and instrumental noise) in each
+        segment as per Merlin & Howell '95
+        """
+
+        signal, noise = flux(self, image, labels, bg)
+        return signal / noise
+
+    # def noise(self, image)
+
+    def flux_sort(self, image, labels=None, bg=(0,), bg_stat='median'):
         """
         Re-label segments for highest per-pixel counts in descending order
         """
@@ -1588,7 +1677,7 @@ class SegmentedImage(SegmentationImage,  # base
         unsorted_labels = np.setdiff1d(self.labels, labels)
         n_sort = len(labels)
 
-        flx = self.flux(image, labels, labels_bg, bg_stat)
+        flx, _ = self.flux(image, labels, bg, bg_stat)
         order = np.argsort(flx)[::-1]
 
         # todo:
@@ -1620,29 +1709,6 @@ class SegmentedImage(SegmentationImage,  # base
 
         self.relabel_many(old_labels, new_labels)
         return counts[order]
-
-    def snr(self, image, labels=None, labels_bg=(0,)):
-        """
-        A signal-to-noise ratio estimate.  Calculates the SNR by taking the
-        ratio of total background subtracted flux to the total estimated
-        uncertainty (including poisson, sky, and instrumental noise) in each
-        segment as per Merlin & Howell '95
-        """
-
-        labels = self.resolve_labels(labels)
-        counts = self.sum(image, labels)
-        n_pix_src = self.sum(np.ones_like(image), labels)
-
-        # estimate sky counts and noise from data
-        flx_bg = self.median(image, labels_bg)  # contains sky, read, dark, etc
-        n_pix_bg = self.sum(np.ones_like(image), labels_bg)
-
-        # bg subtracted source counts
-        signal = counts - flx_bg * n_pix_src
-        # revised CCD equation from Merlin & Howell '95
-        noise = np.sqrt(signal +  # ← poisson.      sky + instrument ↓
-                        n_pix_src * (1 + n_pix_src / n_pix_bg) * flx_bg)
-        return signal / noise
 
     # def com(self, image=None, labels=None):
     #     """
@@ -1686,12 +1752,8 @@ class SegmentedImage(SegmentationImage,  # base
             raise ValueError('Invalid image shape %s for segmentation of '
                              'shape %s' % (image.shape, self.shape))
 
-        if background_estimator in (None, False):
-            def bg_sub(image):
-                return image
-        else:
-            def bg_sub(image):
-                return image - background_estimator(image)
+        # get background subtraction function
+        bg_sub = image_sub(background_estimator)
 
         if grid is None:
             grid = np.indices(self.shape)
@@ -1706,6 +1768,8 @@ class SegmentedImage(SegmentationImage,  # base
         # u  = np.empty((len(labels), image.ndim))  # uncertainty
         for lbl, (seg, sub, msk, grd) in self.coslice(
                 self.data, image, mask, grid, labels=labels, enum=True):
+            #
+            i = next(counter)
 
             # ignore whatever is in this slice and is not same label as well
             # as any external mask
@@ -1714,9 +1778,8 @@ class SegmentedImage(SegmentationImage,  # base
                 use &= ~msk
 
             # noise = np.sqrt(sub)
-            sub = bg_sub(sub)
             grd = grd[:, use]
-            sub = sub[use]
+            sub = bg_sub(sub)[use]
 
             # compute sum
             sum_ = sub.sum()
@@ -1724,12 +1787,10 @@ class SegmentedImage(SegmentationImage,  # base
                 warnings.warn(f'Function `com_bg` encountered zero-valued '
                               f'image segment at label {lbl}.')
                 # can skip next
-
-            # compute centre of mass
-            i = next(counter)
-            com[i] = (sub * grd).sum(axes_sum) / sum_
-            # may be nan / inf
-            # u[i] =
+                com[i] = np.nan
+            else:
+                # compute centre of mass
+                com[i] = (sub * grd).sum(axes_sum) / sum_
 
         return com
 
@@ -2041,8 +2102,8 @@ class SegmentedImage(SegmentationImage,  # base
             if not keep[i]:
                 count += 1
                 self.logger.debug(
-                        'Discarding %i of %i at coords (%3.1f, %3.1f)',
-                        count, len(coords), *coords[i])
+                    'Discarding %i of %i at coords (%3.1f, %3.1f)',
+                    count, len(coords), *coords[i])
 
         return keep
 
@@ -2068,12 +2129,14 @@ class SegmentedImage(SegmentationImage,  # base
         w = np.array(np.where(self.to_binary(expand=True)))
         splix, = np.where(np.diff(w[0]) >= 1)
         s = np.split(w[1:], splix + 1, 1)
-        gy, gx = zip(*s)  # each of these is a list of arrays
+        gy, gx = (np.array(g, 'O')
+                  for g in zip(*s))  # each of these is a list of arrays
         magic = [None, ...][bool(len(set(map(len, gy))) - 1)]
+        # explicit object arrays avoids DeprecationWarning
         d = ((gy - yx[:, 0, magic]) ** 2 +
              (gx - yx[:, 1, magic]) ** 2) ** 0.5
-
         # d is an array of arrays!
+
         pos = {}
         for i, (label, dmin) in enumerate(zip(self.labels, map(min, d))):
             if dmin > 1:
@@ -2088,6 +2151,8 @@ class SegmentedImage(SegmentationImage,  # base
 
     def display(self, cmap=None, contours=False, bbox=False, label=True,
                 **kws):
+        # TODO: DisplayMixin: seg.show(), seg.show.term(), seg.show.overlay
+        # seg.show.labels()
         """
         Plot the image using the `ImageDisplay` class
 
@@ -2288,7 +2353,7 @@ class SegmentedImage(SegmentationImage,  # base
         im += codes.END
         return im
 
-    def get_boundary(self, label):
+    def get_boundary(self, label, offset=-0.5):
         """
 
         Fast boundary trace for segment `label`.  This algorithm is designed
@@ -2298,7 +2363,11 @@ class SegmentedImage(SegmentationImage,  # base
 
         Parameters
         ----------
-        label
+        label: int
+            The segment label for which to get the boundary
+        offset: float
+            The offset that will be added to the points, by default -0.5, so
+            that the contours line up with imaged displayed with bottom left pixel center
 
         Returns
         -------
@@ -2325,7 +2394,7 @@ class SegmentedImage(SegmentationImage,  # base
             tmp[tuple(pixels.T)] = True
             b[ndimage.binary_fill_holes(tmp)] = False
             #
-            segments.append((boundary + origin - 0.5)[:, ::-1])
+            segments.append((boundary + origin + offset)[:, ::-1])
             perimeter.append(p)
 
             if count > 10:
@@ -2343,6 +2412,41 @@ class SegmentedImage(SegmentationImage,  # base
     @lazyproperty
     def traced(self):
         return self.get_boundaries()
+
+    # @lazyproperty
+    def get_contours(self, labels=None, **kws):
+        """
+        Get the collection of lines that trace the circumference of the
+        segments.
+
+        Parameters
+        ----------
+        labels
+        kws
+
+        Returns
+        -------
+        matplotlib.collections.LineCollection
+
+        """
+        from matplotlib.collections import LineCollection
+
+        # if not 'colors' in kws:
+        cmap = self.make_cmap()
+
+        # note: use PathPatch if you want to be able to hatch the regions.
+        #  at the moment you cannot hatch individual paths in PathCollection
+        boundaries = self.get_boundaries(labels)
+        contours, _ = zip(*boundaries.values())
+
+        # noinspection PyTypeChecker
+        kws.setdefault('colors', cmap(list(boundaries.keys())))
+        return LineCollection(list(mit.flatten(contours)), **kws)
+
+    def show_overlay(self, ax, labels=None, **kws):
+        lines = self.get_contours(labels, **kws)
+        ax.add_collection(lines)
+        return lines
 
     @lazyproperty
     def perimeter(self):
@@ -2370,37 +2474,13 @@ class SegmentedImage(SegmentationImage,  # base
         return (4 * np.pi * self.areas /
                 np.square(list(map(sum, self.perimeter))))
 
-    # @lazyproperty
-    def get_contours(self, labels=None, **kws):
-        """
-        Get the collection of lines that trace the circumference of the
-        segments.
-
-        Parameters
-        ----------
-        labels
-        kws
-
-        Returns
-        -------
-
-        """
-        from matplotlib.collections import LineCollection
-
-        # if not 'colors' in kws:
-        cmap = self.make_cmap()
-
-        # note: use PathPatch if you want to be able to hatch the regions.
-        #  at the moment you cannot hatch individual paths in PathCollection
-        boundaries = self.get_boundaries(labels)
-        contours, _ = zip(*boundaries.values())
-
-        # noinspection PyTypeChecker
-        kws.setdefault('colors', cmap(list(boundaries.keys())))
-        return LineCollection(list(mit.flatten(contours)), **kws)
-
-
-import more_itertools as mit
+    def circularize(self):
+        x = (..., None, None)
+        r = np.sqrt(self.areas / np.pi)[x]
+        d = np.square(np.indices(self.shape)[:, None] -
+                      self.com(self.data).T[x]).sum(0)
+        return self.__class__(
+            np.sum((np.sqrt(d) < r) * np.arange(1, self.nlabels + 1)[x], 0))
 
 
 # class SegmentationGroups(SegmentedImage, LabelGroupsMixin):
@@ -2415,7 +2495,7 @@ import more_itertools as mit
 
 
 class CachedPixelGrids():
-    'things!'
+    'todo'  # TODO
 
 
 class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
