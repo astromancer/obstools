@@ -1,3 +1,4 @@
+from astropy.coordinates import jparser
 from io import BytesIO
 import urllib.request
 import logging
@@ -10,13 +11,13 @@ from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation, UnknownSiteException
 from astropy.coordinates.name_resolve import NameResolveError
 
-from recipes import memoize
+from recipes import caches
 # from motley.profiling.timers import timer
 
-from recipes.introspection.utils import get_module_name
+from recipes.logging import get_module_logger
 
 # module level logger
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
 
 # setup persistent coordinate cache - faster object coordinate retrieval via
 # sesame query
@@ -37,7 +38,7 @@ def int2tup(v):
     #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
 
-@memoize.to_file(siteCachePath)
+@caches.to_file(siteCachePath)
 def get_site(name):
     """resolve site name and cache the result"""
     if isinstance(name, EarthLocation):
@@ -127,7 +128,7 @@ def get_coords_named(name):
         return coo
 
 
-@memoize.to_file(cooCachePath)
+@caches.to_file(cooCachePath)
 def resolver(name):
     """
     Get the target coordinates from object name if known.  This function is
@@ -143,12 +144,18 @@ def resolver(name):
     -------
     coords: `astropy.coordinates.SkyCoord`"""
 
-    # Attempts a SIMBAD Sesame query with the given object name
-    logger.info('Querying SIMBAD database for %r.', name)
+    # try parse J coordinates from name.  We do this first, since it is
+    # faster than a sesame query
+
+    try:        # EAFP
+        return jparser.to_skycoord(name)
+    except ValueError as err:
+        logger.debug('Could not parse coordinates from name %r.', name)
+
     try:
-        # try parse J coordinates from name.  We do this first, since it is
-        # faster than a sesame query
-        return SkyCoord.from_name(name, parse=True)
+        # Attempts a SIMBAD Sesame query with the given object name
+        logger.info('Querying SIMBAD database for %r.', name)
+        return SkyCoord.from_name(name)
     except NameResolveError as err:
         # check if the name is bad - something like "FLAT" or "BIAS", we want
         # to cache these bad values also to avoid multiple sesame queries for
@@ -248,7 +255,7 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
     return hdus
 
 
-@memoize.to_file(skyCachePath)  # memoize for performance
+@caches.to_file(skyCachePath)  # memoize for performance
 def _get_skymapper(url):
     # get raw image data
     raw = urllib.request.urlopen(url).read()
@@ -261,7 +268,7 @@ def _get_skymapper(url):
 
 
 # @timer
-@memoize.to_file(dssCachePath)  # memoize for performance
+@caches.to_file(dssCachePath)  # memoize for performance
 def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     """
     Grab a image from STScI server and load as HDUList. 
