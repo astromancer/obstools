@@ -3,7 +3,8 @@
 
 # std libs
 import numbers
-import operator
+import operator as op
+# import multiprocessing as mp
 from collections import OrderedDict, MutableMapping, defaultdict
 
 # third-party libs
@@ -15,7 +16,8 @@ from recipes.containers.lists import tally
 from recipes.logging import LoggingMixin
 
 # relative libs
-from .utils import load_memmap, int2tup
+from ..io import load_memmap
+from ..utils import int2tup
 from .parameters import Parameters
 
 LN2PI_2 = np.log(2 * np.pi) / 2
@@ -186,6 +188,17 @@ def echo(*args, **kws):
     return args
 
 
+def ln_prior(priors, Θ):
+    s = 0
+    for prior, p in zip(priors.values(), Θ):
+        pr = prior.pdf(p)
+        if pr != 0:  # catch for 0 value probability
+            s += np.log(pr)
+        else:
+            return -np.inf
+    return s
+
+
 class Model(OptionallyNamed, LoggingMixin):
     """Base class for fittable model"""
 
@@ -225,7 +238,8 @@ class Model(OptionallyNamed, LoggingMixin):
         -------
 
         """
-        return self.eval(*self._checks(p, *args, **kws), **kws)
+        p, args = self._checks(p, *args, **kws)
+        return self.eval(p, *args, **kws)
 
     def eval(self, p, *args, **kws):
         """
@@ -251,9 +265,10 @@ class Model(OptionallyNamed, LoggingMixin):
 
     def _check_params(self, p):
         if len(p) != self.dof:
-            raise ValueError('Parameter vector size (%i) does not match '
-                             'degrees of freedom (%i) for model %r' %
-                             (len(p), self.dof, self))
+            raise ValueError(
+                f'Parameter vector size ({len(p)}) does not match '
+                f'degrees of freedom ({self.dof}) for model {self!r}'
+            )
         return p
 
     # def _check_grid(self, grid):
@@ -299,11 +314,11 @@ class Model(OptionallyNamed, LoggingMixin):
 
     def fwrs(self, p, data, *args, stddev=None):
         """weighted squared residuals vector"""
-        return self.wrs(p, data, *args,  stddev).ravel()
+        return self.wrs(p, data, *args,  stddev=stddev).ravel()
 
     def wrss(self, p, data, *args, stddev=None):
         """weighted residual sum of squares. ie. The chi squared statistic χ²"""
-        return self.wrs(p, data, *args, stddev).sum(self.sum_axis)
+        return self.wrs(p, data, *args, stddev=stddev).sum(self.sum_axis)
 
     # FIXME: alias not inherited if overwritten in subclass
     chisq = wrss  # chi2 # chiSquare # χ2
@@ -314,66 +329,6 @@ class Model(OptionallyNamed, LoggingMixin):
         return self.chisq(p, data, *args, stddev) / (data.size - self.dof)
 
     mswd = reduced_chi_squared = redchi  # χ2r
-
-    def logLikelihood(self, p, data, *args, stddev=None):
-        # assuming uncorrelated gaussian noise on data here
-        # https://en.wikipedia.org/wiki/Maximum_likelihood_estimation#Continuous_distribution,_continuous_parameter_space
-
-        # NOTE: optimizing with this objective is theoretically equivalent to
-        #  least-squares
-
-        # FIXME: more general metric here?
-        nl = (data.size * LN2PI_2 +
-              0.5 * self.wrss(p, data, *args, stddev=stddev))
-
-        if stddev is not None:
-            nl += np.log(stddev).sum()
-
-        return -nl
-
-    # def score(self, data, *args, **kws):
-    # The score is the gradient (the vector of partial derivatives) of log⁡ L(θ) 
-    
-    # FIXME: alias not inherited if overwritten in subclass
-    llh = logLikelihood
-
-    def loss_mle(self, p, data, *args, **kws):
-        """Objective for Maximum Likelihood Estimation"""
-        # NOTE: will be a bit more efficient to skip adding the sigma term
-        # return (data.size * LN2PI_2
-        #         + 0.5 * self.wrss(p, data, *args, stddev=stddev, **kws))
-
-        return -self.logLikelihood(p, data, *args,  **kws)
-
-    def logProb(self, p, data, *args, logPrior=None,
-                prior_args=(), **kws):
-        """
-        Logarithm of posterior probability (up to a constant).
-
-            logP = ln(Likelihood x prior)
-
-        Parameters
-        ----------
-        p
-        data
-        grid
-        stddev
-
-        Returns
-        -------
-
-        """
-
-        if logPrior:  # TODO: maybe manage through property ??
-            log_prior = logPrior(p, *prior_args)
-
-            if not np.isfinite(log_prior):
-                return -np.inf
-
-            return (self.logLikelihood(p, data, *args, **kws)
-                    + log_prior)
-
-        return self.logLikelihood(p, data, *args, **kws)
 
     def rsq(self, p, data, *args, **kws):
         """
@@ -394,13 +349,72 @@ class Model(OptionallyNamed, LoggingMixin):
     # FIXME: alias not inherited if overwritten in subclass
     coefficient_of_determination = rsq
 
+    def ln_likelihood(self, p, data, *args, stddev=None):
+        # assuming uncorrelated gaussian noise on data here
+        # https://en.wikipedia.org/wiki/Maximum_likelihood_estimation#Continuous_distribution,_continuous_parameter_space
+
+        # NOTE: optimizing with this objective is theoretically equivalent to
+        #  least-squares
+
+        # FIXME: more general metric here?
+        nl = (data.size * LN2PI_2 +
+              0.5 * self.wrss(p, data, *args, stddev=stddev))
+
+        if stddev is not None:
+            nl += np.log(stddev).sum()
+
+        return -nl
+
+    # def score(self, data, *args, **kws):
+    # The score is the gradient (the vector of partial derivatives) of log⁡ L(θ)
+
+    # FIXME: alias not inherited if overwritten in subclass
+    llh = LogLikelihood = log_likelihood = ln_likelihood
+
+    def loss_mle(self, p, data, *args, **kws):
+        """Objective for Maximum Likelihood Estimation"""
+        # NOTE: will be a bit more efficient to skip adding the sigma term
+        # return (data.size * LN2PI_2
+        #         + 0.5 * self.wrss(p, data, *args, stddev=stddev, **kws))
+
+        return -self.ln_likelihood(p, data, *args,  **kws)
+
+    def ln_posterior(self, p, data, *args, priors=None,
+                     prior_args=(), **kws):
+        """
+        Logarithm of posterior probability (up to a constant).
+
+            logP = ln(Likelihood x prior)
+
+        Parameters
+        ----------
+        p
+        data
+        grid
+        stddev
+
+        Returns
+        -------
+
+        """
+
+        if priors:  # TODO: maybe manage through property ??
+            log_prior = ln_prior(priors, p)  # logPrior(p, *prior_args)
+
+            if not np.isfinite(log_prior):
+                return -np.inf
+
+            return self.ln_likelihood(p, data, *args, **kws) + log_prior
+
+        return self.ln_likelihood(p, data, *args, **kws)
+
     def aic(self, p, data, *args, **kws):
         """
         Akaike information criterion. Assumes `p` is the parameter vector
         corresponding to the maximum likelihood.
         """
         k = len(p) + 2
-        return 2 * (k - self.logLikelihood(p, data, *args, **kws))
+        return 2 * (k - self.ln_likelihood(p, data, *args, **kws))
 
     def aicc(self, p, data, *args, **kws):
         # "When the sample size is small, there is a substantial probability
@@ -414,7 +428,7 @@ class Model(OptionallyNamed, LoggingMixin):
         k = len(p)
         n = data.size
         return 2 * (k + (k * k + k) / (n - k - 1) -
-                    self.logLikelihood(p, data, *args, **kws))
+                    self.ln_likelihood(p, data, *args, **kws))
         # "If the assumption that the model is univariate and linear with normal
         # residuals does not hold, then the formula for AICc will generally be
         # different from the formula above. For some models, the precise formula
@@ -425,20 +439,18 @@ class Model(OptionallyNamed, LoggingMixin):
         # (of the information loss), whereas AICc is a second-order estimate."
         # -- from: https://en.wikipedia.org/wiki/Akaike_information_criterion
 
-    def bic(self, p, data, *args):
+    def bic(self, p, data, *args, **kws):
         n = data.size
         k = len(p)
-        return k * np.log(n) - 2 * self.logLikelihood(p, data, *args, **kws)
-
-    # TODO: absorb grid, stddev into *args
+        return k * np.log(n) - 2 * self.ln_likelihood(p, data, *args, **kws)
 
     def mle(self, data, p0=None, *args, **kws):
         """
         Maximum likelihood fit
         """
-        return self.fit(data, p0, loss=self.loss_mle, *args,                        **kws)
+        return self.fit(data, p0, *args, loss=self.loss_mle, **kws)
 
-    def fit(self, data, p0=None, loss=None, *args,  **kws):
+    def fit(self, data, p0=None, *args, loss=None, **kws):
         """
         Minimize `loss` for `data` with uncertainties `stddev` on `grid` using
         `scipy.minimize` routine
@@ -598,14 +610,14 @@ class Model(OptionallyNamed, LoggingMixin):
     def post_fit(self, p, *args, **kws):
         return p
 
-    def run_mcmc(self, data, nsamples, nburn, nwalkers=None, threads=None,
-                 p0=None):
+    def run_mcmc(self, data, args, nsamples, nburn, nwalkers=None, threads=None,
+                 p0=None, priors=None):
         """
         Draw posterior samples
         """
 
         # TODO: would be nice to have some kind of progress indicator here
-        # could do this by wrapping the logLikelihood function with counter
+        # could do this by wrapping the ln_likelihood function with counter
 
         import emcee
 
@@ -620,15 +632,28 @@ class Model(OptionallyNamed, LoggingMixin):
         threads = int(threads)
 
         # create sampler
-        sampler = emcee.EnsembleSampler(nwalkers, self.dof, self.logProb,
-                                        args=(data,), threads=threads)
+        sampler = emcee.EnsembleSampler(
+            nwalkers, self.dof, self.ln_posterior,
+            args=(data,) + args, kwargs=dict(priors=priors),
+            threads=threads)
 
         # randomized initial guesses for parameters
         if p0 is None:
-            p0 = np.random.rand(nwalkers, self.dof)
-            # FIXME: this should consider Priors
+            if priors:
+                # draw initial state values from priors
+                # NOTE: order important!
+                p0 = np.array([prior.rvs(nwalkers)
+                               for prior in priors.values()]).T
+            else:
+                raise ValueError('Need either p0 or priors to be provided.')
         else:
-            raise NotImplementedError  # TODO
+            p0 = np.array(p0)
+            if p0.shape != (nwalkers, self.dof):
+                raise ValueError(
+                    f'Please ensure p0 is of dimension ({nwalkers}, {self.dof})'
+                    f' for sampler with {nwalkers} walkers and model with '
+                    f'{self.dof} degrees of freedom.'
+                    )
 
         # burn in
         if nburn:
@@ -797,7 +822,7 @@ class ModelContainer(OrderedDict, LoggingMixin):
         return self.attr_getter('name')
 
     def attr_getter(self, *attrs):
-        getter = operator.attrgetter(*attrs)
+        getter = op.attrgetter(*attrs)
         return list(map(getter, self.values()))
 
     def invert(self, keys=all, one2one=False):
