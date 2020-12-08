@@ -1,7 +1,22 @@
 """
 Read the Ritter-Kolb catalogue for Cataclysmic Variables and related objects.
-"""
 
+The Final version (7.24) of 
+
+The Ritter & Kolb Catalogue of Cataclysmic Binaries,
+Low-Mass X-Ray Binaries and Related Objects
+
+last updated (31 Dec 2015) 
+
+available at: 
+https://wwwmpa.mpa-garching.mpg.de/RKcat/cbcat
+
+For the current and final edition (7.24), literature published before
+31 Dec 2015 has, as far as possible, been taken into account. 
+This edition has entries for 1429 CVs.
+
+
+"""
 
 
 # std libs
@@ -18,11 +33,7 @@ from astropy.coordinates import SkyCoord
 
 # local libs
 from recipes import pprint
-from recipes.introspection.utils import get_module_name
-
-
-
-
+from recipes.logging import get_module_logger
 
 
 # TODO: check coordinates are correct?  UPDATE WITH DATA FROM ALADIN?
@@ -31,15 +42,14 @@ from recipes.introspection.utils import get_module_name
 # TODO: host as public catalogue that users can contribute to!?
 
 # module level logger
-log_name = get_module_name(__file__)
-logger = logging.getLogger(log_name)
-logger.setLevel(logging.INFO)
+logger = get_module_logger()
+
 
 # flags
-LIMIT_FLAGS = '<>'
-UNCERTAINTY_FLAGS = ':?'  # (categorical) uncertainties are flagged by ? or :
-MAG_FLAGS = 'UBVRIKpgr'
-PERIOD_FLAGS = '*'
+# LIMIT_FLAGS = '<>'
+# UNCERTAINTY_FLAGS = ':?'  # (categorical) uncertainties are flagged by ? or :
+# MAG_FLAGS = 'UBVRIKpgr'
+# PERIOD_FLAGS = '*'
 # in case of object type SU or SH:  if followed by *, the
 # orbital period has been estimated from the known superhump
 # period using the empirical relation given by
@@ -49,6 +59,10 @@ PERIOD_FLAGS = '*'
 NUMERIC_COLS_ASCII = np.r_[np.r_[5:10], np.r_[12:16]]
 NUMERIC_COLS_ARRAY = np.sort(np.r_[NUMERIC_COLS_ASCII * 2,
                                    NUMERIC_COLS_ASCII * 2 + 1])
+
+
+RGX_UNFLAG = re.compile(r'\s*([^\d]*)\s*([\d\.]*)([^d]*)')
+
 
 FIELD_NAMES = ['name', 'alias',
                'flag1', 'flag2',
@@ -86,48 +100,19 @@ def _get_col_indices(line, sep='|'):
 
     """
 
-    i = 0
-    j = 1
+    i, j = 0, 1
     ncols = line.count(sep)
-    cbreaks = np.zeros(ncols + 1, int)
+    col_breaks = np.zeros(ncols + 1, int)
 
     while j <= ncols:
         i = line.index(sep, i + 1)
-        cbreaks[j] = i + 1
+        col_breaks[j] = i + 1
         j += 1
 
-    index_pairs = np.array([cbreaks[:-1], cbreaks[1:] - 1]).T
-    widths = np.diff(index_pairs).squeeze()
+    index_pairs = np.array([col_breaks[:-1], col_breaks[1:] - 1]).T
+    col_widths = np.diff(index_pairs).squeeze()
     column_slices = list(map(slice, *index_pairs.T))
-    return column_slices, widths
-
-
-def _build_sre(preflags='<>', postflags=':?'):
-    """
-    Build regex pattern for a column of width. Flag non-numeric characters
-    will be removed.
-
-    Parameters
-    ----------
-    width
-    preflags
-    postflags
-
-    Returns
-    -------
-
-
-    """
-
-    column_pattern = r'''
-        \s*                             # match any leading whitespace
-        ([%s]*)                         # match any pre-flags
-        \s*                             # match any intervening whitespace
-        ([\d\.]*)                       # match any number and decimal point
-        ([%s]*)                         # match any post-flags
-        ''' % (preflags, postflags)
-
-    return re.compile(column_pattern, re.VERBOSE)
+    return column_slices, col_widths
 
 
 def _sanitize_cell(m, s):
@@ -163,12 +148,14 @@ def iter_lines(filename):
     """
     with open(filename, 'r') as fp:
         for i, line in enumerate(fp):
-            if line.startswith(('\n', '-')):
+            if not line.startswith(('\n', '-')):
                 yield line.strip('\n')
 
 
 def line_items(line, slices):
     """
+    Split the row into the fixed width cells and strip whitespace from content.
+
     Parameters
     ----------
     line
@@ -210,7 +197,6 @@ def read_ascii(filename, mask_missing=False):
 
     # init data containers
     n = len(lines) // 2
-
     ncols = len(column_slices) * 2
     # dtypes = tuple('U%s' % w for w in widths)
     data = np.empty((n, ncols), 'U%s' % widths.max())  # somewhat inefficient
@@ -247,7 +233,7 @@ def read_table(filename):
 
 
 def _convert_float(data, empty='', dtype=float):
-    """Data type conversion hack for shitty database structure :("""
+    """Data type conversion hack for sh*tty database structure :("""
 
     new = np.ma.empty(data.shape, dtype)
     good = (data != empty)
@@ -256,7 +242,16 @@ def _convert_float(data, empty='', dtype=float):
     return new
 
 
-class RKCat(object):  # TODO: inherit from Table??
+def fmt_ra(x):
+    return pprint.hms(x * 3600 / 15, unicode=True, precision=1)
+
+
+def fmt_dec(x):
+    return pprint.hms(x * 3600, sep='°’”', precision=1)
+
+
+class RKCat(object):
+    # TODO: inherit from Table??
 
     # @classmethod
     # def from_file(cls, filename):
@@ -273,13 +268,9 @@ class RKCat(object):  # TODO: inherit from Table??
         _, flag_cols = self.col_group('flag')
         tbl.remove_columns(flag_cols)
 
-        # containers for flags
-        n = len(tbl)
-        flag_dtypes = np.dtype(list(zip(tbl.colnames, itt.repeat('U1'))))
-        self.pre_flags = np.recarray(n, flag_dtypes)
-        self.post_flags = np.empty(n, flag_dtypes)
-
         # clean numeric data
+        self.pre_flags = None
+        self.post_flags = None
         self.remove_flags()
 
         # units
@@ -293,34 +284,35 @@ class RKCat(object):  # TODO: inherit from Table??
 
         # convert coordinates
         self.coords = coo = self.get_skycoord()
-        fmt_kws = dict(precision=1, short=False)
-        tbl['ra'], tbl['dec'] = coo.ra, coo.dec
-        tbl['ra'].format = functools.partial(pprint.hms, sep='ʰᵐˢ', **fmt_kws)
-        tbl['dec'].format = functools.partial(pprint.hms, sep='°’”', **fmt_kws)
 
-    def _unflags_columns(self, names, pre_flags, post_flags):
-        # regex matchers for numeric data columns (hard coded)
-        # these extract the numbers from annoying entries like '<19.8p'
-        sre = _build_sre(pre_flags, post_flags)
-        sub = as_2d_array(self.tbl, names, 'U12').data
-        pre, data, post = np.vectorize(_sanitize_cell)(sre, sub)
-        data = _convert_float(data)
-        return pre, data, post
+        tbl['ra'], tbl['dec'] = coo.ra, coo.dec
+        tbl['ra'].format = fmt_ra
+        tbl['dec'].format = fmt_dec
+
+    def __repr__(self):
+        return repr(self.tbl)
 
     def remove_flags(self):
+        # regex matchers for numeric data columns (hard coded)
+        # these extract the numbers from annoying entries like '<19.8p'
+        # sre = _build_sre(pre_flags, post_flags)
+
         names = list(np.take(FIELD_NAMES, NUMERIC_COLS_ARRAY))
-        pre, data, post = self._unflags_columns(names,
-                                                LIMIT_FLAGS,
-                                                MAG_FLAGS + UNCERTAINTY_FLAGS)
+        sub = as_2d_array(self.tbl, names, 'U12').data
+        pre, data, post = np.vectorize(_sanitize_cell)(RGX_UNFLAG, sub)
+        data = _convert_float(data)
 
         for cname, new_data in zip(names, data.T):
             self.tbl[cname] = new_data
 
-        pre_ = self.pre_flags[names]
-        pre_[:] = pre.view(pre_.dtype).squeeze()
+        # containers for flags
+        n = len(self.tbl)
+        flag_dtypes = np.dtype(list(zip(names, itt.repeat('U1'))))
 
-        post_ = self.pre_flags[names]
-        post_[:] = pre.view(post_.dtype).squeeze()
+        self.pre_flags = np.array(list(map(tuple, pre)),
+                                  flag_dtypes).view(np.recarray)
+        self.post_flags = np.array(list(map(tuple, post)),
+                                   flag_dtypes).view(np.recarray)
 
         #
         if logger.getEffectiveLevel() >= logging.INFO:
@@ -379,208 +371,12 @@ class RKCat(object):  # TODO: inherit from Table??
         return SkyCoord(ra, dec, unit=('h', 'deg'))
 
 
-# def clean_flags(col):
-
-# # cln[0], P0sh = clean_flags(tbl['P0'], '*')
-# logging.info('Cleaning column %s', col.name)
-# matcher = re.compile(r'([^:?*]*)\s*([:?*]*)')
-# cln, flg = zip(*(matcher.match(v).groups() for v in col))
-# return np.array(cln), np.array(flg)
-
-# def gen_widths(line):
-# column_pattern = r'([^\|]+)\|'
-# for i, m in enumerate(re.finditer(column_pattern, line)):
-# s, e = m.span()
-# w = (e - s)
-# yield w
-
-# def _build_column_sre(width, preflags='<>', postflags=':?'):
-# """
-# Build regex pattern for a column of width. Flag non-numeric characters
-# will be removed.
-#
-#
-# Parameters
-# ----------
-# width
-# preflags
-# postflags
-#
-# Returns
-# -------
-#
-# """
-#
-# column_pattern = r'''
-# \s*                             # match any leading whitespace
-# ([%(preflags)s]*)               # match any pre-flags up to column width
-# \s*                             # match any intervening whitespace
-# ([\d\.]{0,%(width)i})           # match any number and decimal point
-# ([%(postflags)s]*)              # match the flags
-# ''' % dict(width=width, preflags=preflags, postflags=postflags)
-#
-# return re.compile(column_pattern, re.VERBOSE)
-
-# def build_pattern(line):
-# """
-# Build regex pattern from a line. This can then be to read the rest of the
-# data
-#
-# Parameters
-# ----------
-# line
-#
-# Returns
-# -------
-#
-# """
-# # , unflagIx=None
-# # TODO: clean < >
-# # if unflagIx is None:
-#
-# column_pattern = r'([^\|]+)\|'
-# p = ''
-# maxwidth = 0
-# for i, m in enumerate(re.finditer(column_pattern, line)):
-# s, e = m.span()
-# w = (e - s)
-#
-# column_pattern = r'''
-# \s*                             # match any leading whitespace
-# ([^%(flags)s|]{0,%(width)i})    # match anything that's not considered a flag up to column width
-# \s*                             # match any intervening whitespace
-# ([%(flags)s]?)                  # match the flags
-# \|?                             # column separator (sometimes missing due to typos in db)
-# ''' % dict(width=w,
-# flags=RKFLAGS)
-# p += column_pattern
-#
-# # r'\s*([^:?*\|]{0,%i})\s*([:?*]?)\|?' % w
-#
-# # p += r'\s*([^\|]{0,%i})\s*\|?' % w
-#
-# # if unflagIx is None or i in unflagIx:
-# #     print('strip', i)
-# #     # pattern that captures data and flags seperately
-# #     p += r'\s*([^:?*\|]{0,%i})\s*([:?*]?)\|?' % w
-# #     # optional pipe here since database has errors where column separator is sometimes missing!
-# # else:
-# #     # pattern that captures data and empty 'flag'
-# #     print('no strip', i)
-# #     p += r'\s*([^\|]{0,%i})(\s*?)\|?' % w
-# # p += r'\s*([^:?*\|]{0,%i})\s*([:?*]?)\|?' % w
-#
-# maxwidth = max(maxwidth, w)
-#
-# return re.compile(p, re.VERBOSE), maxwidth
-
-#
-# def split(matcher, line):
-# dat = matcher.match(line).groups()
-# return list(map(str.strip, dat))
-
-
-# def read2(filename):
-# fields = ['name', 'alias', 'flag1', 'flag2', 'ra', 'dec',
-# 'type1', 'type2', 'type3', 'type4', 'mag1', 'mag2', 'mag3',
-# 'mag4',
-# 'T1', 'T2', 'P0', 'P2', 'P3', 'P4', 'EB', 'SB', 'spectr2',
-# 'spectr1',
-# 'q', 'q_E', 'Incl', 'Incl_E', 'M1', 'M1_E', 'M2', 'M2_E']
-#
-#
-# lineGen = iter_lines(filename)
-# h0, h1, *lines = lineGen
-# header = [h0, h1]
-# # data shape
-# n = len(lines) // 2
-# ncols = len(fields)
-# nlinecols = (ncols // 2)
-# # make re pattern
-# matcher, w = build_split_pattern(lines[0])
-#
-# # init data
-# data = np.empty((n, ncols), 'U%s' % w)
-# # flags = np.empty((n, ncols), 'U1')
-# # populate data
-# for i, line in enumerate(lines):
-# j, odd = divmod(i, 2)
-# # s = nlinecols * odd
-# sl = slice(odd, None, 2)
-# dat = matcher.match(line).groups()
-# data[j, sl] = np.char.strip(dat)
-# # flags[j, sl] = flg
-#
-# logging.info('Data for %i objects successfully read.', (j  1))
-# return data, np.array(fields), header
-
-#
-# def similar_str(fields, substr):
-# ix, colnames = zip(*((i, c) for i, c in enumerate(fields) if substr in c))
-# assert len(ix), 'Nope!'
-# return ix, list(colnames)
-
-# def split(matcher, line):
-# dat, flg = zip(*grouper(matcher.match(line).groups(), 2))
-# return dat, flg
-#
-#
-# def build_split_pattern(line):
-# column_pattern = r'([^\|]+)\|'
-# p = ''
-# maxwidth = 0
-#
-# for i, m in enumerate(re.finditer(column_pattern, line)):
-# s, e = m.span()
-# w = (e - s)
-# p += r'([^\|]{0,%i})\|?' % w
-# maxwidth = max(maxwidth, w)
-#
-# return re.compile(p), maxwidth
-
-# try:
-# # try convert to float
-# values = values.astype(dtype)
-# logging.info('Column %s converted to float', col.name)
-# except ValueError as err:
-# logging.info('Failed to convert column %s to float: %s', col.name,
-# str(err))
-#
-# new = np.ma.empty(data.shape, values.dtype)
-# new[~mask] = values
-# new.mask = mask
-#
-# return new
-
-# def clean_periods(tbl):
-# pcols = [name for name in tbl.colnames if name[0] == 'P']
-# sh = len(pcols), len(tbl)
-# flags = np.empty(sh, 'U1')
-#
-# for i, p in enumerate(pcols):
-# cln, flags[i] = clean_flags(tbl[p])
-# tbl[p] = convert_ma(cln)
-# # flags[i].mask = clean[i].mask        # all uncertainties for the empty ones masked
-#
-# return tbl, flags
-
-# try:
-# data[] = fill
-# converted = data.astype(float)
-# status = True
-# except ValueError:
-# converted = data
-# status = False
-#
-# return status, converted
-
-
 def to_XEphem(*args, **kw):
     if len(args) == 3:
         kw['name'], kw['ra'], kw['dec'] = args
 
 # if __name__ == '__main__':
-#     from pySHOC.airmass import altitude
+#     from obstools.airmass import altitude
 #
 #     # RKCat()
 #     # '/media/Oceanus/UCT/Project/RKcat7.21_main.txt'
