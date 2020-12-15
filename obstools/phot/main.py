@@ -99,7 +99,7 @@ if __name__ == '__main__':
 # ===============================================================================
 
 # execution time stamps
-from motley.profiler.timers import Chrono
+from motley.profiling.timers import Chrono
 
 chronos = Chrono()
 # TODO: option for active reporting; inherit from LoggingMixin, make Singleton
@@ -112,7 +112,6 @@ import numpy as np
 import more_itertools as mit
 from joblib.pool import MemmappingPool
 # from astropy.io import fits
-from IPython import embed
 
 # local libs
 chronos.mark('Imports: Local')
@@ -121,20 +120,17 @@ from salticam import slotmode
 from salticam.slotmode.tracking import SlotModeTracker
 from salticam.slotmode.modelling.image import (FrameTransferBleed,
                                                SlotModeBackground, FTB_WIDTH)
-from graphical.imagine import ImageDisplay, VideoDisplay
-from graphical.multitab import MplMultiTab
-from recipes.dict import AttrReadItem
+from graphing.imagine import ImageDisplay
+from graphing.multitab import MplMultiTab
+from recipes.dicts import AttrReadItem
 from recipes.io import WarningTraceback
 from recipes.interactive import is_interactive
-from recipes.parallel.synced import SyncedCounter, SyncedArray
 
 from obstools.phot.utils import ImageSampler
 from obstools.phot.proc import TaskExecutor, FrameProcessor
-from obstools.phot.segmentation import SegmentationHelper, detect_loop
+from obstools.image.segmentation import SegmentedImage, detect_loop
 from obstools.modelling.utils import load_memmap, load_memmap_nans
-from obstools.phot.utils import shift_combine
-from salticam.slotmode.modelling.image import MedianEstimator
-from obstools.modelling.image import SegmentedImageModel
+from obstools.image.utils import shift_combine
 from salticam.slotmode.imaging import display_slot_image
 from recipes.io import save_pickle, load_pickle
 from obstools.fastfits import FitsCube
@@ -174,7 +170,7 @@ def load_data(args):
         header = args.data_file.header
 
         # print observation / object / ccd / PI info
-        slotmode._pprint_header(header, n=len(data))
+        slotmode.pprint_header(header, n=len(data))
     else:
         # load image data (memmap shape (n, r, c))
         args.data_file = data = np.lib.format.open_memmap(filename)
@@ -244,7 +240,7 @@ def detect_with_model(i, image, model, seg_data, params, residuals):
     scale = np.ma.median(np.ma.MaskedArray(image, BAD_PIXEL_MASK))
 
     # Multi-threshold blob detection with bg model
-    seg, groups, info, result, residual = \
+    seg, info, model, result, residual = \
         detect_loop(image / scale,
                     BAD_PIXEL_MASK,
                     SNR,
@@ -258,7 +254,7 @@ def detect_with_model(i, image, model, seg_data, params, residuals):
     residuals[i] = residual
     params[i] = result
 
-    return seg, groups, info, result, residual
+    return seg, info, model, result, residual
 
 
 # def prepare_image(i, images):
@@ -267,7 +263,7 @@ def detect_with_model(i, image, model, seg_data, params, residuals):
 
 def detect_measure(i, image, seg_data):
     mask = False
-    seg = SegmentationHelper.detect(image, mask, None, NCOMB, SNR, NPIXELS[0],
+    seg = SegmentedImage.detect(image, mask, None, NCOMB, SNR, NPIXELS[0],
                                     DILATE[0])
 
     seg_data[i] = seg.data
@@ -383,7 +379,7 @@ def spline_fit(i, image, spline, shared_memory, do_knot_search,
     #  hierarchical group model
     # use only fitted data to compute GoF
     labels_bg = list(spline.models.keys())
-    mask = spline.segm.mask_segments(image, ignore_labels=labels_bg)
+    mask = spline.segm.mask_image(image, ignore_labels=labels_bg)
     shared_memory.gof[i] = spline.redchi(p, mask)
 
     # TODO: sky measure overall noise with Gaussian fit ?
@@ -572,7 +568,7 @@ def deep_detect(images, tracker, xy_offsets, indices_use, bad_pixels,
             gn.extend([i] * k)
 
         cc = numeric_array(counts[:last], precision=1, significant=3,
-                           switch=4).astype('O')
+                           log_switch=4).astype('O')
         cc[bright] = list(map(motley.yellow, cc[bright]))
         tbl = Table(np.column_stack([labels_bright, gn, cxx, cc]),
                     title=(f'{last} brightest objects'
@@ -652,7 +648,7 @@ def flat_field_copy_mmap(data, ff, region, loc):
 
 
 def display(image, title=None, ui=None, **kws):  # display_image ??
-    if isinstance(image, SegmentationHelper):
+    if isinstance(image, SegmentedImage):
         im = image.display(**kws)
     else:
         im = ImageDisplay(image, **kws)
@@ -663,9 +659,6 @@ def display(image, title=None, ui=None, **kws):  # display_image ??
     if args.live:
         idisplay(im.figure)
     return im
-
-
-from graphical.imagine import VideoDisplayA
 
 
 # class MyManager(Manager):

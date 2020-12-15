@@ -5,7 +5,7 @@ from grafico.multitab import MplMultiTab
 from grafico.imagine import Compare3DImage
 
 # local libs
-from recipes.containers.dicts import TransDict
+from recipes.dicts import TransDict
 
 
 

@@ -28,7 +28,7 @@ from recipes.logging import LoggingMixin
 from recipes.logging import get_module_logger
 from obstools.phot.utils import LabelGroupsMixin
 from obstools.image.utils import shift_combine
-from recipes.containers.dicts import pformat
+from recipes.dicts import pformat
 
 # from obstools.modelling.image import SegmentedImageModel
 # from collections import namedtuple
@@ -1018,7 +1018,7 @@ class SegmentedImage(SegmentationImage,  # base
         """Reset all lazy properties.  Will work for subclasses"""
         for key, value in inspect.getmembers(self.__class__, is_lazy):
             self.__dict__.pop(key, None)
-        # TODO: base class method should suffice in recent versions - romove
+        # TODO: base class method should suffice in recent versions - remove
 
     @property
     def data(self):

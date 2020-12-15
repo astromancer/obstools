@@ -13,11 +13,11 @@ from matplotlib.patches import Rectangle, Ellipse as _Ellipse
 from matplotlib.collections import LineCollection, PatchCollection
 
 # local libs
-from recipes.list import flatten
-from recipes.dict import AttrReadItem
+from recipes.lists import flatten
+from recipes.dicts import AttrReadItem
 from recipes.logging import LoggingMixin
 from obstools.aps import ApertureCollection, SkyApertures
-from graphical.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
+from graphing.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
 
 
 
@@ -371,7 +371,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         # add the centroid markers to the slider update so they are drawn when clim changed
         self.sliders.lower.on_changed.add(self._slider_move)
         self.sliders.upper.on_changed.add(self._slider_move)
-        # TODO: generic on_changed method for the sliders that adds to both
+        # TODO: generic on_move method for the sliders that adds to both
 
         # add gui buttons
         art = self.add_buttons()
@@ -720,7 +720,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
 
     def show_outlines(self, **kws):
         """
-        Create LineColection that delineates the tracking regions
+        Create LineCollection that delineates the tracking regions
 
         Parameters
         ----------
@@ -1119,7 +1119,7 @@ class LegendGuiBase(ConnectionMixin):
 #         return mxshift, maxImage, segImage
 
 
-# from graphical.imagine import FitsCubeDisplay
+# from graphing.imagine import FitsCubeDisplay
 
 
 # class FrameDisplay(FitsCubeDisplay):
@@ -1188,7 +1188,7 @@ class LegendGuiBase(ConnectionMixin):
 #         try:
 #             sdist[np.tril_indices(n)] = np.inf
 #         except:
-#             print('FUCKUP with add_windows ' * 100)
+#             print('BROKEN with add_windows ' * 100)
 #             embed()
 #             raise
 #         ix = np.where(sdist < window / 2)
@@ -1312,7 +1312,7 @@ class LegendGuiBase(ConnectionMixin):
 #         fig.set_size_inches(figsize)
 #
 #
-# # from graphical.imagine import FitsCubeDisplay
+# # from graphing.imagine import FitsCubeDisplay
 #
 #
 # def displayCube(fitsfile, coords, rvec=None):

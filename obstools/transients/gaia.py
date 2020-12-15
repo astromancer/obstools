@@ -5,7 +5,7 @@ from datetime import datetime
 import numpy as np
 from astropy.table import Table
 
-from . import fmt_ra, fmt_dec
+from .utils import fmt_ra, fmt_dec
 
 
 def iter_data(csvfile):

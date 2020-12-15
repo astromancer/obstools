@@ -17,10 +17,10 @@ from matplotlib.transforms import (IdentityTransform,
                                    blended_transform_factory as btf)
 
 # local libs
-from recipes.io import warn as Warn
+# from recipes.io import warn as Warn
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
-from recipes.dict import TransDict, Many2OneMap
+from recipes.dicts import TransDict, Many2OneMap
 
 
 # from pprint import pprint
@@ -188,7 +188,7 @@ class PropertyManager(dict):
             angles=np.atleast_1d, )
 
     # Add equivalence mapping that maps *colour -> *color
-    converter.add_map(
+    converter.add_mapping(
             lambda key: ''.join(re.search('(colo)u?(r)', key).groups()))
 
     # @expose.args( pre='%'*100, post = '\\'*100 )

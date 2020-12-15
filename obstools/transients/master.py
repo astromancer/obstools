@@ -23,7 +23,7 @@ from astropy.table import Table
 # local libs
 from recipes.iter import first_true_idx
 
-from . import fmt_ra, fmt_dec
+from .utils import fmt_ra, fmt_dec
 
 
 URL = 'http://observ.pereplet.ru/MASTER_OT.html'

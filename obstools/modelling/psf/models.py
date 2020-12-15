@@ -13,7 +13,7 @@ from scipy.optimize import leastsq
 
 # local libs
 from obstools.modelling.core import Model
-from recipes.containers.lists import find_missing_numbers
+from recipes.lists import find_missing_numbers
 
 
 

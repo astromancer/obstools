@@ -2,7 +2,7 @@ import numpy as np
 from astropy.table import Table
 from astropy.time import Time
 
-from . import fmt_ra, fmt_dec
+from .utils import fmt_ra, fmt_dec
 
 
 def load(filename):

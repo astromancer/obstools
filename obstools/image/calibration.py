@@ -1,5 +1,5 @@
 from .orient import ImageOrienter
-from recipes.containers.dicts import pformat
+from recipes.dicts import pformat
 
 
 class keep:

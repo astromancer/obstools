@@ -5,7 +5,7 @@ import itertools as itt
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import PPoly
-from recipes.containers.dicts import Many2OneMap, TerseKws
+from recipes.dicts import Many2OneMap, TerseKws
 import warnings
 
 # Logic for resolving telescope name

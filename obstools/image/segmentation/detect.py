@@ -10,11 +10,11 @@ from obstools.modelling import UnconvergedOptimization
 from obstools.phot.utils import iter_repeat_last
 from photutils import detect_threshold, detect_sources
 from recipes.pprint.misc import seq_repr_trunc
-from recipes.introspection.utils import get_module_name
+from recipes.logging import get_module_logger
 from recipes.logging import LoggingMixin
 
 # module level logger
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
 
 
 def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):

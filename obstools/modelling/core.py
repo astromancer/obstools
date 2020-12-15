@@ -12,7 +12,7 @@ import numpy as np
 from scipy.optimize import minimize, leastsq
 
 # local libs
-from recipes.containers.lists import tally
+from recipes.lists import tally
 from recipes.logging import LoggingMixin
 
 # relative libs

@@ -13,11 +13,11 @@ import more_itertools as mit
 # local libs
 from motley.progress import ProgressBar
 from recipes.logging import LoggingMixin
-from recipes.containers.dicts import AttrReadItem, ListLike
-from recipes.introspection.utils import get_module_name
+from recipes.dicts import AttrReadItem, ListLike
+from recipes.logging import get_module_logger
 
 # module level logger
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
 
 
 def null_func(*_):
