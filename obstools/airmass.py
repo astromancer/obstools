@@ -31,7 +31,7 @@ def altitude(ra, dec, lmst, lat):
     """
     # h = lmst - ra  # hour angle
 
-    # a is the altitudegit 
+    # a is the altitude
     return np.arcsin(np.sin(lat) * np.sin(dec) +
                      np.cos(lat) * np.cos(dec) * np.cos(lmst - ra))
 
@@ -96,14 +96,14 @@ def plane_parallel(z):
     is constant and Earth’s curvature is ignored). The air mass X  then is
     simply the secant of the zenith angle z:
 
-    .. math::       X = sec(z) 
+    .. math::       X = sec(z)
 
     At a zenith angle of 60°, the air mass is approximately 2. However, because
     the Earth is not flat, this formula is only usable for zenith angles up to
     about 60° to 75°, depending on accuracy requirements. At greater zenith
     angles, the accuracy degrades rapidly, with X = sec z becoming infinite at
     the horizon; the horizon air mass in the more-realistic spherical atmosphere
-    is usually less than 40. 
+    is usually less than 40.
     """
     return np.sec(z)
 
@@ -117,10 +117,10 @@ def homogeneous_spherical(z, h=0., h_atm=HMAX):
     ----------
     z:  float, array 
         apparent zenith distance (radians)
-    
+
     h: float
         observer altitude in metres 
-        
+
     h_atm: float
         height of atmosphere in metres
 
@@ -147,27 +147,26 @@ def homogeneous_spherical(z, h=0., h_atm=HMAX):
     return np.sqrt(rcosz**2 + 2 * r * (1-y) - y**2 + 1) - rcosz
 
 
-
 def Young74(z, h):
     """
-    Airmass model derived assuming an isothermal atmosphere. and dropping high order
-    terms [1]_.  Isothermal atmosphere with pressure scale hight `h` has an 
-    exponential density attenuation of the form:
+    Airmass model derived assuming an isothermal atmosphere. and dropping high
+    order terms [1]_.  Isothermal atmosphere with pressure scale hight `h` has
+    an exponential density attenuation of the form:
 
     .. math:: \rho = \rho_0 e^{-y/H}
 
-    In an isothermal atmosphere, 37% of the atmosphere is above the pressure 
+    In an isothermal atmosphere, 37% of the atmosphere is above the pressure
     scale height. An approximate correction for refraction is also included in
     this model.
 
     Parameters
     ----------
-    z:  float, array 
+    z:  float, array
         apparent zenith distance (radians)
-    
+
     h: float
-        observer altitude in metres 
-        
+        observer altitude in metres
+
     h_atm: float
         height of atmosphere in metres
 
@@ -184,11 +183,8 @@ def Young74(z, h):
     """
 
 
-
-
 # Non-physical (interpolative) models follow
 # ----------------------------
-
 
 def Hardie62(z):
     """
@@ -254,7 +250,7 @@ def Rozenberg66(z):
     Returns
     -------
     relative airmass
-    
+
     References  
     ----------
     .. [1] Rozenberg, G. V. 1966. Twilight: A Study in Atmospheric Optics. New York:
