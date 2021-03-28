@@ -1615,7 +1615,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         return signal, noise
 
-    def _flux(self, image, labels=None, bg=(0,), stat='median'):
+    def _flux(self, image, labels, bg=(0,), stat='median'):
 
         # TODO: 3d array for overlapping bg regions?
         if isinstance(bg, np.ndarray) and (bg.shape == image.shape):
@@ -1630,8 +1630,7 @@ class SegmentedImage(SegmentationImage,  # base
         else:
             # bg is a list of labels
             bg = self.resolve_labels(bg, allow_zero=True)
-            n_obj = len(labels)
-            n_bg = len(bg)
+            n_obj, n_bg = len(labels), len(bg)
             if n_bg not in (n_obj, 1):
                 raise ValueError('Unequal number of background / object labels '
                                  f'({n_bg} / {n_obj})')
