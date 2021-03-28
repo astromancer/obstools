@@ -54,7 +54,8 @@ def geometric_median(x, eps=1e-5):
 
     Parameters
     ----------
-    x
+    x: array
+        shape: n-points, n-dimensions
     eps: float
         accuracy
 
