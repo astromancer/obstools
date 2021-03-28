@@ -1,7 +1,7 @@
 # std libs
-from recipes.oo.meta import classmaker
+# from recipes.oo.meta import classmaker
 import re
-from recipes.string import rreplace
+# from recipes.string import replace
 import fnmatch as fnm
 import inspect
 from recipes.oo.null import Null
@@ -28,8 +28,8 @@ from obstools.image.sample import BootstrapResample
 from obstools.image.calibration import ImageCalibration, keep
 from recipes import io
 from recipes.oo import SelfAware
-from recipes.regex import glob_to_regex
-from recipes.string import match_brackets
+# from recipes.regex import glob_to_regex
+from recipes.string import braces
 
 # translation for special "[22:34]" type file globbing
 REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
@@ -44,7 +44,6 @@ REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
 
 # class ImageRegisterMixin(object):
 #     'todo maybe'
-
 
 
 # def _get_file_name(hdu):
@@ -275,54 +274,54 @@ class ItemGlobber(ItemGetter):
         https://linuxhint.com/bash_globbing_tutorial/
     """
 
-
+    def _get_index(self, filename):
+        files = self.files.names
+        for trial in (filename, f'{filename}.fits'):
+            if trial in files:
+                return files.index(trial)
 
     def __getitem__(self, key):
         getitem = super().__getitem__
         original = key
-        
+
         if isinstance(key, (str, Path)):
             # If key is a pattern, always return a sequence of items - this
             # means items will be wrapped in the container at the superclass
             key = str(key)
 
             is_glob = glob.has_magic(key)
-            special = bool(match_brackets(key, '{}'))
+            special = bool(braces.match(key, False, must_close=True))
 
             # handle filename
-            files = self.files.names
             if not (is_glob | special):
                 # trial key and key with fits extension added to support
                 # both 'SHA_20200729.0010' and 'SHA_20200729.0010.fits'
                 # patterns for convenience
-                if key in files:
-                    return getitem(files.index(key))
+                return getitem(self._get_index(key))
 
-                if f'{key}.fits' in files:
-                    return getitem(files.index(f'{key}.fits'))
+            files = self.files.names
+            # handle special numeric range specification here
+            if special:
+                key = list(itt.chain.from_iterable(
+                    (fnm.filter(files, key)
+                        for key in io.bash_expansion(key))))
 
-            else:
-                # handle special numeric range specification here
-                if special:
-                    key = list(io.bash_expansion(key))
-
-                elif is_glob:
-                    key = list(fnm.filter(files, key))
+            elif is_glob:
+                key = list(fnm.filter(files, key))
 
         # all the cases handeled above should resolve to list of filenames
-        if isinstance(key, (list, tuple)):
+        if isinstance(key, (list, tuple, np.ndarray)):
             # if not all are strings, TypeError will happend at super
-            if set(map(type, key)) == {str}:
+            if not (set(map(type, key)) - {str, np.str_}):
                 # handle list / tuple of filenames
-                key = list(map(self.files.names.index, key))
-                # line above will raise IndexError for invalid filenames
+                key = list(map(self._get_index, key))
+                # this will raise IndexError for invalid filenames
 
             if len(key) == 0:
                 raise IndexError(f'Could not resolve {original!r} '
                                  'as filename(s) in the campaign')
 
         return super().__getitem__(key)
-
 
 
 # metaclass to avoid conflicts
@@ -410,7 +409,7 @@ class PhotCampaign(PPrintContainer,
                 files = str(files)
 
                 if all(map(files.__contains__, '{}')):
-                    files = io.bash_expansion(files)
+                    files = io.bash.brace_expand(files)
                 else:
                     try:
                         files = io.iter_files(files, extensions, recurse)
