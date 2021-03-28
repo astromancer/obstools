@@ -35,7 +35,7 @@ from scipy.optimize import minimize
 from obstools.stats import geometric_median
 from astropy.utils import lazyproperty
 
-from recipes.containers.dicts import AttrDict
+from recipes.dicts import AttrDict
 from obstools.image.segmentation import SegmentedImage
 from obstools.phot.campaign import HDUExtra
 from ..utils import get_coordinates, get_dss, STScIServerError
@@ -49,7 +49,7 @@ from recipes.logging import LoggingMixin
 from scipy.stats import binned_statistic_2d, mode
 
 # from motley.profiling.timers import timer
-from recipes.introspection.utils import get_module_name
+from recipes.logging import get_module_logger
 from scipy.spatial import cKDTree
 # from sklearn.cluster import MeanShift
 from graphing.imagine import ImageDisplay
@@ -61,9 +61,13 @@ from . import transforms as trans
 # from motley.profiling import profile
 
 
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
 
 TABLE_STYLE = dict(txt='bold', bg='g')
+
+
+def _echo(_):
+    return _
 
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
@@ -1140,7 +1144,7 @@ def group_features(labels, *features):
 
     unique_labels = list(set(labels))
     if -1 in unique_labels:
-        unique_labels.pop(unique_labels.index(-1))
+        unique_labels.remove(-1)
     n_clusters = len(unique_labels)
     n_samples = len(features[0])
 
@@ -1412,9 +1416,6 @@ class SkyImage(object):
 
 # from obstools.phot.image import SourceDetectionMixin
 
-def _echo(_):
-    return _
-
 
 class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
     def __init__(self, images=(), fovs=()):
@@ -1582,7 +1583,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def xy(self, xy):
         # Ensure xy coordinates are always a plain numpy array. Masked arrays
         # don't seem to work well with the matrix product `@` operator used in
-        # :func:`roto_translate`
+        # :func:`rigid`
         self._xy = non_masked(xy)
         del self.model
 
@@ -1605,6 +1606,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return group_features(self.labels, self.xyt)[0]
 
     @property
+    def xy_offsets(self):
+        return self.params[:, :2]
+
+
+    @property
     def source_indices(self):
         if self.labels is None:
             raise Exception('Unregistered')
@@ -1624,11 +1630,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     @lazyproperty
     def model(self):
-        return CoherentPointDrift(self.xy, self.guess_sigma())
+        model = CoherentPointDrift(self.xy, self.guess_sigma())
+        model.fit_rotation = self.fit_rotation
+        return model
 
     @classmethod  # .            p0 -----------
     def from_images(cls, images, fovs, angles=(), ridx=None, plot=False,
-                    **find_kws):
+                    fit_rotation=True, **find_kws):
 
         n = len(images)
         assert n
@@ -1653,7 +1661,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         else:
             angles = np.zeros(n)
 
-        reg = cls(**find_kws)
+        reg = cls(fit_rotation=fit_rotation, **find_kws)
         for i in indices:
             reg(images[i], fovs[i], angles[i], plot=plot)
 
@@ -1664,7 +1672,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         reg.register_constellation()
         return reg
 
-    def __init__(self, images=(), fovs=(), params=(), **find_kws):
+    def __init__(self, images=(), fovs=(), params=(), fit_rotation=True, 
+                 **find_kws):
         """
         Initialize an image register.
         This class should generally be initialized without arguments. The model
@@ -1695,7 +1704,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # init container
         ImageContainer.__init__(self, images, fovs)
-
+        self._params = []
+        
         # NOTE passing a reference index is only meaningful if the class is
         #  initialized with a set of images
         self._idx = 0
@@ -1705,37 +1715,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # keep track of minimal separation between sources
         self._min_dist = np.inf
 
-        self._params = []
+        self.fit_rotation = bool(fit_rotation)
         # self.grids = TransformedImageGrids(self)
-
         # self._sigma_guess = self.guess_sigma(self.xy)
 
         # state variables
         self.labels = self.n_stars = self.n_noise = None
         self._colour_sequence_cache = ()
 
-        # for image, fov, params
-
-        # parameters for zero point transforms
-        # indices = list(set(range(len(images))) - {ridx})
-        # if len(params):
-        #     params = np.array(params)
-        #     segs, coords, counts = zip(*map(detect_measure, images))
-        #     self.aggregate(images, fovs, segs, coords, counts, params)
-        #     # return
-
-        # if n:
-        #     shapes = list(map(np.shape, self.images))
-        #     pixel_scales = np.divide(fovs, shapes)
-        #
-        #     # align on highest res image if not specified
-        #     idx = ridx
-        #     if ridx is None:
-        #         idx = pixel_scales.argmin(0)[0]
-        #
-        #     others = set(range(n)) - {idx}
-
-        # self.aggregate(self.image, self.fov, seg, self.xy, counts, np.zeros(3))
 
     def __call__(self, image, fov=None, rotation=0., refine=True, plot=False,
                  **find_kws):
@@ -1926,9 +1913,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if refine:
             # do mle via gradient decent to refine
-            r = self.model.fit(xy, p0=p)
+            r = self.model.fit(xy, p0=p[:self.model.dof])
             if r is not None:
-                return r
+                p[:self.model.dof] = r
 
         return p
 
