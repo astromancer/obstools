@@ -2,6 +2,7 @@ from astropy.coordinates import jparser
 from io import BytesIO
 import urllib.request
 import logging
+import re
 from pathlib import Path
 import numbers
 
@@ -16,16 +17,20 @@ from recipes import caches
 
 from recipes.logging import get_module_logger
 
+
 # module level logger
 logger = get_module_logger()
+logging.basicConfig()
 
-# setup persistent coordinate cache - faster object coordinate retrieval via
-# sesame query
+# persistent caches for faster object coordinate and image retrieval 
 cachePath = Path.home() / '.cache/obstools'  # NOTE only for linux!
 cooCachePath = cachePath / 'coords.pkl'
 siteCachePath = cachePath / 'sites.pkl'
 dssCachePath = cachePath / 'dss.pkl'
 skyCachePath = cachePath / 'skymapper.pkl'
+
+
+RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
 
 
 def int2tup(v):
@@ -94,7 +99,7 @@ def get_coordinates(name_or_coords):
         # might also be a single coordinate string
         # eg. '06:14:51.7 -27:25:35.5'
         return SkyCoord(name_or_coords, unit=('h', 'deg'))
-    except ValueError as err:
+    except ValueError:  # as err:
         return get_coords_named(name_or_coords)
 
 
@@ -113,6 +118,7 @@ def get_coords_named(name):
     >>> get_coords_named('MASTER J061451.7-272535.5')
     >>> get_coords_named('UZ For')
     """
+
     try:
         coo = resolver(name)
     except NameResolveError as err:  # AttributeError
@@ -140,9 +146,11 @@ def resolver(name):
     ----------
     name : str
         object name
+
     Returns
     -------
-    coords: `astropy.coordinates.SkyCoord`"""
+    coords: astropy.coordinates.SkyCoord
+    """
 
     # try parse J coordinates from name.  We do this first, since it is
     # faster than a sesame query
@@ -250,14 +258,15 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
         urls = [urls[t.argmin()]]
 
     # retrieve data possibly from cache
+    logger.info('Retrieving images...')
     hdus = [_get_skymapper(url) for url in urls]
-
     return hdus
 
 
 @caches.to_file(skyCachePath)  # memoize for performance
 def _get_skymapper(url):
     # get raw image data
+    logger.debug(f'Reading data from {url=}')
     raw = urllib.request.urlopen(url).read()
 
     # load into fits
@@ -308,7 +317,7 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     h, w = size  # FIXME: if number
 
     # make url
-    url = 'http://archive.stsci.edu/cgi-bin/dss_search?'
+    url = 'https://archive.stsci.edu/cgi-bin/dss_search?'
 
     # encode payload for the php form
     params = urllib.parse.urlencode(
@@ -320,13 +329,13 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
              c='none')).encode()
 
     # submit the form
-    # req = urllib.request.Request(url)
-    raw = urllib.request.urlopen(url, params).read()
+    with urllib.request.urlopen(url, params) as html:
+        raw = html.read()
 
     # parse error message
-    if b'ERROR' in raw[:1000]:
-        msg = raw[76:194].decode().replace('\n<PRE>\n', ' ')
-        raise STScIServerError(msg)
+    error = RGX_DSS_ERROR.search(raw)
+    if error:
+        raise STScIServerError(error[1])
 
     # log
     logger.info("Retrieving %s'x %s' image for object at J%.1f coordinates "
