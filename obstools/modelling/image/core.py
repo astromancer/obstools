@@ -4,7 +4,6 @@ Core tools for modelling astronomical images
 
 # std libs
 import time
-import itertools as itt
 from pathlib import Path
 from collections import defaultdict, MutableMapping
 
@@ -15,14 +14,14 @@ from photutils.segmentation import Segment
 
 # local libs
 from recipes.logging import LoggingMixin
-from recipes.containers.dicts import Record, AttrDict
+from recipes.dicts import Record, AttrDict
 from graphing.imagine import VideoDisplay
 
 # relative libs
 from ..utils import load_memmap
 from ...phot.utils import LabelGroupsMixin
-from ...phot.segmentation import SegmentationGridHelper
-from .. import Model, CompoundModel, FixedGrid, UnconvergedOptimization
+from ...image.segmentation import SegmentsModelHelper
+from .. import Model, CompoundModel, FixedGrid
 
 
 class ModelledSegment(Segment):
@@ -56,7 +55,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
 
         Parameters
         ----------
-        seg: np.ndarray, SegmentationHelper
+        seg: np.ndarray, SegmentedImage
             The segmentation
         models: {sequence, dict}
             The sequence of models.
@@ -106,8 +105,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     def set_segments(self, seg):
         """setter for `seg` property"""
         # noinspection PyAttributeOutsideInit
-        self._seg = SegmentationGridHelper(seg)
-        # FIXME: can now just be SegmentationHelper
+        self._seg = SegmentsModelHelper(seg)
+        # FIXME: can now just be SegmentedImage
 
         # re-compute grids for component models
         self.set_grid(self.grid)
@@ -568,7 +567,7 @@ class PSFModeller(SegmentedImageModel):
 # def background_subtract(self, image, mask=None, p0=None, **kws):
 #
 #     # background subtraction
-#     imbg = self.seg.mask_segments(image)
+#     imbg = self.seg.mask_image(image)
 #
 #     if mask is not None:
 #         imbg.mask |= mask

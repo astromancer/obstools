@@ -6,7 +6,7 @@ Functions to read and parse the MASTER transient alert website:
 
 # std libs
 from astropy.coordinates import jparser
-from recipes.string import rreplace
+from recipes.string import sub
 import re
 import itertools as itt
 from datetime import datetime
@@ -185,8 +185,6 @@ def get_mag(m):
     return -1
 
 
-
-
 def write_ascii(filename, data):
     col_names = list(data.dtype.fields.keys())
     col_names[0] = '# ' + col_names[0]
@@ -194,7 +192,6 @@ def write_ascii(filename, data):
 
     fmt = list(map('%-{}s'.format, np.char.str_len(data).max(0)))
     np.savetxt(filename, data[::-1], fmt)
-
 
 
 def get_date(date):
@@ -206,10 +203,10 @@ def get_date(date):
         day += f'.{frac}'
 
     # more stupid typos FFS
-    month = rreplace(month.strip('.'), {'Spt': 'Sep',
-                                        'Mrt': 'Mar',
-                                        'Nar': 'Mar',
-                                        'Avg': 'Aug'})
+    month = sub(month.strip('.'), {'Spt': 'Sep',
+                                   'Mrt': 'Mar',
+                                   'Nar': 'Mar',
+                                   'Avg': 'Aug'})
     mfmt = '%b'
     if len(month) > 3:
         mfmt = '%B'
@@ -222,8 +219,6 @@ def get_date(date):
         cur = frac * mult
     s += f' {int(cur)!s:0>2s}'
     return datetime.strptime(s, f'%Y {mfmt} %d %H %M %S')
-
-        
 
 
 def is_observable(coords, date=None, days=1, interval=300, altcut=45):
