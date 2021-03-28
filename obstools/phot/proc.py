@@ -1,4 +1,3 @@
-
 # std libs
 import time
 import logging
@@ -11,7 +10,8 @@ import astropy.units as u
 from scipy.optimize import minimize
 from photutils.aperture import (CircularAperture, CircularAnnulus,
                                 EllipticalAperture,
-                                EllipticalAnnulus)
+                                EllipticalAnnulus
+                                )
 
 # local libs
 from recipes import pprint
@@ -20,9 +20,6 @@ from recipes.logging import LoggingMixin, ProgressLogger
 
 # relative libs
 from ..modelling.utils import load_memmap
-
-
-
 
 OPT_SNR_THRESH = 10
 
@@ -590,7 +587,7 @@ class FrameProcessor(LoggingMixin):
         output[i] = image
 
         # prep background image
-        # imbg = tracker.mask_segments(image)
+        # imbg = tracker.mask_image(image)
 
         # fit and subtract background
         # p_bg, resi = model.fit(image)

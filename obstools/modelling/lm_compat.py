@@ -76,8 +76,8 @@ class lmMixin():
             plsq = result.params
             p, punc = np.transpose([(p.value, p.stderr)
                                     for p in plsq.values()])
-            fuckedup = np.allclose(p, p0)
-            if fuckedup:  # model "converged" to the initial values
+            bad = np.allclose(p, p0)
+            if bad:  # model "converged" to the initial values
                 self.logger.warning('%s fit did not converge!', self)
                 self.logger.debug('input parameters identical to output')
 

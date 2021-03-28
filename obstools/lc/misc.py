@@ -11,7 +11,7 @@ import numpy as np
 import more_itertools as mit
 
 # local libs
-from recipes.dict import pformat
+from recipes.dicts import pformat
 
 
 
@@ -26,11 +26,11 @@ from recipes.dict import pformat
 FORMATSPEC_SRE = re.compile('%(\d{0,2})\.?(\d{0,2})([if])')
 
 MULTILINE_CURLY_BRACKET = textwrap.dedent(
-        """
-        ⎫
-        ⎬ x%i stars
-        ⎭
-        """)
+    """
+    ⎫
+    ⎬ x%i stars
+    ⎭
+    """)
 
 
 # U+23aa Sm CURLY BRACKET EXTENSION ⎪
@@ -122,13 +122,13 @@ def get_column_info(nstars, has_oflag):
     COL_NAME_OFLAG = 'oflag'
 
     # column descriptions
-    COL_DESCRIPT = odict(
-            {#COL_NAME_TIME: 'Sidereal time in seconds since midnight',
-             COL_NAME_TIME: 'Barycentric Julian Date',
-             COL_NAME_COUNTS: 'Total integrated counts for star',
-             COL_NAME_SIGMA: 'Standard deviation uncertainty on total counts',
-             COL_NAME_OFLAG: 'Outlier flag'}
-    )
+    COL_DESCRIPT = odict({
+        # COL_NAME_TIME: 'Sidereal time in seconds since midnight',
+        COL_NAME_TIME: 'Barycentric Julian Date',
+        COL_NAME_COUNTS: 'Total integrated counts for star',
+        COL_NAME_SIGMA: 'Standard deviation uncertainty on total counts',
+        COL_NAME_OFLAG: 'Outlier flag'
+    })
 
     names = [COL_NAME_TIME]
     units = ['day']
@@ -206,7 +206,8 @@ def make_header(obj_name, shape_info, has_oflag, meta={}):
         lines.append(header_info_block(sec_name, info))
 
     # header as commented string
-    header = '\n'.join(lines).replace('\n', '\n# ')  # prepend comment character
+    # prepend comment character
+    header = '\n'.join(lines).replace('\n', '\n# ')
 
     # column headers block
     hline = '\n# ' + '-' * sum(col_widths)

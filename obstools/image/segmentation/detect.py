@@ -13,6 +13,7 @@ from recipes.pprint.misc import seq_repr_trunc
 from recipes.logging import get_module_logger
 from recipes.logging import LoggingMixin
 
+
 # module level logger
 logger = get_module_logger()
 

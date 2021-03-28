@@ -360,7 +360,7 @@ class PhotCampaign(PPrintContainer,
 
     """
     # init helpers
-    
+
     # Pretty representations for __str__ and __repr__
     pretty = PrettyPrinter(max_lines=25,
                            max_items=100,
@@ -395,7 +395,7 @@ class PhotCampaign(PPrintContainer,
         -------
         PhotCampaign
         """
-        kws.setdefault('loader', _BaseHDU.readfrom, )
+        kws.setdefault('loader', _BaseHDU.readfrom)
         files = files_or_dir
 
         # resolve input from text file with list of file names
@@ -406,7 +406,7 @@ class PhotCampaign(PPrintContainer,
             if Path(files).is_file():
                 files = [files]
             else:
-                # is_special = 
+                # is_special =
                 files = str(files)
 
                 if all(map(files.__contains__, '{}')):
@@ -418,7 +418,7 @@ class PhotCampaign(PPrintContainer,
                         raise ValueError(
                             f'{files!r} could not be resolved as either a '
                             'single filename, a glob pattern, or a directory'
-                            ) from None
+                        ) from None
 
         if not isinstance(files, (abc.Container, abc.Iterable)):
             raise TypeError(f'Invalid input type {type(files)} for `files`')
@@ -428,7 +428,8 @@ class PhotCampaign(PPrintContainer,
             # although we could load an empty run here, least surprise
             # dictates throwing an error
             raise ValueError(f'Could not resolve any valid files with '
-                             f'extensions: {extensions} from input {files!r}')
+                             f'extensions: {extensions} from input '
+                             f'{files_or_dir!r}')
 
         return obj
 

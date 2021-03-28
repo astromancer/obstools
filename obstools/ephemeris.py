@@ -8,40 +8,16 @@ from functools import partial
 import numpy as np
 
 # local libs
-from recipes.containers.lists import sortmore
+from recipes.lists import cosort
 
-from matplotlib import rc, ticker
+from matplotlib import ticker
 
 from matplotlib.transforms import Affine2D
-
-rc('font', size=14)
-
-
-def sexa(h, pos=None):
-    m = abs((h - int(h)) * 60)
-    sign = '-' if h < 0 else ''
-    return '{}{:2,d}ʰ{:02,d}ᵐ'.format(sign, abs(int(h)), int(m))
-
-
-def make_twin(ax, tick_label_angle=0):
-    axp = ax.twin(Affine2D().translate(0, 0).scale(1 / 24))
-    axp.yaxis.set_ticks([])
-    axp.xaxis.set_major_formatter(ticker.FuncFormatter(sexa))
-    ax.xaxis.set_ticklabels([])
-
-    if tick_label_angle:
-        axp.tick_params(pad=-5)
-        ticklabels = axp.xaxis.get_majorticklabels()
-        for label in ticklabels:
-            label.set_ha('left')
-            label.set_rotation(tick_label_angle)
-            label.set_rotation_mode('anchor')
-
-    return axp
 
 
 class Ephemeris(object):
     # TODO: def from_string(self):
+    # TODO: fit method!!
 
     def __init__(self, *args):
         """
@@ -87,8 +63,7 @@ class Ephemeris(object):
         return self.t0 + E * self.P
 
     def phase(self, t):
-        phase = np.atleast_1d(t - self.t0) / self.P
-        return phase
+        return np.atleast_1d(t - self.t0) / self.P
 
     def phase_mod1(self, t):
         return self.phase(t) % 1
@@ -179,7 +154,7 @@ def rephase(phase, offset, *data):
     if data is None:
         return phase
     else:
-        data = np.array(sortmore(phase, *data))
+        data = np.array(cosort(phase, *data))
 
         phase = data[0]
         data = data[1:]
@@ -195,4 +170,3 @@ def phase_splitter(ph, *data, **kws):
 
     phs, *datas = (np.split(item, ix[1:]) for item in (ph,) + data)
     return phs, datas
-
