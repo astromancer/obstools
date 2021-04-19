@@ -5,11 +5,11 @@ import itertools as itt
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import PPoly
-from recipes.dicts import Many2OneMap, TerseKws
+from recipes.dicts import ManyToOneMap, TerseKws
 import warnings
 
 # Logic for resolving telescope name
-TEMP = Many2OneMap()
+TEMP = ManyToOneMap()
 TEMP.add_trans({40: 1.,
                 74: 1.9})
 TEMP.add_mappings(TerseKws('40[ inch]', 1.),

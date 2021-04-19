@@ -2172,7 +2172,7 @@ class SegmentedImage(SegmentationImage,  # base
         -------
         im: `ImageDisplay` instance
         """
-        from graphing.imagine import ImageDisplay
+        from scrawl.imagine import ImageDisplay
 
         # draw segment labels
         # draw_labels = kws.pop('draw_labels', True)

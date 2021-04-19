@@ -13,13 +13,13 @@ from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # local libs
-from graphing.scatter import scatter_density
+from scrawl.scatter import scatter_density
 from recipes.misc import is_interactive
 from motley.table import Table
-from motley.profiling.timers import timer
-from obstools.aps import ApertureCollection
-from graphing.imagine import ImageDisplay
-from graphing.formatters import LinearRescaleFormatter
+# from motley.profiling.timers import timer
+# from obstools.aps import ApertureCollection
+from scrawl.imagine import ImageDisplay
+from scrawl.formatters import LinearRescaleFormatter
 
 # from obstools.psf.psf import GaussianPSF
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF

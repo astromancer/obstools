@@ -120,8 +120,8 @@ from salticam import slotmode
 from salticam.slotmode.tracking import SlotModeTracker
 from salticam.slotmode.modelling.image import (FrameTransferBleed,
                                                SlotModeBackground, FTB_WIDTH)
-from graphing.imagine import ImageDisplay
-from graphing.multitab import MplMultiTab
+from scrawl.imagine import ImageDisplay
+from scrawl.multitab import MplMultiTab
 from recipes.dicts import AttrReadItem
 from recipes.io import WarningTraceback
 from recipes.interactive import is_interactive

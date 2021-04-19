@@ -40,7 +40,7 @@ from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from recipes import memoize
 from recipes.containers.dicts import DefaultOrderedDict
-from graphing.ticks import DegreeFormatter, TransFormatter
+from scrawl.ticks import DegreeFormatter, TransFormatter
 from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
 # local libs

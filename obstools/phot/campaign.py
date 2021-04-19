@@ -166,12 +166,12 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
         """Display the data"""
 
         if self.ndim == 2:
-            from graphing.imagine import ImageDisplay
+            from scrawl.imagine import ImageDisplay
             im = ImageDisplay(self.data, **kws)
             # `section` fails with 2d data
 
         elif self.ndim == 3:
-            from graphing.imagine import VideoDisplay
+            from scrawl.imagine import VideoDisplay
             # FIXME: this does not work since VideoDisplay tries to interpret
             #  `self.section` as an array
             im = VideoDisplay(self.section, **kws)

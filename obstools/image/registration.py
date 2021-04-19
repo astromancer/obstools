@@ -52,7 +52,7 @@ from scipy.stats import binned_statistic_2d, mode
 from recipes.introspection.utils import get_module_name
 from scipy.spatial import cKDTree
 # from sklearn.cluster import MeanShift
-from graphing.imagine import ImageDisplay
+from scrawl.imagine import ImageDisplay
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 
@@ -681,8 +681,8 @@ def plot_coords_nrs(cooref, coords):
 
 
 def display_multitab(images, fovs, params, coords):
-    from graphing.multitab import MplMultiTab
-    from graphing.imagine import ImageDisplay
+    from scrawl.multitab import MplMultiTab
+    from scrawl.imagine import ImageDisplay
 
     import more_itertools as mit
 
@@ -2362,7 +2362,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         pGs[-1] = rotation
 
         if plot:
-            from graphing.imagine import ImageDisplay
+            from scrawl.imagine import ImageDisplay
 
             # plot xy coords
             # ggfig, ax = plt.subplots()

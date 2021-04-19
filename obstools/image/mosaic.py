@@ -1,7 +1,7 @@
 import itertools as itt
 
 import numpy as np
-from graphing.imagine import ImageDisplay
+from scrawl.imagine import ImageDisplay
 
 from obstools.image.registration import (ImageRegistrationDSS,
                                          ImageContainer, SkyImage)

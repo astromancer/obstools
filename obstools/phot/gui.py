@@ -17,7 +17,7 @@ from recipes.lists import flatten
 from recipes.dicts import AttrReadItem
 from recipes.logging import LoggingMixin
 from obstools.aps import ApertureCollection, SkyApertures
-from graphing.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
+from scrawl.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
 
 
 
@@ -1119,7 +1119,7 @@ class LegendGuiBase(ConnectionMixin):
 #         return mxshift, maxImage, segImage
 
 
-# from graphing.imagine import FitsCubeDisplay
+# from scrawl.imagine import FitsCubeDisplay
 
 
 # class FrameDisplay(FitsCubeDisplay):
@@ -1312,7 +1312,7 @@ class LegendGuiBase(ConnectionMixin):
 #         fig.set_size_inches(figsize)
 #
 #
-# # from graphing.imagine import FitsCubeDisplay
+# # from scrawl.imagine import FitsCubeDisplay
 #
 #
 # def displayCube(fitsfile, coords, rvec=None):
