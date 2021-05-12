@@ -7,12 +7,12 @@ import aplpy
 import numpy as np
 
 from obstools.utils import get_dss, get_coordinates, STScIServerError
-from recipes.logging import get_module_logger
-import logging
+from recipes.logging import logging, get_module_logger
 
-
-logging.basicConfig()
 logger = get_module_logger()
+logging.basicConfig()
+logger.setLevel(logging.INFO)
+
 
 SERVERS = {'b': ['poss2ukstu_blue', 'poss1_blue'],
            'r': ['poss2ukstu_red', 'poss1_red'],

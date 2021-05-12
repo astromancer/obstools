@@ -39,7 +39,8 @@ from recipes.dicts import pformat
 
 # module level logger
 logger = get_module_logger()
-
+logging.basicConfig()
+logger.setLevel(logging.INFO)
 #
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
@@ -920,8 +921,8 @@ class SegmentedImage(SegmentationImage,  # base
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
-        if cls.logger.getEffectiveLevel() > logging.INFO:
-            logger.debug('Detected %i objects across %i pixels.', seg.nlabels,
+        if cls.logger.getEffectiveLevel() == logging.INFO:
+            logger.info('Detected %i objects covering %i pixels.', seg.nlabels,
                          seg.to_binary().sum())
 
         return seg

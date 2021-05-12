@@ -60,8 +60,13 @@ from . import transforms as trans
 
 # from motley.profiling import profile
 
+from recipes.logging import logging, get_module_logger
 
-logger = logging.getLogger(get_module_name(__file__))
+# module level logger
+logger = get_module_logger()
+logging.basicConfig()
+logger.setLevel(logging.INFO)
+
 
 TABLE_STYLE = dict(txt='bold', bg='g')
 

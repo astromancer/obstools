@@ -22,8 +22,7 @@ from astropy.stats import median_absolute_deviation as mad
 
 # local libs
 from recipes.dict import AttrReadItem
-from recipes.logging import LoggingMixin
-from recipes.introspection.utils import get_module_name
+from recipes.logging import get_module_logger, LoggingMixin
 from recipes.parallel.synced import SyncedCounter, SyncedArray
 from obstools.stats import geometric_median
 from obstools.phot.utils import LabelGroupsMixin
@@ -54,9 +53,11 @@ from obstools.phot.segmentation import (SegmentationHelper,
 #  super resolution images
 #  lucky imaging ?
 
-
 # module level logger
-logger = logging.getLogger(get_module_name(__file__))
+logger = get_module_logger()
+logging.basicConfig()
+logger.setLevel(logging.INFO)
+
 
 TABLE_STYLE = dict(txt='bold', bg='g')
 

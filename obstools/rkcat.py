@@ -43,7 +43,8 @@ from recipes.logging import get_module_logger
 
 # module level logger
 logger = get_module_logger()
-
+logging.basicConfig()
+logger.setLevel(logging.INFO)
 
 # flags
 # LIMIT_FLAGS = '<>'

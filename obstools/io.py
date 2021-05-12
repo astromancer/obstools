@@ -9,12 +9,14 @@ from pathlib import Path
 import numpy as np
 
 # local libs
-from recipes.logging import get_module_logger
+from recipes.logging import logging, get_module_logger
 
 from .utils import int2tup
 
 # module level logger
 logger = get_module_logger()
+logging.basicConfig()
+logger.setLevel(logging.INFO)
 
 
 def load_memmap(loc, shape=None, dtype=None, fill=None, clobber=False):
