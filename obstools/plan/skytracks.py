@@ -39,13 +39,13 @@ from addict.addict import Dict
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
 from recipes import memoize
-from recipes.containers.dicts import DefaultOrderedDict
+from recipes.dicts import DefaultOrderedDict
 from scrawl.ticks import DegreeFormatter, TransFormatter
 from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
 # local libs
 # from motley import profiling
-from recipes.containers.lists import sortmore
+from recipes.lists import sortmore
 import recipes.pprint as ppr
 from recipes.string import rreplace
 from ..utils import get_coordinates, get_site

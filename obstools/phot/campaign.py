@@ -26,7 +26,7 @@ from recipes.containers import (AttrGrouper, AttrMapper, Grouped,
 from motley.table import AttrTable
 from obstools.image.sample import BootstrapResample
 from obstools.image.calibration import ImageCalibration, keep
-from recipes import io
+from recipes import io, bash
 from recipes.oo import SelfAware
 # from recipes.regex import glob_to_regex
 from recipes.string import braces
@@ -304,7 +304,7 @@ class ItemGlobber(ItemGetter):
             if special:
                 key = list(itt.chain.from_iterable(
                     (fnm.filter(files, key)
-                        for key in io.bash_expansion(key))))
+                        for key in bash.brace_expand(key))))
 
             elif is_glob:
                 key = list(fnm.filter(files, key))
@@ -409,7 +409,7 @@ class PhotCampaign(PPrintContainer,
                 files = str(files)
 
                 if all(map(files.__contains__, '{}')):
-                    files = io.bash.brace_expand(files)
+                    files = bash.brace_expand(files)
                 else:
                     try:
                         files = io.iter_files(files, extensions, recurse)
@@ -565,7 +565,7 @@ class PhotCampaign(PPrintContainer,
 
         """
         # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope', 'instrument',
+        groups, indices = self.group_by('telescope', 'camera',
                                         return_index=True)
 
         # start with the group having the most observations.  This will help
