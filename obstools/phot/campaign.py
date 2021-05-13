@@ -11,6 +11,7 @@ from pathlib import Path
 from collections import UserList, abc
 import glob
 import operator as op
+import warnings as wrn
 
 # third-party libs
 import numpy as np
@@ -468,7 +469,20 @@ class PhotCampaign(PPrintContainer,
             # load the HDU
             cls.logger.debug('Loading %s: %s', name,
                              pprint.hms(time() % 86400))
-            hdu = loader(name, **kws)
+            # catch all warnings
+            with wrn.catch_warnings() as w:
+                wrn.simplefilter('always')
+
+                # load file
+                hdu = loader(name, **kws)
+
+                # handle warnings
+                if w:
+                    cls.logger.warning(
+                        f'Loading file: {name} triggered the following '
+                        f'warning{"s"*(len(w) > 1)}:\n'
+                        '\n'.join((f'\n{warning.category}: {warning.message}'
+                                   for warning in w)))
             hdus.append(hdu)
 
         cls.logger.info('Loaded %i files', i)
