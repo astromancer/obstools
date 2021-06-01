@@ -15,7 +15,7 @@ from scipy.stats._distn_infrastructure import rv_frozen
 # local libs
 from obstools.modelling.utils import prod
 from recipes import pprint
-from recipes.containers.dicts import AttrReadItem, pformat as pformat_dict
+from recipes.dicts import AttrReadItem, pformat as pformat_dict
 
 
 #

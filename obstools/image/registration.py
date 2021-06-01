@@ -16,7 +16,7 @@ methods are implemented for doing this:
 from scipy.interpolate import NearestNDInterpolator
 from obstools.modelling import Model
 import numbers
-from recipes.containers import ItemGetter, OfType, AttrMapper, AttrProp
+from pyxis.containers import ItemGetter, OfType, AttrMapper, AttrProp
 import collections as col
 from recipes.misc import duplicate_if_scalar
 import functools as ftl
@@ -35,7 +35,7 @@ from scipy.optimize import minimize
 from obstools.stats import geometric_median
 from astropy.utils import lazyproperty
 
-from recipes.containers.dicts import AttrDict
+from recipes.dicts import AttrDict
 from obstools.image.segmentation import SegmentedImage
 from obstools.phot.campaign import HDUExtra
 from ..utils import get_coordinates, get_dss, STScIServerError
@@ -49,7 +49,6 @@ from recipes.logging import LoggingMixin
 from scipy.stats import binned_statistic_2d, mode
 
 # from motley.profiling.timers import timer
-from recipes.introspection.utils import get_module_name
 from scipy.spatial import cKDTree
 # from sklearn.cluster import MeanShift
 from scrawl.imagine import ImageDisplay

@@ -1,36 +1,38 @@
 # std libs
-# from recipes.oo.meta import classmaker
 import re
-# from recipes.string import replace
-import fnmatch as fnm
+import glob
 import inspect
-from recipes.oo.null import Null
+import fnmatch as fnm
+import operator as op
+import warnings as wrn
 import functools as ftl
 import itertools as itt
 from pathlib import Path
 from collections import UserList, abc
-import glob
-import operator as op
-import warnings as wrn
 
 # third-party libs
 import numpy as np
+from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
-from astropy.utils import lazyproperty
 
 # local libs
-from recipes.logging import LoggingMixin
-from recipes.containers import (AttrGrouper, AttrMapper, Grouped,
-                                PrettyPrinter, PPrintContainer, OfType,
-                                ItemGetter, AttrProp, is_property)
 from motley.table import AttrTable
-from obstools.image.sample import BootstrapResample
-from obstools.image.calibration import ImageCalibration, keep
 from recipes import io, bash
 from recipes.oo import SelfAware
-# from recipes.regex import glob_to_regex
-from recipes.string import braces
+from recipes.oo.null import Null
+from recipes.logging import LoggingMixin
+from recipes.string.brackets import braces
+from pyxis.type_check import OfType
+from pyxis.getitem import ItemGetter
+from pyxis.grouping import Grouped, AttrGrouper
+from pyxis.vectorize import AttrMapper, AttrProp
+from pyxis.pprint import PrettyPrinter, PPrintContainer
+
+# relative libs
+from ..image.sample import BootstrapResample
+from ..image.calibration import ImageCalibration, keep
+
 
 # translation for special "[22:34]" type file globbing
 REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')

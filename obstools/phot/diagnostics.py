@@ -19,7 +19,7 @@ from motley.table import Table
 # from motley.profiling.timers import timer
 # from obstools.aps import ApertureCollection
 from scrawl.imagine import ImageDisplay
-from scrawl.formatters import LinearRescaleFormatter
+from scrawl.ticks import LinearRescaleFormatter
 
 # from obstools.psf.psf import GaussianPSF
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
