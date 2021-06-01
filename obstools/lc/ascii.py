@@ -1,4 +1,6 @@
-
+"""
+Write light curves to plain text in utf-8
+"""
 
 # std libs
 import re
@@ -13,17 +15,11 @@ import more_itertools as mit
 # local libs
 from recipes.dicts import pformat
 
-
-
-
 # write oflag data to file
 
 
-
-
-
 #
-FORMATSPEC_SRE = re.compile('%(\d{0,2})\.?(\d{0,2})([if])')
+FORMATSPEC_SRE = re.compile(r'%(\d{0,2})\.?(\d{0,2})([if])')
 
 MULTILINE_CURLY_BRACKET = textwrap.dedent(
     """
@@ -63,7 +59,7 @@ def header_info_block(name, info):
         s += underline_ascii(name)
         s += '\n'
 
-    s += pformat(info, get_name, brackets='', item_sep='')
+    s += pformat(info, rhs=get_name, brackets='', sep='')
     s += '\n'
     return s
 
@@ -87,6 +83,31 @@ def check_column_widths(names, formats):
     return widths, precisions, dtypes
 
 
+# def make_format_spec(names, precisions, dtype='s'):
+#     """
+#     Adjust the column format specifiers to accommodate width of the column names
+#     """
+#
+#     widths = list(map(len, names))
+#     col_fmt_data = ''.join(map('%%-%i.%s%s'.__mod__,
+#                                zip(widths, precisions, dtype)))
+#     return widths, col_fmt_data
+
+def write_header_aligned(a, out):
+    # fn = '/home/hannes/work/pyshoc/pyshoc/data/SHOC1.txt'
+    # a = np.genfromtxt(fn, dtype=None, names=True, encoding=None)
+    a = a.astype([(_, t.replace('S', 'U')) for _, t in a.dtype.descr])
+
+    widths = np.array(list(map(len, a.dtype.names)))
+    fmt_head = ' '.join(map('%%-%is'.__mod__, widths))
+    widths[0] += 2
+    fmt = tuple(map('%%-%i%s'.__mod__, zip(widths, 's' * len(widths))))
+
+    # out = '/home/hannes/work/pyshoc/pyshoc/data/SHOC1.txt'
+    header = fmt_head % a.dtype.names
+    np.savetxt(out, a, fmt, header=header)
+
+
 def make_column_format(names, formats):
     """
     Adjust the column format specifiers to accommodate width of the column names
@@ -107,11 +128,10 @@ def hstack_string(a, b, whitespace=1):
     bl = b.splitlines()
     w = max(map(len, al)) + whitespace
 
-    out = ''
-    for i, (aa, bb) in enumerate(zip(al, bl)):
-        out += '{: <{}s}{}\n'.format(aa, w, bb)
-
-    return out
+    return ''.join(
+        '{: <{}s}{}\n'.format(aa, w, bb)
+        for i, (aa, bb) in enumerate(zip(al, bl))
+    )
 
 
 def get_column_info(nstars, has_oflag):
@@ -154,7 +174,7 @@ def get_column_info(nstars, has_oflag):
     col_info.update(zip(col_info, col_info_text.splitlines()))
 
     # build column headers
-    for i in range(nstars):
+    for _ in range(nstars):
         names.extend(col_names_per_star)
         units.extend(col_units_per_star)
         formats.extend(col_fmt_per_star)
@@ -217,7 +237,7 @@ def make_header(obj_name, shape_info, has_oflag, meta={}):
     obj_names = ['# ', obj_name] + ['C%i' % i for i in range(nstars - 1)]
     w0, *ww = col_widths
     w2 = map(sum, mit.grouper(2 + has_oflag, ww))  # 2-column widths
-    col_fmt_names = ''.join(['%%-%is' % w for w in [w0] + list(w2)])
+    col_fmt_names = ''.join('%%-%is' % w for w in [w0] + list(w2))
     header += '\n' + col_fmt_names % tuple(obj_names)
 
     # column titles
@@ -261,8 +281,11 @@ def make_table(t, flx, std, mask=None):
     return np.array(tbl).T
 
 
-def write_ascii(filename, t, counts, std, mask=None, meta={},
+def write(filename, t, counts, std, mask=None, meta={},
                 obj_name='<unknown>'):
+    if np.ma.is_masked(counts):
+        mask = counts.mask
+
     # stack data
     tbl = make_table(t, counts, std, mask)
 
