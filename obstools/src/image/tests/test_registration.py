@@ -1,3 +1,4 @@
+from pytest import approx
 from obstools.image.registration import (
     MultivariateGaussians, GaussianMixtureModel, CoherentPointDrift,
     SkyImage, ImageRegister, rigid)
@@ -44,14 +45,13 @@ for name, params in dict(
         amplitudes=[10,
                     (1, 2, 3)
                     ]
-        ).items():
+).items():
     exec(textwrap.dedent(
         f"""
         @pytest.fixture(params=params, ids=make_id(name, len(params)))
         def {name}(request):
             return request.param
         """))
-
 
 
 @pytest.fixture
@@ -70,7 +70,6 @@ def model(xy, sigmas, amplitudes):
 
 #     def test_affine(self):
 #         ''
-
 
 
 # @pytest.mark.skip       # TODO autouse
@@ -148,6 +147,7 @@ class TestMultivariateGaussians:
 
 # TODO: testGMM - check always integrates to 1
 
+
 @pytest.fixture
 def cpd(xy, sigmas, amplitudes):
     # this actually already tests the initialization, but it's basically
@@ -156,6 +156,8 @@ def cpd(xy, sigmas, amplitudes):
     return CoherentPointDrift(xy, sigmas, weights)
 
 # @pytest.mark.skip
+
+
 class TestCoherentPointDrift:
     @classmethod
     def setup_class(cls):
@@ -170,7 +172,7 @@ class TestCoherentPointDrift:
         self.model.fit_rotation = False
         assert xy + 1 == pytest.approx(self.model.transform(xy, (1, 1)))
 
-    # @pytest.mark.skip 
+    # @pytest.mark.skip
     def test_fit_translate(self, cpd):
         cpd.fit_rotation = False
         off = (0.5, 0.5)
@@ -179,9 +181,9 @@ class TestCoherentPointDrift:
 
     def test_fit(self, cpd):
         cpd.fit_rotation = True
-        θ =  np.pi / 12
+        θ = np.pi / 12
         off = (0.5, 0.5)
-        
+
         xy = rigid(cpd.gmm.xy, np.hstack([off, θ]))
         r = cpd.fit(xy)
 
@@ -206,18 +208,21 @@ class TestCoherentPointDrift:
 images = load_test_data('images.npz')
 fovs = load_test_data('fovs.npz')
 
+
 @pytest.fixture
 def skyimage(data, fov):
     return SkyImage(data, fov)
+
 
 @pytest.fixture
 def skyimage0():
     return SkyImage(images[0], fovs[0])
 
+
 @pytest.mark.skip
 class TestSkyImage():
     def test_init(self):
-        img=np.random.randn(10, 10)
+        img = np.random.randn(10, 10)
         SkyImage(img, (1, 1))
 
         with pytest.raises(ValueError):
@@ -228,26 +233,27 @@ class TestSkyImage():
         assert len(skyimage0.xy)
         assert len(skyimage0.counts)
 
-    @pytest.mark.mpl_image_compare(baseline_dir = 'images',
-                                   remove_text = True)
+    @pytest.mark.mpl_image_compare(baseline_dir='images',
+                                   remove_text=True)
     def test_plot(self, skyimage0):
-        art, frame=skyimage0.plot(p = (0, 0, np.pi/12))
+        art, frame = skyimage0.plot(p=(0, 0, np.pi/12))
         return art.figure
 
-from pytest import approx
 
 # @pytest.mark.incremental
+
+
 @pytest.mark.skip
 class TestImageRegister:
 
     def test_init(self):
         # construct without data
-        reg=ImageRegister(snr = 5, npixels = 7)
+        reg = ImageRegister(snr=5, npixels=7)
         assert reg.find_kws['snr'] == 5
         assert reg.find_kws['npixels'] == 7
 
         # HACK to reuse this later
-        self.__class__.reg=reg
+        self.__class__.reg = reg
 
     def test_init_with_data(self, skyimage0):
         # init without params raises
@@ -255,7 +261,7 @@ class TestImageRegister:
             ImageRegister([skyimage0])
 
         # init with params OK
-        ImageRegister([skyimage0], params = [(0, 0, 0)])
+        ImageRegister([skyimage0], params=[(0, 0, 0)])
 
     def test_attr_lookup(self):
         # construct with data
@@ -265,7 +271,7 @@ class TestImageRegister:
         assert reg.fovs == approx(fovs)
         assert reg.scales == approx(fovs / reg.attrs('data.shapes'))
 
-    @pytest.mark.parametrize('data, fov', zip(images, fovs), indirect = True)
+    @pytest.mark.parametrize('data, fov', zip(images, fovs), indirect=True)
     def test_no_rotation(self, skyimage):
         # this will build the register, and will register as individual tests...
         self.reg(skyimage)

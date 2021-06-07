@@ -1645,7 +1645,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if ridx is None:
             ridx = pixel_scales.argmin(0)[0]
 
-        indices = np.arange(len(images))
+        indices = np.arange(n)
         if ridx:  # put this index first
             indices[0], indices[ridx] = indices[ridx], indices[0]
 

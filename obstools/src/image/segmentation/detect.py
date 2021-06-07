@@ -6,7 +6,7 @@ import numpy as np
 
 from motley.table import Table
 
-from obstools.modelling import UnconvergedOptimization
+# from obstools.modelling import UnconvergedOptimization
 from obstools.phot.utils import iter_repeat_last
 from photutils import detect_threshold, detect_sources
 from recipes.pprint.misc import seq_repr_trunc

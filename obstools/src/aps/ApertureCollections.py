@@ -20,7 +20,7 @@ from matplotlib.transforms import (IdentityTransform,
 # from recipes.io import warn as Warn
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
-from recipes.dicts import TransDict, Many2OneMap
+from recipes.dicts import TransDict, ManyToOneMap
 
 
 # from pprint import pprint
@@ -128,7 +128,7 @@ class KeywordTranslator(TransDict):
         return {self._map.get(key, key): val for key, val in dic.items()}
 
 
-class PropertyConverter(Many2OneMap):
+class PropertyConverter(ManyToOneMap):
     """Keyword value conversion"""
 
     # @expose.args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )

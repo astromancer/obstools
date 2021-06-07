@@ -590,7 +590,7 @@ class GaussianPSF(CircularGaussianPSF):
 
 EllipticalGaussianPSF = GaussianPSF
 
-# ====================================================================================================
+# ==============================================================================
 
 
 # TODO: as class
@@ -643,7 +643,7 @@ def discretizedGaussian(amp, mu, cov, grid):
     return amp * np.prod(w, axis=0)
 
 
-# ****************************************************************************************************
+# ******************************************************************************
 # TODO: as Fittable2Dmodel! + contribute to photutils
 class DiscretizedGaussian():  # GaussianPSF??
     """Gaussian Point Response Function """

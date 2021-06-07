@@ -42,8 +42,36 @@ def _sanitize_data(data, allow_dim):
     return data
 
 
+def add_rectangle_inset(axes, pixel_size, colour='0.6'):
+    # add rectangle to indicate size of lower axes on upper
+    for j, ax in enumerate(axes.ravel()):
+        r, c = divmod(j, axes.shape[1])
+        if not (r % 2):
+            continue
+
+        bbox = ax.viewLim
+        xyr = np.array([bbox.x0, bbox.y0])
+        rect = Rectangle(xyr, bbox.width, bbox.height,
+                         fc='none', ec=colour, lw=1.5)
+        ax_up = axes[r - 1, c]
+        ax_up.add_patch(rect)
+
+        # add lines for aesthetic
+        # get position of upper edges of lower axes in data
+        # coordinates of upper axes
+        if (ax_up.viewLim.height > pixel_size) and \
+                (ax_up.viewLim.width > pixel_size):
+            trans = ax.transAxes + ax_up.transData.inverted()
+            xy = trans.transform([[0, 1], [1, 1]])
+
+            ax_up.plot(*np.array([xyr, xy[0]]).T,
+                       color=colour, clip_on=False)
+            ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
+                       color=colour, clip_on=False)
+
+
 def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
-                           pixel_grid=None, pixel_size=1, n_cols=10,
+                           pixel_grid=None, pixel_size=1, n_cols=None,
                            ticks=True):
     """
     For sets of measurements (m, n, 2), plot each (m, 2) feature set as on
@@ -71,35 +99,8 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
     def _on_first_draw(event):
         # have to draw rectangle inset lines after first draw else they point
         # to wrong locations on the edges of the lower axes
-        add_rectangle_inset()
+        add_rectangle_inset(axes, pixel_size)
         fig.canvas.mpl_disconnect(cid)  # disconnect so this only runs once
-
-    def add_rectangle_inset():
-        # add rectangle to indicate size of lower axes on upper
-        for j, ax in enumerate(axes.ravel()):
-            r, c = divmod(j, n_cols)
-            if not (r % 2):
-                continue
-
-            bbox = ax.viewLim
-            xyr = np.array([bbox.x0, bbox.y0])
-            rect = Rectangle(xyr, bbox.width, bbox.height,
-                             fc='none', ec=inset_colour, lw=1.5)
-            ax_up = axes[r - 1, c]
-            ax_up.add_patch(rect)
-
-            # add lines for aesthetic
-            # get position of upper edges of lower axes in data
-            # coordinates of upper axes
-            if (ax_up.viewLim.height > pixel_size) and \
-                    (ax_up.viewLim.width > pixel_size):
-                trans = ax.transAxes + ax_up.transData.inverted()
-                xy = trans.transform([[0, 1], [1, 1]])
-
-                ax_up.plot(*np.array([xyr, xy[0]]).T,
-                           color=inset_colour, clip_on=False)
-                ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
-                           color=inset_colour, clip_on=False)
 
     # clean data
     coords = _sanitize_data(coords, 3)
@@ -112,8 +113,9 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
         coords = coords[:, ~ignore_plot]
 
     #
-    inset_colour = '0.6'
-    n_obj = len(centres)
+    n_obj = sum(~ignore_plot)
+    if n_cols is None:
+        n_cols = np.ceil(np.sqrt(n_obj)).astype(int)
 
     # size figure according to data
     ax_size_inches = 1.0
@@ -131,7 +133,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
         t = top - (dy + gap) * i
         b = t - dy
 
-        gs = GridSpec(2, 10, fig,
+        gs = GridSpec(2, n_cols, fig,
                       top=t, bottom=b,
                       left=0.035, right=0.99,
                       hspace=0.05, wspace=0.05)
@@ -166,12 +168,14 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
 
     # plot shifted cluster centroids
     d = 0.5 * pixel_size
+
     for i, ax_row in enumerate(axes):
         j0 = (i // 2) * n_cols
         yx_row = yx[:, j0:j0 + n_cols]
         scatter_density_grid(yx_row, None, ax_row[:yx_row.shape[1]], False,
                              False, min_count=np.inf,
-                             scatter_kws=dict(marker='.', color='maroon',
+                             scatter_kws=dict(marker='.',
+                                              color='maroon',
                                               label='recentred'),
                              )
 
@@ -243,7 +247,7 @@ def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
 def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
                          show_centres=True, centre_func=np.mean,
                          centre_marker='*', centre_label='', bins=100,
-                         min_count=3, tessellation='hex', scatter_kws=None,
+                         min_count=3, max_points=500, tessellation='hex', scatter_kws=None,
                          density_kws=None):
     """
 
@@ -293,7 +297,7 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
         yx = features[:, i]
 
         # plot point cloud visualization
-        scatter_density(ax, yx, bins, None, min_count,
+        scatter_density(ax, yx, bins, None, min_count, max_points,
                         tessellation, scatter_kws, density_kws)
 
         if show_centres:
@@ -407,7 +411,7 @@ def ap_opt_stat_map(optstat):
 # TODO: plot best model balance for each star
 
 # ====================================================================================================
-@timer
+# @timer
 def diagnostics(modelDb, locData):
     # np.isnan(flux_ap)
     # problematic = list(filter(None, res))
@@ -463,8 +467,8 @@ def fit_summary(modelDb, locData):
     # summary table
     coo = locData.rcoo[modelDb.ix_fit]
     col_headers = list(
-            map('Star {0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, modelDb.ix_fit,
-                coo))
+        map('Star {0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, modelDb.ix_fit,
+            coo))
     tbl = Table(tbl,
                 title='Fitting summary: Unconvergent',
                 title_props=dict(txt='bold', bg='m'),
@@ -473,7 +477,7 @@ def fit_summary(modelDb, locData):
     return tbl
 
 
-@timer
+# @timer
 def diagnostic_figures(locData, apData, modelDb, fitspath=None, save=True):
     # labels for legends
     nstars = apData.bg.shape[-1]
@@ -482,7 +486,7 @@ def diagnostic_figures(locData, apData, modelDb, fitspath=None, save=True):
     ir = locData.ir  # finder.ir
     w = locData.window  # finder.window
     star_labels = list(
-            map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, ix, rcoo))
+        map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format, ix, rcoo))
 
     # #plot some statistics on the parameters!!
     # masked parameters, masked parameter variance
@@ -530,7 +534,7 @@ def diagnostic_figures(locData, apData, modelDb, fitspath=None, save=True):
         save_figures(figs, fitspath)
 
 
-@timer
+# @timer
 def save_figures(figures, path):
     # create directory for figures to be saved
     # figdir = path.with_suffix('.figs')
@@ -556,7 +560,7 @@ def saver(fig, filename):
     fig.savefig(str(filename))
 
 
-@timer
+# @timer
 def plot_param_hist(p, names):
     Nstars = p.shape[1]
     p = np.ma.array(p, mask=False)
@@ -694,7 +698,7 @@ def get_proxy_art(art):
     return proxies
 
 
-@timer
+# @timer
 def plot_lc_psf(fpm, labels):
     # PSF photometry light curves
     fig, art, *rest = tsplt(fpm.T, title='psf flux',
@@ -758,7 +762,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
                                  errorbar=dict(errorevery=error_every),
                                  axlabels=('frame #', 'Flux (photons/pixel)'),
                                  draggable=True,  # FIXME: labels not shown
-                                 show_hist=False)  # FIXME: fuckup with axes
+                                 show_hist=False)  # FIXME: broken with axes
 
     art.connect()
 
@@ -805,9 +809,9 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 #     return fig
 #
 
-@timer
+# @timer
 def plot_lc_aps(apdata, labels):
-    # from graphing.multitab import MplMultiTab
+    # from scrawl.multitab import MplMultiTab
     ##ui = MplMultiTab()
     figs = []
 
@@ -850,7 +854,7 @@ def plot_lc_aps(apdata, labels):
 def from_params(model, params, scale=3, **kws):
     converged = ~np.isnan(params).any(1)
     ap_data = np.array([model.get_aperture_params(p) for p in params])
-    coords = ap_data[converged, :2]  #::-1
+    coords = ap_data[converged, :2]  # ::-1
     sigma_xy = ap_data[converged, 2:4]
     widths, heights = sigma_xy.T * scale * 2
     angles = np.degrees(ap_data[converged, -1])
@@ -924,7 +928,7 @@ def plot_mean_residuals(modelDb):
     grid_images = AxesGrid(fig, 111,  # similar to subplot(212)
                            nrows_ncols=(len(db.gaussians), len(db.ix_fit)),
                            axes_pad=0.1,
-                           label_mode="L",  # THIS DOESN'T FUCKING WORK!
+                           label_mode="L",  # THIS DOESN'T WORK!
                            # share_all = True,
                            cbar_location="right",
                            cbar_mode="edge",
@@ -947,7 +951,7 @@ def plot_mean_residuals(modelDb):
 
 # ====================================================================================================
 # TODO: plot class
-@timer
+# @timer
 def plot_q_mon(mon_q_file, save=False):  # fitspath
     from astropy.time import Time
 
@@ -985,7 +989,7 @@ def plot_q_mon(mon_q_file, save=False):  # fitspath
 # labels=['cpu%d'%i for i in range(Ncpus)])
 # fig.savefig(monitor+'.png')
 
-@timer
+# @timer
 def plot_monitor_data(mon_cpu_file, mon_mem_file):
     from astropy.time import Time
 
@@ -1040,12 +1044,12 @@ def plot_monitor_data(mon_cpu_file, mon_mem_file):
 
 if __name__ == '__main__':
     path = Path(
-            '/home/hannes/work/mensa_sample_run4/')  # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
+        '/home/hannes/work/mensa_sample_run4/')  # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
     qfiles = list(path.rglob('phot.q.dat'))
     qfigs = list(map(plot_q_mon, qfiles))
 
     cpufiles, memfiles = zip(
-            *zip(*map(path.rglob, ('phot.cpu.dat', 'phot.mem.dat'))))
+        *zip(*map(path.rglob, ('phot.cpu.dat', 'phot.mem.dat'))))
     monfigs = list(map(plot_monitor_data, cpufiles, memfiles))
     nlabels = [f.parent.name for f in qfiles]
     wlabels = ['Queues', 'Performance']

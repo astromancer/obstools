@@ -1,3 +1,8 @@
+"""
+Utilities for working with observing campaigns that consist of multiple
+observation files.
+"""
+
 # std libs
 import re
 import glob
@@ -54,8 +59,11 @@ REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
 #     return hdu.file.name
 #
 
+def is_property(v):
+    return isinstance(v, property)
 
-class FnHelp:
+
+class FilenameHelper:
     # def __init_subclass(cls):
 
     def __init__(self, hdu):
@@ -77,11 +85,11 @@ class FnHelp:
         return str(self._path.stem)
 
 
-class FileHelper(UserList,  AttrMapper):  # OfType(FnHelp)
+class FileList(UserList, AttrMapper):  # OfType(FilenameHelper)
     def __new__(cls, campaign):
         obj = super().__new__(cls)
         # use all
-        kls = campaign._allowed_types[0]._FnHelper
+        kls = campaign._allowed_types[0]._FilenameHelperClass
         for name, p in inspect.getmembers(kls, is_property):
             # print('creating property', name)
             setattr(cls, f'{name}s', AttrProp(name))
@@ -97,11 +105,11 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
     Some extra methods and properties that help PhotCampaign
     """
 
-    _FnHelper = FnHelp
+    _FilenameHelperClass = FilenameHelper
 
     @property
     def file(self):
-        return self._FnHelper(self)
+        return self._FilenameHelperClass(self)
 
     @property
     def ishape(self):
@@ -242,7 +250,7 @@ class ImageSamplerHDU(_HDUExtra):
 
         self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
                          f'{float(min_depth):.1f} seconds) for sample image '
-                         f'from {self.file.name!r}')
+                         f'from {self.file.name!r}.')
 
         sampler = getattr(self.sampler, stat)
         return self.calibrated(sampler(n, n))
@@ -304,6 +312,7 @@ class ItemGlobber(ItemGetter):
 
             files = self.files.names
             # handle special numeric range specification here
+
             if special:
                 key = list(itt.chain.from_iterable(
                     (fnm.filter(files, key)
@@ -334,7 +343,8 @@ class CampaignType(SelfAware, OfType):
 
 class PhotCampaign(PPrintContainer,
                    ItemGlobber,
-                   UserList, CampaignType(_BaseHDU),
+                   UserList,
+                   CampaignType(_BaseHDU),
                    AttrGrouper,
                    LoggingMixin):
     """
@@ -419,11 +429,11 @@ class PhotCampaign(PPrintContainer,
                     except ValueError:
                         raise ValueError(
                             f'{files!r} could not be resolved as either a '
-                            'single filename, a glob pattern, or a directory'
+                            'single filename, a glob pattern, or a directory.'
                         ) from None
 
         if not isinstance(files, (abc.Container, abc.Iterable)):
-            raise TypeError(f'Invalid input type {type(files)} for `files`')
+            raise TypeError(f'Invalid input type {type(files)} for `files`.')
 
         obj = cls.load_files(files, **kws)
         if len(obj) == 0:
@@ -431,7 +441,7 @@ class PhotCampaign(PPrintContainer,
             # dictates throwing an error
             raise ValueError(f'Could not resolve any valid files with '
                              f'extensions: {extensions} from input '
-                             f'{files_or_dir!r}')
+                             f'{files_or_dir!r}.')
 
         return obj
 
@@ -453,7 +463,7 @@ class PhotCampaign(PPrintContainer,
         # kws.setdefault('memmap', True)
 
         from time import time
-        from recipes import pprint
+        from recipes import pprint as ppr
 
         # sanitize filenames:  input filenames may contain None - remove these
         filenames = filter(None, filenames)
@@ -464,15 +474,15 @@ class PhotCampaign(PPrintContainer,
         for i, name in enumerate(sorted(filenames), 1):
             if name is None:
                 if not said:
-                    cls.logger.info('Filtering filenames that are `None`')
+                    cls.logger.info('Filtering filenames that are `None`.')
                     said = True
                 continue
 
             # load the HDU
-            cls.logger.debug('Loading %s: %s', name,
-                             pprint.hms(time() % 86400))
+            cls.logger.debug('Loading %s: %s.', name, ppr.hms(time() % 86400))
+
             # catch all warnings
-            with wrn.catch_warnings() as w:
+            with wrn.catch_warnings(record=True) as w:
                 wrn.simplefilter('always')
 
                 # load file
@@ -481,13 +491,12 @@ class PhotCampaign(PPrintContainer,
                 # handle warnings
                 if w:
                     cls.logger.warning(
-                        f'Loading file: {name} triggered the following '
-                        f'warning{"s"*(len(w) > 1)}:\n'
-                        '\n'.join((f'\n{warning.category}: {warning.message}'
-                                   for warning in w)))
+                        f'Loading file: {name!r} triggered the following '
+                        f'warning{"s"*(len(w) > 1)}:\n' +
+                        '\n'.join((str(warning.message) for warning in w)))
             hdus.append(hdu)
 
-        cls.logger.info('Loaded %i files', i)
+        cls.logger.info('Loaded %i file%s.', i, 's' * bool(i))
         return cls(hdus)
 
     def __init__(self, hdus=None):
@@ -508,47 +517,26 @@ class PhotCampaign(PPrintContainer,
 
     @property
     def files(self):
-        return FileHelper(self)
+        return FileList(self)
+
+    def pformat(self, attrs=None, **kws):
+        return self.table(self, attrs, **kws)
 
     def pprint(self, attrs=None, **kws):
-        print(self.table(self, attrs, **kws))
+        print(self.pformat(attrs, **kws))
 
     def join(self, other):
+        if not other:
+            return self
+
         if isinstance(other, self.new_groups().__class__):
             other = other.to_list()
 
         if not isinstance(other, self.__class__):
             raise TypeError(
-                f'Cannot join {type(other)!r} with {self.__class__!r}')
+                f'Cannot join {type(other)!r} with {self.__class__!r}.')
 
         return self.__class__(np.hstack((self.data, other.data)))
-
-    def _coalign(self, depth=10, sample_stat='median', reference_index=None,
-                 plot=False, **find_kws):
-
-        # check
-        assert not self.varies_by('telescope', 'instrument')
-
-        from obstools.image.registration import ImageRegister
-
-        # get sample images etc
-        images = self.calls('get_sample_image', sample_stat, depth)
-        fovs, angles = zip(*self.attrs('fov', 'pa'))
-        #
-        matcher = ImageRegister.from_images(images, fovs, **find_kws)
-
-        if plot:
-            matcher.mosaic(coords=matcher.xyt)
-
-        # return matcher, idx
-
-        # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars
-        matcher.register_constellation(plot=plot)
-        # for i in range(3):
-        matcher.refine(plot=plot)
-        matcher.recentre(plot=plot)
-        return matcher
 
     def coalign(self, depth=10, sample_stat='median', plot=False, **find_kws):
         """
@@ -623,6 +611,33 @@ class PhotCampaign(PPrintContainer,
         # _, lhr = imr.refine(plot=plot)
 
         return imr
+
+    def _coalign(self, depth=10, sample_stat='median', reference_index=None,
+                 plot=False, **find_kws):
+
+        # check
+        assert not self.varies_by('telescope', 'camera')
+
+        from obstools.image.registration import ImageRegister
+
+        # get sample images etc
+        images = self.calls('get_sample_image', sample_stat, depth)
+        fovs, angles = zip(*self.attrs('fov', 'pa'))
+        #
+        matcher = ImageRegister.from_images(images, fovs, **find_kws)
+
+        if plot:
+            matcher.mosaic(coords=matcher.xyt)
+
+        # return matcher, idx
+
+        # make sure we have the best possible alignment amongst sample images.
+        # register constellation of stars
+        matcher.register_constellation(plot=plot)
+        # for i in range(3):
+        matcher.refine(plot=plot)
+        matcher.recentre(plot=plot)
+        return matcher
 
     # TODO: coalign_survey
     def coalign_dss(self, depth=10, sample_stat='median', reference_index=0,
@@ -704,29 +719,22 @@ class PhotCampaign(PPrintContainer,
 
         return dss
 
+    def close(self):
+        # close all files
+        self.calls('_file.close')
+
 
 class ObsGroups(Grouped, LoggingMixin):
     """
-    Emulates dict to hold multiple ObservationList instances keyed by their
-    shared common attributes. The attribute names given in groupId are the
-    ones by  which the run is separated into unique segments (which are also
-    ObservationList instances). This class attempts to eliminate the tedium
-    of computing calibration frames for different observational setups by
-    enabling flexible looping over various such groupings.
+    Emulates dict to hold multiple `Campaign` instances keyed by their common
+    attribute values. The attribute names given in `group_id` are the ones by
+    which the original Campaign is separated into unique segments (which are
+    also `Campaign` instances). 
+
+    This class attempts to eliminate the tedium of doing computations on
+    multiple files with identical observational setups by enabling flexible
+    looping over many such groupings.
     """
 
-    def __init__(self, factory=PhotCampaign, *a, **kw):
-        super().__init__(factory, *a, **kw)
-
-    def to_list(self):
-        out = self.factory()
-        for item in self.values():
-            if item is None:
-                continue
-            if isinstance(item, PrimaryHDU):
-                out.append(item)
-            elif isinstance(item, out.__class__):
-                out.extend(item)
-            else:
-                raise TypeError(f'{item.__class__}')
-        return out
+    def __init__(self, factory=PhotCampaign, *args, **kw):
+        super().__init__(factory, *args, **kw)

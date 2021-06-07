@@ -22,7 +22,7 @@ from recipes.logging import get_module_logger
 logger = get_module_logger()
 logging.basicConfig()
 
-# persistent caches for faster object coordinate and image retrieval 
+# persistent caches for faster object coordinate and image retrieval
 cachePath = Path.home() / '.cache/obstools'  # NOTE only for linux!
 cooCachePath = cachePath / 'coords.pkl'
 siteCachePath = cachePath / 'sites.pkl'

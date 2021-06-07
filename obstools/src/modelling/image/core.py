@@ -902,11 +902,16 @@ class ImageModelAnimation(VideoDisplay):
 
     """
 
-    def __init__(self, model, ishape, pscale=1, **kws):
-        shape = (1,) + ishape
-        super().__init__(np.zeros(shape), **kws)
+    def __init__(self, model, shape=None, p0=None, **kws):
+        if shape is None:
+            shape = model.grid.shape[1:]
+        shape = (1,) + shape
+        image = np.zeros(shape) if p0 is None else model(p0)
+
+        # init
+        super().__init__(image, **kws)
         self.model = model
-        self.pscale = float(pscale)
+        # random number generator
         self.rng = np.random.randn
 
     def _scroll(self, event):
@@ -928,17 +933,23 @@ class ImageModelAnimation(VideoDisplay):
         n: int
             number of frames in the animation
         pause: int
-            interval between frames in miliseconds
+            interval between frames in milliseconds
 
         Returns
         -------
 
         """
+
+        from matplotlib.animation import TimedAnimation
+
         # n: number of iterations
-        # pause: inter-frame pause (milisecond)
-        seconds = pause / 1000
-        i = 0
-        while i <= n:
-            self.update(i)
-            i += 1
-            time.sleep(seconds)
+        # pause: inter-frame pause (millisecond)
+
+        return TimedAnimation(self.figure, pause)
+
+        #                seconds = pause / 1000
+        # i = 0
+        # while i <= n:
+        #     self.update(i)
+        #     i += 1
+        #     time.sleep(seconds)
