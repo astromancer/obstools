@@ -1,41 +1,105 @@
-import site
-import inspect
-import subprocess
-from pathlib import Path
+
+# std libs
 import os
+import re
+import sys
+import glob
+import site
+import fnmatch
+import subprocess as sub
+from pathlib import Path
+from distutils import debug
 
-def get_site():
-    dest = site.getsitepackages()[0]
-    if os.access(dest, os.W_OK):
-        return dest
+# third-party libs
+from setuptools.command.build_py import build_py
+from setuptools import Command, setup, find_packages
 
-    dest = site.getusersitepackages()
-    if os.access(dest, os.W_OK):
-        return dest
-    
-    raise Exception(f'{dest} not writable')
 
-def link_install_cheat():
-    """
-    Cheat install that links the repo's main directory into system python
-    path.  Good for development libraries - changes to the code base are
-    immediately available to the interpreter :)
+debug.DEBUG = True
 
-    Can be used as is for any simple python library
-    """
-    here = inspect.getfile(inspect.currentframe())
-    here = Path(here)
-    src = here.parent.resolve()
+# allow editable user installs
+# see: https://github.com/pypa/pip/issues/7953
+site.ENABLE_USER_SITE = ('--user' in sys.argv[1:])
 
-    pkg_name = src.name
-    src = str(src / src.name)
-    dest = str(Path(get_site()) / pkg_name)
+# check if we are in a repo
+status = sub.getoutput('git status --porcelain')
+untracked = re.findall(r'\?\? (.+)', status)
 
-    print('linking', src, dest)
-    ok = subprocess.call(['ln', '-sfn', src, dest])
-    # ln -s path/to/repo/eeg `python3 -m site --user-site`/eeg
-    if ok == 0:
-    	print('Installed', pkg_name, 'at', dest, 'via cheat')
-    return ok
 
-happiness = link_install_cheat()
+class GitIgnore:
+    # exclude gitignored files from build archive
+    def __init__(self, path='.gitignore'):
+        self.names = self.patterns = ()
+        path = Path(path)
+        if not path.exists():
+            return
+
+        # read .gitignore patterns
+        lines = path.read_text().splitlines()
+        lines = (_.strip().rstrip('/') for _ in lines if not _.startswith('#'))
+        items = names, patterns = [], []
+        for line in filter(None, lines):
+            items[glob.has_magic(line)].append(line)
+        
+        self.names = tuple(names)
+        self.patterns = tuple(patterns)
+
+    def match(self, filename):
+        for pattern in self.patterns:
+            if fnmatch.fnmatchcase(filename, pattern):
+                return True
+        return filename.endswith(self.names)
+
+
+gitignore = GitIgnore()
+
+
+class Builder(build_py):
+    # need this to exclude ignored files from the build archive
+
+    def find_package_modules(self, package, package_dir):
+        if package_dir.endswith(gitignore.names):
+            self.debug_print(f'(git)ignoring {package_dir}')
+            return
+
+        # package, module, files
+        *data, files = zip(*super().find_package_modules(package, package_dir))
+        data = dict(zip(files, zip(*data)))
+
+        for file in files:
+            if file in untracked:
+                self.debug_print(f'ignoring untracked: {file}')
+                continue
+
+            if gitignore.match(file):
+                self.debug_print(f'(git)ignoring: {file}')
+                continue
+
+            yield *data[file], file
+            # print(f'{package}: {file}')
+
+
+class CleanCommand(Command):
+    """Custom clean command to tidy up the project root."""
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        os.system('rm -vrf ./build ./dist ./*.pyc ./*.tgz ./src/*.egg-info')
+
+
+setup(
+    packages=find_packages(exclude=['tests']),
+    use_scm_version=True,
+    include_package_data=True,
+    exclude_package_data={'': [*gitignore.patterns, *gitignore.names]},
+    cmdclass={'build_py': Builder,
+              'clean': CleanCommand}
+    # extras_require = dict(reST = ["docutils>=0.3", "reSTedit"])
+    # test_suite='pytest',
+)
