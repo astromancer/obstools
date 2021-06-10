@@ -138,7 +138,12 @@ disable=print-statement,
         xreadlines-attribute,
         deprecated-sys-function,
         exception-escape,
-        comprehension-escape
+        comprehension-escape,
+        import-outside-toplevel,
+        non-ascii-name,
+        too-many-instance-attributes,
+        too-many-arguments,
+        too-many-lines
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
@@ -228,9 +233,7 @@ logging-modules=logging
 [MISCELLANEOUS]
 
 # List of note tags to take in consideration, separated by a comma.
-notes=FIXME,
-      XXX,
-      TODO
+notes=FIXME, XXX, TODO, HACK
 
 # Regular expression of note tags to take in consideration.
 #notes-rgx=
@@ -389,16 +392,27 @@ function-naming-style=snake_case
 good-names=i,
            j,
            k,
+           l,
            ex,
-           ax,
            Run,
            _,
+           n,
+           m,
+           p,
+           s,
+           t,
+           u,
+           w,
            x,
            y,
            z,
-           t,
            ra,
-           jd
+           jd,
+           fp,
+           nr,
+           dt,
+           df,
+           fs
 
 # Good variable names regexes, separated by a comma. If names match any regex,
 # they will always be accepted
@@ -434,7 +448,7 @@ name-group=
 
 # Regular expression which should only match function or class names that do
 # not require a docstring.
-no-docstring-rgx=^_
+no-docstring-rgx=^(_|[tT]est_)
 
 # List of decorators that produce properties, such as abc.abstractproperty. Add
 # to this list to register other decorators that produce valid properties.
@@ -446,7 +460,7 @@ variable-naming-style=snake_case
 
 # Regular expression matching correct variable names. Overrides variable-
 # naming-style.
-#variable-rgx=
+variable-rgx=[a-z_][a-z0-9_]{0,30}$
 
 
 [SPELLING]
