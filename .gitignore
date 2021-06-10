@@ -2,6 +2,7 @@
 ###################################
 dev/
 spectra/
+src/obstools/phot/main.py
 
 #########################################
 # Editor temporary/working/backup files #
@@ -88,3 +89,4 @@ lib/z.lib
 .ipynb_checkpoints/
 
 
+src/obstools/fastfits.py
