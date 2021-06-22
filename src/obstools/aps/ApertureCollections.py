@@ -9,7 +9,6 @@ from copy import copy
 
 # third-party libs
 import numpy as np
-from IPython import embed
 from scipy.spatial.distance import cdist
 from matplotlib.colors import colorConverter
 from matplotlib.collections import EllipseCollection, LineCollection
