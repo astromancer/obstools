@@ -30,7 +30,7 @@ from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 from pyxis.type_check import OfType
 from pyxis.getitem import ItemGetter
-from pyxis.grouping import Grouped, AttrGrouper
+from pyxis.grouping import Groups, AttrGrouper
 from pyxis.vectorize import AttrMapper, AttrProp
 from pyxis.pprint import PrettyPrinter, PPrintContainer
 
@@ -64,13 +64,14 @@ def is_property(v):
 
 
 class FilenameHelper:
-    # def __init_subclass(cls):
-
+    """
+    Helper class for working with filenames
+    """
     def __init__(self, hdu):
-        if hdu._file is None:
-            self._path = Null()
-        else:
-            self._path = Path(hdu._file.name)  #
+        self._path = Path(hdu._file.name) if hdu._file else Null()
+
+    def __str__(self):
+        return self.name
 
     @property
     def path(self):
@@ -86,11 +87,14 @@ class FilenameHelper:
 
 
 class FileList(UserList, AttrMapper):  # OfType(FilenameHelper)
+    """
+    Helper class for working with lists of filenames
+    """
     def __new__(cls, campaign):
         obj = super().__new__(cls)
         # use all
         kls = campaign._allowed_types[0]._FilenameHelperClass
-        for name, p in inspect.getmembers(kls, is_property):
+        for name, _ in inspect.getmembers(kls, is_property):
             # print('creating property', name)
             setattr(cls, f'{name}s', AttrProp(name))
 
@@ -724,7 +728,7 @@ class PhotCampaign(PPrintContainer,
         self.calls('_file.close')
 
 
-class ObsGroups(Grouped, LoggingMixin):
+class ObsGroups(Groups, LoggingMixin):
     """
     Emulates dict to hold multiple `Campaign` instances keyed by their common
     attribute values. The attribute names given in `group_id` are the ones by
