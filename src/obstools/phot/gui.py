@@ -742,20 +742,17 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         slices = np.take(segm.slices, ix, 0)
 
         for s in slices:
-            try:
-                sy, sx = s
-                e = np.array([[sx.start - 1, sx.stop + 1],
-                              [sy.start - 1, sy.stop + 1]])
-                e = np.clip(e, 0, np.inf).astype(int)
-                # print(e)
-                im = data[e[1, 0]:e[1, 1], e[0, 0]:e[0, 1]]
+            sy, sx = s
+            e = np.array([[sx.start - 1, sx.stop + 1],
+                            [sy.start - 1, sy.stop + 1]])
+            e = np.clip(e, 0, np.inf).astype(int)
+            # print(e)
+            im = data[e[1, 0]:e[1, 1], e[0, 0]:e[0, 1]]
 
-                contours = binary_contours(im)
-                for c in contours:
-                    outlines.append(c + e[:, 0] - 0.5)
-            except Exception as err:
-                from IPython import embed
-                embed()
+            contours = binary_contours(im)
+            for c in contours:
+                outlines.append(c + e[:, 0] - 0.5)
+
 
         col = LineCollection(outlines, **kws)
         self.ax.add_collection(col)
