@@ -1,0 +1,15 @@
+addict
+more_itertools
+numpy
+astropy
+APLpy
+joblib
+photutils
+emcee
+scikit_learn
+pytest
+matplotlib
+motley
+pyxis
+recipes
+scrawl
