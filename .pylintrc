@@ -140,10 +140,12 @@ disable=print-statement,
         exception-escape,
         comprehension-escape,
         import-outside-toplevel,
+        protected-access,
         non-ascii-name,
         too-many-instance-attributes,
         too-many-arguments,
-        too-many-lines
+        too-many-lines,
+        too-many-ancestors
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
@@ -267,8 +269,7 @@ contextmanager-decorators=contextlib.contextmanager
 generated-members=numpy.*,
                   np.*,
                   motley.*,
-                  astropy.constants.*,
-                  
+                  astropy.constants.*
 
 
 # Tells whether missing members accessed in mixin class should be ignored. A
@@ -294,6 +295,9 @@ ignored-classes=optparse.Values,
                 thread._local,
                 _thread._local,
                 recipes.testing.Expect
+                recipes.testing.mock,
+                recipes.dicts.AttrReadItem,
+                recipes.dicts.AttrDict
 
 # List of module names for which member attributes should not be checked
 # (useful for modules/projects where namespaces are manipulated during runtime
@@ -335,7 +339,7 @@ argument-naming-style=snake_case
 
 # Regular expression matching correct argument names. Overrides argument-
 # naming-style.
-#argument-rgx=
+argument-rgx=\w[\w0-9]{0,30}$
 
 # Naming style matching correct attribute names.
 attr-naming-style=snake_case
@@ -460,7 +464,7 @@ variable-naming-style=snake_case
 
 # Regular expression matching correct variable names. Overrides variable-
 # naming-style.
-variable-rgx=[a-z_][a-z0-9_]{0,30}$
+variable-rgx=\w[\w0-9]{0,30}$
 
 
 [SPELLING]
