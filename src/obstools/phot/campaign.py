@@ -28,11 +28,11 @@ from recipes.oo import SelfAware
 from recipes.oo.null import Null
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
-from pyxis.type_check import OfType
-from pyxis.getitem import ItemGetter
-from pyxis.grouping import Groups, AttrGrouper
-from pyxis.vectorize import AttrMapper, AttrProp
-from pyxis.pprint import PrettyPrinter, PPrintContainer
+from pyxides.type_check import OfType
+from pyxides.getitem import ItemGetter
+from pyxides.grouping import Groups, AttrGrouper
+from pyxides.vectorize import AttrMapper, AttrProp
+from pyxides.pprint import PrettyPrinter, PPrintContainer
 
 # relative libs
 from ..image.sample import BootstrapResample

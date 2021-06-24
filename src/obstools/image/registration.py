@@ -16,7 +16,7 @@ methods are implemented for doing this:
 from scipy.interpolate import NearestNDInterpolator
 from obstools.modelling import Model
 import numbers
-from pyxis.containers import ItemGetter, OfType, AttrMapper, AttrProp
+from pyxides.containers import ItemGetter, OfType, AttrMapper, AttrProp
 import collections as col
 from recipes.misc import duplicate_if_scalar
 import functools as ftl
