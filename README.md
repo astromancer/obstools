@@ -18,7 +18,7 @@ perform photometry and model astronomical images.
 # Install
 
 ```shell
-pip install obstools
+pip install https://github.com/astromancer/obstools
 ```
 
 # Use
