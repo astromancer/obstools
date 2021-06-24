@@ -9,7 +9,8 @@ emcee
 scikit_learn
 pytest
 matplotlib
-motley
-pyxis
-recipes
-scrawl
+
+pyxides
+git+https://github.com/astromancer/motley
+git+https://github.com/astromancer/recipes
+git+https://github.com/astromancer/scrawl
