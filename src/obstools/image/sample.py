@@ -1,7 +1,13 @@
+
+# std libs
 import numbers
+import functools as ftl
 
+# third-party libs
 import numpy as np
+from astropy.utils import lazyproperty
 
+# local libs
 from recipes.logging import LoggingMixin
 
 
@@ -24,8 +30,6 @@ class BootstrapResample(LoggingMixin):
             sample_interval
         axis
         """
-
-
 
         #
         self.data = data
@@ -86,8 +90,6 @@ class BootstrapResample(LoggingMixin):
     def median(self, n=None, subset=None):
         return np.ma.median(self.draw(n, subset), self.axis)
 
-
-
 # class ImageSampler(BootstrapResample):
 #     def __init__(self, stat='median', sample_size=None, subset=None, axis=0):
 #         #
@@ -105,3 +107,69 @@ class BootstrapResample(LoggingMixin):
 #     def __init__(self, sample_size=None, subset=None, axis=0):
 #         # delay data
 #         BootstrapResample.__init__(self, None, sample_size, subset, axis)
+
+
+class ImageSamplerMixin:
+    """
+    A mixin class that can draw sample images from the HDU data
+    """
+
+    @lazyproperty  # lazyproperty ??
+    def sampler(self):
+        """
+        Use this property to get calibrated sample images and image statistics
+        from the stack
+
+        >>> stack.sampler.median(10, 100)
+
+        """
+        #  allow higher dimensional data (multi channel etc), but not lower
+        #  than 2d
+        if self.ndim < 2:
+            raise ValueError('Cannot create image sampler for data with '
+                             f'{self.ndim} dimensions.')
+
+        # ensure NE orientation
+        data = self.calibrated
+
+        # make sure we pass 3d data to sampler. This is a hack so we can use
+        # the sampler to get thumbnails from data that is a 2d image,
+        # eg. master flats.  The 'sample' will just be the image itself.
+
+        if self.ndim == 2:
+            # insert axis in front
+            data = self.data[None]
+
+        return BootstrapResample(data)
+
+    @ftl.lru_cache()
+    def get_sample_image(self, stat='median', min_depth=5):
+        """
+        Get sample image to a certain minimum simulated exposure depth by
+        averaging data
+
+
+        Parameters
+        ----------
+        stat : str, optional
+            The statistic to use when computing the sample image, by default 
+            'median'
+        min_depth : int, optional
+            Minimum simulated exposure depth in seconds, by default 5
+
+        Returns
+        -------
+        np.ndarray
+            An image of the requested statistic across a sample of images drawn 
+            from the stack.
+        """
+        # FIXME: get this to work for SALTICAM
+
+        n = int(np.ceil(min_depth // self.timing.exp)) or 1
+
+        self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
+                         f'{float(min_depth):.1f} seconds) for sample image '
+                         f'from {self.file.name!r}.')
+
+        sampler = getattr(self.sampler, stat)
+        return sampler(n, n)

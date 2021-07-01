@@ -20,6 +20,11 @@ import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
+from pyxides.type_check import OfType
+from pyxides.getitem import ItemGetter
+from pyxides.grouping import Groups, AttrGrouper
+from pyxides.vectorize import AttrMapper, AttrProp
+from pyxides.pprint import PrettyPrinter, PPrintContainer
 
 # local libs
 from motley.table import AttrTable
@@ -28,15 +33,10 @@ from recipes.oo import SelfAware
 from recipes.oo.null import Null
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
-from pyxides.type_check import OfType
-from pyxides.getitem import ItemGetter
-from pyxides.grouping import Groups, AttrGrouper
-from pyxides.vectorize import AttrMapper, AttrProp
-from pyxides.pprint import PrettyPrinter, PPrintContainer
 
 # relative libs
-from ..image.sample import BootstrapResample
-from ..image.calibration import ImageCalibration, keep
+from ..image.sample import ImageSamplerMixin
+from ..image.calibration import ImageCalibratorMixin
 
 
 # translation for special "[22:34]" type file globbing
@@ -67,6 +67,7 @@ class FilenameHelper:
     """
     Helper class for working with filenames
     """
+
     def __init__(self, hdu):
         self._path = Path(hdu._file.name) if hdu._file else Null()
 
@@ -104,7 +105,8 @@ class FileList(UserList, AttrMapper):  # OfType(FilenameHelper)
         super().__init__(campaign.attrs('file'))
 
 
-class _HDUExtra(PrimaryHDU, LoggingMixin):
+class HDUExtra(PrimaryHDU, ImageSamplerMixin, ImageCalibratorMixin,
+               LoggingMixin):
     """
     Some extra methods and properties that help PhotCampaign
     """
@@ -145,37 +147,6 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
         """
         raise NotImplementedError
 
-    @lazyproperty
-    def oriented(self):
-        # manage on-the-fly image orientation
-        from obstools.image.orient import ImageOrienter
-        return ImageOrienter(self)
-
-    @lazyproperty  # ImageCalibrationMixin ?
-    def calibrated(self):
-        # manage on-the-fly calibration for large files
-        return ImageCalibration(self)
-
-    def set_calibrators(self, bias=keep, flat=keep):
-        """
-        Set calibration images for this observation. Default it to keep
-        previously set image if none are provided here.  To remove a
-        previously set calibration image pass a value of `None` to this
-        function, or simply delete the attribute `self.calibrated.bias` or
-        `self.calibrated.flat`
-
-        Parameters
-        ----------
-        bias
-        flat
-
-        Returns
-        -------
-
-        """
-        self.calibrated.bias = bias
-        self.calibrated.flat = flat
-
     # plotting
     def display(self, **kws):
         """Display the data"""
@@ -196,72 +167,6 @@ class _HDUExtra(PrimaryHDU, LoggingMixin):
 
         im.figure.canvas.set_window_title(self.file.name)
         return im
-
-
-class ImageSamplerHDU(_HDUExtra):
-    # _sampler = None
-
-    @lazyproperty  # lazyproperty ??
-    def sampler(self):
-        """
-        Use this property to get sample images from the stack
-
-        >>> stack.sampler.median(10, 100)
-
-        """
-        #  allow higher dimensional data (multi channel etc), but not lower
-        #  than 2d
-        if self.ndim < 2:
-            raise ValueError('Cannot create image sampler for data with '
-                             f'{self.ndim} dimensions.')
-
-        # ensure NE orientation
-        data = self.oriented
-
-        # make sure we pass 3d data to sampler. This is a hack so we can use
-        # the sampler to get thumbnails from data that is a 2d image,
-        # eg. master flats.  The 'sample' will just be the image itself.
-
-        if self.ndim == 2:
-            # insert axis in front
-            data = self.data[None]
-
-        return BootstrapResample(data)
-
-    @ftl.lru_cache()
-    def get_sample_image(self, stat='median', min_depth=5):
-        """
-        Get sample image to a certain minimum simulated exposure depth by 
-        averaging data
-
-
-        Parameters
-        ----------
-        stat : str, optional
-            The statistic to use when computing the sample image, by default 
-            'median'
-        min_depth : int, optional
-            Minimum simulated exposure depth, by default 5 seconds
-
-        Returns
-        -------
-        [type]
-            [description]
-        """
-        # FIXME: get this to work for SALTICAM
-
-        n = int(np.ceil(min_depth // self.timing.exp)) or 1
-
-        self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
-                         f'{float(min_depth):.1f} seconds) for sample image '
-                         f'from {self.file.name!r}.')
-
-        sampler = getattr(self.sampler, stat)
-        return self.calibrated(sampler(n, n))
-
-
-class HDUExtra(ImageSamplerHDU):
-    pass
 
 
 # class PPrintHelper(AttrTable):
