@@ -3,6 +3,7 @@ Utilities for working with observing campaigns that consist of multiple
 observation files.
 """
 
+
 # std libs
 import re
 import glob
@@ -10,7 +11,6 @@ import inspect
 import fnmatch as fnm
 import operator as op
 import warnings as wrn
-import functools as ftl
 import itertools as itt
 from pathlib import Path
 from collections import UserList, abc
@@ -478,36 +478,36 @@ class PhotCampaign(PPrintContainer,
 
         """
         # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope', 'camera',
-                                        return_index=True)
+        groups, indices = self.group_by('telescope', # 'date', # 'camera',
+                                         return_index=True)
 
         # start with the group having the most observations.  This will help
         # later when we need to align the different groups with each other
         keys, indices = zip(*indices.items())
-        seq = np.argsort(list(map(len, indices)))[::-1]
+        order = np.argsort(list(map(len, indices)))[::-1]
 
         # create data containers
-        ng = len(groups)
-        registers = np.empty(ng, 'O')
+        registers = np.empty(len(groups), 'O')
 
         # For each telescope, align images wrt each other
-        for i in seq:
+        for i in order:
             run = groups[keys[i]]
             registers[i] = run._coalign(depth, sample_stat, plot=plot,
                                         **find_kws)
 
-        # return registers, seq
+        # return registers, order
 
         # match coordinates of registers against each other
-        imr = registers[seq[0]]
-        for i in seq[1:]:
+        imr = registers[order[0]]
+        for i in order[1:]:
             reg = registers[i]
 
             imr.match_reg(reg)
             imr.register_constellation()
 
+        # refine alignment
         count = 0
-        lhr = 10
+        lhr = 10 # likelihood ratio for gmm model before and and after refine
         while (lhr > 1.01) and (count < 5):
             _, lhr = imr.refine()
             imr.recentre()
@@ -525,7 +525,7 @@ class PhotCampaign(PPrintContainer,
                  plot=False, **find_kws):
 
         # check
-        assert not self.varies_by('telescope', 'camera')
+        assert not self.varies_by('telescope')  # , 'camera')
 
         from obstools.image.registration import ImageRegister
 

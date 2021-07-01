@@ -349,7 +349,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # FIXME: alias not inherited if overwritten in subclass
     coefficient_of_determination = rsq
 
-    def ln_likelihood(self, p, data, *args, stddev=None):
+    def llh(self, p, data, *args, stddev=None):
         # assuming uncorrelated gaussian noise on data here
         # https://en.wikipedia.org/wiki/Maximum_likelihood_estimation#Continuous_distribution,_continuous_parameter_space
 
@@ -357,9 +357,7 @@ class Model(OptionallyNamed, LoggingMixin):
         #  least-squares
 
         # FIXME: more general metric here?
-        nl = (data.size * LN2PI_2 +
-              0.5 * self.wrss(p, data, *args, stddev=stddev))
-
+        nl = data.size * LN2PI_2 + 0.5 * self.wrss(p, data, *args, stddev=stddev)
         if stddev is not None:
             nl += np.log(stddev).sum()
 
@@ -369,7 +367,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # The score is the gradient (the vector of partial derivatives) of log⁡ L(θ)
 
     # FIXME: alias not inherited if overwritten in subclass
-    llh = LogLikelihood = log_likelihood = ln_likelihood
+    logLikelihood = ln_likelihood = log_likelihood = llh
 
     def loss_mle(self, p, data, *args, **kws):
         """Objective for Maximum Likelihood Estimation"""
@@ -377,10 +375,9 @@ class Model(OptionallyNamed, LoggingMixin):
         # return (data.size * LN2PI_2
         #         + 0.5 * self.wrss(p, data, *args, stddev=stddev, **kws))
 
-        return -self.ln_likelihood(p, data, *args,  **kws)
+        return -self.llh(p, data, *args,  **kws)
 
-    def ln_posterior(self, p, data, *args, priors=None,
-                     prior_args=(), **kws):
+    def ln_posterior(self, p, data, *args, priors=None, prior_args=(), **kws):
         """
         Logarithm of posterior probability (up to a constant).
 
@@ -404,9 +401,9 @@ class Model(OptionallyNamed, LoggingMixin):
             if not np.isfinite(log_prior):
                 return -np.inf
 
-            return self.ln_likelihood(p, data, *args, **kws) + log_prior
+            return self.llh(p, data, *args, **kws) + log_prior
 
-        return self.ln_likelihood(p, data, *args, **kws)
+        return self.llh(p, data, *args, **kws)
 
     def aic(self, p, data, *args, **kws):
         """
@@ -414,7 +411,7 @@ class Model(OptionallyNamed, LoggingMixin):
         corresponding to the maximum likelihood.
         """
         k = len(p) + 2
-        return 2 * (k - self.ln_likelihood(p, data, *args, **kws))
+        return 2 * (k - self.llh(p, data, *args, **kws))
 
     def aicc(self, p, data, *args, **kws):
         # "When the sample size is small, there is a substantial probability
@@ -427,8 +424,7 @@ class Model(OptionallyNamed, LoggingMixin):
         # then the formula for AICc is as follows.
         k = len(p)
         n = data.size
-        return 2 * (k + (k * k + k) / (n - k - 1) -
-                    self.ln_likelihood(p, data, *args, **kws))
+        return 2 * (k + (k**2 + k) / (n - k - 1) - self.llh(p, data, *args, **kws))
         # "If the assumption that the model is univariate and linear with normal
         # residuals does not hold, then the formula for AICc will generally be
         # different from the formula above. For some models, the precise formula
@@ -442,7 +438,7 @@ class Model(OptionallyNamed, LoggingMixin):
     def bic(self, p, data, *args, **kws):
         n = data.size
         k = len(p)
-        return k * np.log(n) - 2 * self.ln_likelihood(p, data, *args, **kws)
+        return k * np.log(n) - 2 * self.llh(p, data, *args, **kws)
 
     def mle(self, data, p0=None, *args, **kws):
         """
@@ -596,7 +592,8 @@ class Model(OptionallyNamed, LoggingMixin):
 
         # generate message for convergence failure
         from recipes import pprint
-        objective_repr = pprint.method(loss, submodule_depth=0)
+        
+        objective_repr = pprint.method(loss, show_defining_class=True)
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
                     f'{objective_repr!r} failed to converge: {msg}')
 
@@ -617,7 +614,7 @@ class Model(OptionallyNamed, LoggingMixin):
         """
 
         # TODO: would be nice to have some kind of progress indicator here
-        # could do this by wrapping the ln_likelihood function with counter
+        # could do this by wrapping the llh function with counter
 
         import emcee
 
@@ -653,7 +650,7 @@ class Model(OptionallyNamed, LoggingMixin):
                     f'Please ensure p0 is of dimension ({nwalkers}, {self.dof})'
                     f' for sampler with {nwalkers} walkers and model with '
                     f'{self.dof} degrees of freedom.'
-                    )
+                )
 
         # burn in
         if nburn:
