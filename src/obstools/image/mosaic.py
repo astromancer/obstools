@@ -1,14 +1,28 @@
+"""
+Plotting mosaics of partially overlapping images
+"""
+
+# std libs
 import itertools as itt
 
+# third-party libs
 import numpy as np
-from scrawl.imagine import ImageDisplay
-
-from obstools.image.registration import (ImageRegistrationDSS,
-                                         ImageContainer, SkyImage)
-import obstools.image.transforms as trans
-
+import more_itertools as mit
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
+
+# local libs
+from scrawl.imagine import ImageDisplay
+
+# relative libs
+from . import transforms
+from .registration import ImageContainer, SkyImage
+
+
+UNIT_CORNERS = np.array([[0., 0.],
+                         [1., 0.],
+                         [1., 1.],
+                         [0., 1.]])
 
 
 def get_corners(p, fov):
@@ -16,7 +30,7 @@ def get_corners(p, fov):
     c = np.array([[0, 0], fov[::-1]])  # lower left, upper right xy
     # corners = np.c_[c[0], c[:, 1], c[1], c[::-1, 0]].T  # / clockwise yx
     corners = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
-    corners = trans.rigid(corners, p)
+    corners = transforms.rigid(corners, p)
     return corners
 
 
@@ -25,7 +39,7 @@ def ulc(p, fov):
     Get upper left corner given rigid transform parameters and image field of
     vi
     """
-    return trans.rigid([0, fov[0]], p).squeeze()
+    return transforms.rigid([0, fov[0]], p).squeeze()
 
 
 # def get_ulc(params, fovs):
@@ -38,69 +52,6 @@ def ulc(p, fov):
 #         ulc_ = np.array([[0, fov[0]]])
 #         ulc[i] = trf.rigid(ulc_, p)
 #     return ulc[:, 0].min(), ulc[:, 1].max()  # xy
-
-
-def plot_transformed_image(ax, image, fov=None, p=(0, 0, 0), frame=True,
-                           set_lims=True, **kws):
-    """
-
-    Parameters
-    ----------
-    ax
-    image
-    fov
-    p
-    frame
-    set_lims
-    kws
-
-    Returns
-    -------
-
-    """
-
-    kws.setdefault('hist', False)
-    kws.setdefault('sliders', False)
-    kws.setdefault('cbar', False)
-
-    # plot
-    im = ImageDisplay(image, ax=ax, **kws)
-    art = im.imagePlot
-
-    # set extent
-    if fov is None:
-        fov = image.shape
-
-    extent = np.c_[[0., 0.], fov[::-1]]
-    pixel_size = np.divide(fov, image.shape)
-    half_pixel_size = pixel_size / 2
-    extent -= half_pixel_size[None].T  # adjust to pixel centers...
-    art.set_extent(extent.ravel())
-
-    # Rotate the image by setting the transform
-    *xy, theta = p  # * fov, p[-1]
-    art.set_transform(Affine2D().rotate(theta).translate(*xy) +
-                      art.get_transform())
-
-    if frame:
-        from matplotlib.patches import Rectangle
-
-        frame_kws = dict(fc='none', lw=0.5, ec='0.5', alpha=kws.get('alpha'))
-        if isinstance(frame, dict):
-            frame_kws.update(frame)
-
-        ax.add_patch(
-            Rectangle(xy - half_pixel_size, *fov[::-1], np.degrees(theta),
-                      **frame_kws)
-        )
-
-    if set_lims:
-        delta = 1 / 100
-        c = get_corners(p, fov)
-        xlim, ylim = np.vstack([c.min(0), c.max(0)]).T * (1 - delta, 1 + delta)
-        im.ax.set(xlim=xlim, ylim=ylim)
-
-    return art
 
 
 class MosaicPlotter(ImageContainer):
@@ -152,11 +103,11 @@ class MosaicPlotter(ImageContainer):
         return list(self.art.keys())
 
     @classmethod
-    def from_register(cls, reg,  axes=None, keep_ref_image=True):
+    def from_register(cls, reg, axes=None, show_ref_image=True):
         """Construct from `ImageRegister`"""
-        return cls(reg.data, (), axes, keep_ref_image, reg.idx)
+        return cls(reg.data, (), axes, show_ref_image, reg.idx)
 
-    def __init__(self, images, fovs=(), axes=None, keep_ref_image=True, ridx=0):
+    def __init__(self, images, fovs=(), axes=None, show_ref_image=True, ridx=0):
         """
         Initialize with sequence `images` of :class:`SkyImages` or sequence
         image arrays `np.ndarray` and sequence `fovs` of field-of-views 
@@ -182,14 +133,14 @@ class MosaicPlotter(ImageContainer):
         self.idx = ridx  # reference
         self.alpha_cycle = []
         self._idx_active = -1
-        self.keep_ref_image = bool(keep_ref_image)
+        self.show_ref_image = bool(show_ref_image)
 
         # setup figure
         if axes is None:
             self.fig, self.ax = plt.subplots()
         else:
             self.ax = axes
-            self.fig = axes.fig
+            self.fig = axes.figure
 
         self.fig.tight_layout()
 
@@ -198,33 +149,37 @@ class MosaicPlotter(ImageContainer):
         self.fig.canvas.mpl_connect('button_press_event', self.reset)
 
     def __hash__(self):
-        # this is a cheat so that we can connect methods of this class to the
+        # this is a HACK so that we can connect methods of this class to the
         # mpl callback registry which does not allow non-hashable objects
         return 0
 
-    def mosaic(self, params, names=(), **kws):
-        """Create a mosaiced image"""
+    # def __call__()
 
-        cmap = kws.pop('cmap_ref', self.default_cmap_ref)
-        cmap_other = kws.pop('cmap', None)
+    def mosaic(self, params, names=(),
+               cmap=None, cmap_ref=default_cmap_ref, alpha=None, alpha_ref=1,
+               **kws):
+        """Create a mosaiced image"""
 
         # choose alpha based on number of images
         n = len(self)
-        alpha_magic = max(min(1 / n, 0.5), 0.2)
-        alpha = kws.setdefault('alpha', alpha_magic)
+        if alpha is None:
+            alpha = max(min(1 / n, 0.5), 0.2)
 
         # loop images and plot
+        cmaps = mit.padded([cmap_ref], cmap)
+        alphas = mit.padded([alpha_ref], alpha)
         for image, p, name in itt.zip_longest(self, params, names):
             # self.plot_image(image, fov, p, name, coo, cmap=cmap, **kws)
-            self.plot_image(image, None, p, name, cmap=cmap, **kws)
-            cmap = cmap_other
+            self.plot_image(image, None, p, name,
+                            cmap=next(cmaps), alpha=next(alphas),
+                            **kws)
 
         # always keep reference image for comparison when scrolling images
         self.alpha_cycle = np.vstack([np.eye(n) * self.alpha_cycle_value,
                                       np.ones(n) * alpha, ])
         # NOTE might have to fix this cycle if idx != 0
-        if self.keep_ref_image:
-            self.alpha_cycle[:-1, 0] = 1
+        if self.show_ref_image:
+            self.alpha_cycle[:-1, 0] = alpha_ref
 
     def plot_image(self, image=None, fov=None, p=(0, 0, 0), name=None,
                    frame=True, **kws):
@@ -254,9 +209,8 @@ class MosaicPlotter(ImageContainer):
             update = False
             # name = name or (self.names[0] if len(self.names) else None)
 
-        #
-        # if not isinstance(image, SkyImage):
-        if not image.__class__.__name__ == 'SkyImage':
+        # if image.__class__.__name__ != 'SkyImage':
+        if not isinstance(image, SkyImage):
             image = SkyImage(image, fov)
 
         #
@@ -268,7 +222,7 @@ class MosaicPlotter(ImageContainer):
         kws.setdefault('frame', self.default_frame)
         art = self.art[name] = image.plot(self.ax, p, **kws)
         self.params.append(p)
-# 
+
         # if coords is not None:
         #     line, = self.ax.plot(*coords.T, 'x')
         # plot_points.append(line)
@@ -312,13 +266,22 @@ class MosaicPlotter(ImageContainer):
                 )
         return s
 
-    def mark_target(self, xy, name, colour='forestgreen', arrow_size=10,
-                    arrow_head_distance=2.5, arrow_offset=(0, 0),
+    def mark_target(self, name='', xy=None, colour='forestgreen',
+                    arrow_size=10, arrow_head_distance=2.5, arrow_offset=(0, 0),
                     text_offset=3, **text_props):
 
         # TODO: determine arrow_offset automatically by looking for peak
         """
-
+          
+                      ||     ^
+                      ||     |
+                     _||_    | arrow_size
+                     \  /    |
+                      \/     v
+                             ↕ arrow_head_distance
+                      ✷  
+                      
+         
         Parameters
         ----------
         name
@@ -330,7 +293,7 @@ class MosaicPlotter(ImageContainer):
         arrow_offset:
             xy offset in arc seconds for arrow point location
         text_offset:
-            xy offset in reg pixels
+            xy offset in arc seconds
 
 
         Returns
@@ -345,9 +308,21 @@ class MosaicPlotter(ImageContainer):
         assert isinstance(arrow_head_distance, numbers.Real), \
             '`arrow_offset` should be float'
 
+        # convert to arcminutes
+        # self[self.idx].pixel_scale
+        
+        def to_arcmin(val):
+            return np.array(val) / 60
+        
+        arrow_size = to_arcmin(arrow_size)
+        arrow_head_distance = to_arcmin(arrow_head_distance)
+        arrow_offset = to_arcmin(arrow_offset)
+        text_offset = to_arcmin(text_offset)
+        
         # target indicator arrows
-        # pixel_size_arcsec =
-        arrow_offset = arrow_offset / self[self.idx].pixel_scale / 60
+        if xy is None:
+            xy = self.fovs[0] / 2
+            
         xy_target = xy + arrow_offset
 
         arrows = []
@@ -411,6 +386,14 @@ class MosaicPlotter(ImageContainer):
     #                              rotation_mode='anchor',
     #                              va='top')
     #         )
+
+    def set_cmap(self, cmap, cmap_ref=None):
+        if cmap_ref is None:
+            cmap_ref = next(iter(self.art.values()))[0].get_cmap()
+
+        images, _ = zip(*self.art.values())
+        for image, cmap in zip(images, mit.padded([cmap_ref], cmap)):
+            image.set_cmap(cmap)
 
     def _set_alphas(self):
         """highlight a particular image in the stack"""
