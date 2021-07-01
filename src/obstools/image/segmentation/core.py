@@ -1605,8 +1605,9 @@ class SegmentedImage(SegmentationImage,  # base
         labels = self.resolve_labels(labels)
 
         # estimate sky counts and noise from data
-        counts, counts_bg_pp, n_pix_src, n_pix_bg = self._flux(image, labels, bg)
-        
+        counts, counts_bg_pp, n_pix_src, n_pix_bg = self._flux(
+            image, labels, bg)
+
         # bg subtracted source counts
         signal = counts - counts_bg_pp * n_pix_src
 
@@ -1646,7 +1647,7 @@ class SegmentedImage(SegmentationImage,  # base
                              f'`stat`: {stat}')
 
         # get background stat
-        counts_bg_pp = getattr(seg_bg, stat)(image)
+        counts_bg_pp = getattr(seg_bg, stat)(image, bg)
         ones = np.ones_like(image)
         n_pix_bg = seg_bg.sum(ones, bg)
         n_pix_src = self.sum(ones, labels)
@@ -1664,7 +1665,7 @@ class SegmentedImage(SegmentationImage,  # base
         segment as per Merlin & Howell '95
         """
 
-        signal, noise = flux(self, image, labels, bg)
+        signal, noise = self.flux(image, labels, bg)
         return signal / noise
 
     # def noise(self, image)
@@ -1674,20 +1675,12 @@ class SegmentedImage(SegmentationImage,  # base
         Re-label segments for highest per-pixel counts in descending order
         """
         labels = self.resolve_labels(labels)
-        unsorted_labels = np.setdiff1d(self.labels, labels)
-        n_sort = len(labels)
-
         flx, _ = self.flux(image, labels, bg, bg_stat)
         order = np.argsort(flx)[::-1]
 
-        # todo:
-        # self.relabel_many(None, order + 1)
-
         # re-order segmented image labels
-        forward_map = np.zeros(self.nlabels + 1, int)
-        forward_map[1:n_sort + 1] = labels[order]
-        forward_map[(n_sort + 1):] = unsorted_labels
-        self.data = forward_map[self.data]
+        self.relabel_many(labels[order], labels)
+
         return flx
 
     def count_sort(self, image, labels=None):
