@@ -385,7 +385,7 @@ class vdict(dict):
     def __getitem__(self, key):
         # dispatch on np.ndarray for vectorized item getting with arbitrary
         # nesting
-        if isinstance(key, (np.ndarray, list, tuple)):  # Container and not str??
+        if isinstance(key, (np.ndarray, list, tuple)): # Container and not str??
             return [self[_] for _ in key]
 
         if key in (Ellipsis, None):
@@ -923,7 +923,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         if cls.logger.getEffectiveLevel() == logging.INFO:
             logger.info('Detected %i objects covering %i pixels.', seg.nlabels,
-                         seg.to_binary().sum())
+                        seg.to_binary().sum())
 
         return seg
 
@@ -1302,7 +1302,7 @@ class SegmentedImage(SegmentationImage,  # base
 
     # Data extraction
     # --------------------------------------------------------------------------
-    # TODO: cutout       better name?  
+    # TODO: cutout       better name?
     def select_subset(self, start, shape, type_=None):
         """
         FIXME: this description not accurate - padding happens
@@ -1813,7 +1813,6 @@ class SegmentedImage(SegmentationImage,  # base
         if old_labels.size == 0:
             return
 
-        # forward_map = np.hstack([0, self.labels])
         # there may be labels missing
         forward_map = np.arange(self.max_label + 1)
         forward_map[old_labels] = new_labels
@@ -2195,12 +2194,20 @@ class SegmentedImage(SegmentationImage,  # base
         return im
 
     def draw_labels(self, ax, **kws):
-
+        
+        import matplotlib.patheffects as path_effects
+        
+        
         kws_ = dict(va='center', ha='center')
         kws_.update(**kws)
         for lbl, pos in self._label_positions().items():
             for x, y in pos[:, ::-1]:
-                ax.text(x, y, str(lbl), **kws_)
+                txt = ax.text(x, y, str(lbl), **kws_)
+
+                # add border around text to make it stand out (like the arrows)
+                txt.set_path_effects(
+                    [path_effects.Stroke(linewidth=1, foreground='black'),
+                     path_effects.Normal()])
 
     def display_term(self, show_labels=True, frame=True, origin=0):
         """
