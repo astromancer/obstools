@@ -2198,16 +2198,19 @@ class SegmentedImage(SegmentationImage,  # base
         import matplotlib.patheffects as path_effects
         
         
-        kws_ = dict(va='center', ha='center')
-        kws_.update(**kws)
+        kws = {**dict(va='center', ha='center'), **kws}
+        texts = []
         for lbl, pos in self._label_positions().items():
             for x, y in pos[:, ::-1]:
-                txt = ax.text(x, y, str(lbl), **kws_)
+                txt = ax.text(x, y, str(lbl), **kws)
 
                 # add border around text to make it stand out (like the arrows)
                 txt.set_path_effects(
                     [path_effects.Stroke(linewidth=1, foreground='black'),
                      path_effects.Normal()])
+                texts.append(txt)
+                
+        return texts
 
     def display_term(self, show_labels=True, frame=True, origin=0):
         """
