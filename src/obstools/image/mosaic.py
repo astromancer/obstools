@@ -19,12 +19,6 @@ from . import transforms
 from .registration import ImageContainer, SkyImage
 
 
-UNIT_CORNERS = np.array([[0., 0.],
-                         [1., 0.],
-                         [1., 1.],
-                         [0., 1.]])
-
-
 def get_corners(p, fov):
     """Get corners relative to DSS coordinates. xy coords anti-clockwise"""
     c = np.array([[0, 0], fov[::-1]])  # lower left, upper right xy
@@ -80,8 +74,6 @@ class MosaicPlotter(ImageContainer):
 
     default_cmap_ref = 'Greys'
     alpha_cycle_value = 0.65
-
-    default_frame = dict(lw=1, ec='0.5')
 
     label_fmt = 'image%i'
     label_props = dict(color='w')
@@ -204,7 +196,7 @@ class MosaicPlotter(ImageContainer):
 
         update = True
         if image is None:
-            assert len(self.images)
+            assert self.images
             image = self[self.idx]
             update = False
             # name = name or (self.names[0] if len(self.names) else None)
@@ -213,14 +205,14 @@ class MosaicPlotter(ImageContainer):
         if not isinstance(image, SkyImage):
             image = SkyImage(image, fov)
 
-        #
+        # name image
         if name is None:
             name = self.label_fmt % next(self._counter)
 
         # plot
-        # image = image / image.max()
-        kws.setdefault('frame', self.default_frame)
-        art = self.art[name] = image.plot(self.ax, p, **kws)
+        *image.offsets, image.angle = p
+        art = self.art[name] = image.plot(self.ax, frame=frame, set_lim=False,
+                                          **kws)
         self.params.append(p)
 
         # if coords is not None:
@@ -252,19 +244,19 @@ class MosaicPlotter(ImageContainer):
 
         """
         # show markers
-        s = []
+        lines = []
         if marker:
-            s.extend(
+            lines.extend(
                 self.ax.plot(*xy.T, marker, color=color)
             )
 
         if number:
             for i, xy in enumerate(xy):
-                s.extend(
+                lines.extend(
                     self.ax.plot(*(xy + xy_offset), ms=[7, 10][i >= 10],
                                  marker=f'${i}$', color=color)
                 )
-        return s
+        return lines
 
     def mark_target(self, name='', xy=None, colour='forestgreen',
                     arrow_size=10, arrow_head_distance=2.5, arrow_offset=(0, 0),
@@ -272,7 +264,7 @@ class MosaicPlotter(ImageContainer):
 
         # TODO: determine arrow_offset automatically by looking for peak
         """
-          
+
                       ||     ^
                       ||     |
                      _||_    | arrow_size
@@ -280,8 +272,8 @@ class MosaicPlotter(ImageContainer):
                       \/     v
                              ↕ arrow_head_distance
                       ✷  
-                      
-         
+
+
         Parameters
         ----------
         name
@@ -310,19 +302,19 @@ class MosaicPlotter(ImageContainer):
 
         # convert to arcminutes
         # self[self.idx].pixel_scale
-        
+
         def to_arcmin(val):
             return np.array(val) / 60
-        
+
         arrow_size = to_arcmin(arrow_size)
         arrow_head_distance = to_arcmin(arrow_head_distance)
         arrow_offset = to_arcmin(arrow_offset)
         text_offset = to_arcmin(text_offset)
-        
+
         # target indicator arrows
         if xy is None:
             xy = self.fovs[0] / 2
-            
+
         xy_target = xy + arrow_offset
 
         arrows = []
@@ -345,53 +337,11 @@ class MosaicPlotter(ImageContainer):
 
         return txt, arrows
 
-    def label_image(self, name='', p=(0, 0, 0), fov=(0, 0), **kws):
-        # default args for init
-        _kws = {}
-        _kws.update(self.label_props)
-        _kws.update(kws)
-        return self.ax.text(*ulc(p, fov), name,
-                            rotation=np.degrees(p[-1]),
-                            rotation_mode='anchor',
-                            va='top',
-                            **_kws)
-
-    # def label(self, indices, xy_offset=(0, 0), **text_props):
-    #     texts = {}
-    #     params = np.array(self.reg.params[1:])
-    #     fovs = np.array(self.reg.fovs[1:])
-    #     for name, idx in indices.items():
-    #         xy = np.add(get_ulc(params[idx], fovs[idx])[::-1],
-    #                     xy_offset)
-    #         angle = np.degrees(params[idx, -1].mean())
-    #         texts[name] = self.ax.text(*xy, name,
-    #                                    rotation=angle,
-    #                                    rotation_mode='anchor',
-    #                                    **text_props)
-    #     return texts
-
-    # def label_images(self):
-    #     for i, im in enumerate(self.reg.images):
-    #         name = f'{i}: {self.names[i]}'
-    #         p = self.reg.params[i]
-    #         xy = np.atleast_2d([0, im.shape[0]])  # self.reg.fovs[i][0]
-    #         xy = trf.rigid(xy, p).squeeze()
-    #
-    #         # print(xy.shape)
-    #         assert xy.shape[0] == 2
-    #
-    #         self.image_labels.append(
-    #                 self.ax.text(*xy, name, color='w', alpha=0,
-    #                              rotation=np.degrees(p[-1]),
-    #                              rotation_mode='anchor',
-    #                              va='top')
-    #         )
-
     def set_cmap(self, cmap, cmap_ref=None):
         if cmap_ref is None:
-            cmap_ref = next(iter(self.art.values()))[0].get_cmap()
+            cmap_ref = next(iter(self.art.values()))['image'].get_cmap()
 
-        images, _ = zip(*self.art.values())
+        images = next(zip(*self.art.values()))
         for image, cmap in zip(images, mit.padded([cmap_ref], cmap)):
             image.set_cmap(cmap)
 
@@ -432,14 +382,14 @@ class MosaicPlotter(ImageContainer):
 
         #
         i = self._idx_active
+        image = self[i]
         if self.image_label is None:
-            self.image_label = self.label_image()
+            self.image_label = image.label_image()
 
-        txt = self.image_label
-        if i < n:
-            txt.set_text(f'{i}: {self.names[i]}')
-            xy = ulc(self.params[i], 0.98 * self.fovs[i])
-            txt.set_position(xy)
+        i = i % n
+        self.image_label.set_text(f'{i}: {self.names[i]}')
+        xy = ulc(self.params[i], 0.98 * self.fovs[i])
+        self.image_label.set_position(xy)
 
         #
         self._set_alphas()

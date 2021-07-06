@@ -12,6 +12,7 @@ Image registration (point set registration) for astronomicall images.
 #   brute force search with gaussian mixtures on points
 
 
+
 # std libs
 import re
 import logging
@@ -24,36 +25,36 @@ import multiprocessing as mp
 
 # third-party libs
 import numpy as np
+import aplpy as apl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
-from matplotlib.transforms import Affine2D
+from drizzle.drizzle import Drizzle
+from astropy import wcs
 from astropy.utils import lazyproperty
-from pyxides.type_check import OfType
-from pyxides.getitem import ItemGetter
-from pyxides.vectorize import AttrMapper, AttrProp
 from scipy.cluster.vq import kmeans
 from scipy.optimize import minimize
-from scipy.spatial.ckdtree import cKDTree
 from scipy.spatial.distance import cdist
+from scipy.spatial.ckdtree import cKDTree
 from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
+from pyxides.type_check import OfType
+from pyxides.getitem import ItemGetter
+from pyxides.vectorize import AttrMapper, AttrVector
 
 # local libs
 from scrawl.imagine import ImageDisplay
-from obstools.modelling import Model
-from obstools.phot.campaign import HDUExtra
-from obstools.stats import geometric_median
-from obstools.image.segmentation import SegmentedImage
+from recipes.functionals import echo0
 from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
-from recipes.functionals import echo0
 
 # relative libs
-from . import transforms as trans
+from . import transforms
+from .image import SkyImage
+from .segmentation import SegmentedImage
+from ..modelling import Model
+from ..stats import geometric_median
 from ..utils import get_coordinates, get_dss, STScIServerError
 
-from matplotlib.patches import Rectangle
-import aplpy as apl
 
 # from motley.profiling.timers import timer
 # from sklearn.cluster import MeanShift
@@ -66,12 +67,7 @@ logging.basicConfig()
 logger.setLevel(logging.INFO)
 
 
-TABLE_STYLE = dict(txt='bold', bg='g')
-
-UNIT_CORNERS = np.array([[0., 0.],
-                         [1., 0.],
-                         [1., 1.],
-                         [0., 1.]])
+TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
 
 
 def qualname(kls):
@@ -95,21 +91,10 @@ def non_masked(xy):
 
 def objective_pix(target, values, xy, bins, p):
     """Objective for direct image matching"""
-    xy = trans.rigid(xy, p)
+    xy = transforms.rigid(xy, p)
     bs = binned_statistic_2d(*xy.T, values, 'mean', bins)
     rs = np.square(target - bs.statistic)
     return np.nansum(rs)
-
-
-def detect_measure(image, mask=False, background=None, snr=3., npixels=5,
-                   edge_cutoff=None, deblend=False, dilate=0):
-    #
-    seg = SegmentedImage.detect(image, mask, background, snr, npixels,
-                                edge_cutoff, deblend, dilate)
-
-    counts = seg.sum(image) - seg.median(image, [0]) * seg.areas
-    coords = seg.com_bg(image)
-    return seg, coords, counts
 
 
 def interpolate_nn(a, where):
@@ -124,7 +109,7 @@ def interpolate_nn(a, where):
 #     """Match pixels directly"""
 #     sy, sx = self.data.shape
 #     dx, dy = self.fov
-#     hx, hy = 0.5 * self.pixel_scale
+#     hx, hy = 0.5 * self.scale
 #     by, bx = np.ogrid[-hx:(dx + hx):complex(sy + 1),
 #                       -hy:(dy + hy):complex(sx + 1)]
 #     bins = by.ravel(), bx.ravel()
@@ -466,7 +451,7 @@ class GaussianMixtureModel(MultiGauss):
 
 #     @property
 #     def transform(self):
-#         return trans.rigid if self._fit_rotation else np.add
+#         return transforms.rigid if self._fit_rotation else np.add
 
 #     def eval(self, p, xy, stddev=None):
 #         return super().eval((), self.transform(xy, p))
@@ -507,7 +492,7 @@ class CoherentPointDrift(Model):
 
     @property
     def transform(self):
-        return trans.rigid if self._fit_rotation else np.add
+        return transforms.rigid if self._fit_rotation else np.add
 
     def __init__(self, xy, sigmas, weights=None):
         self.gmm = GaussianMixtureModel(xy, sigmas, weights)
@@ -582,11 +567,10 @@ def offset_disp_cluster(xy0, xy1, sigma=None, plot=False):
 
 def dist_flat(coo):
     """lower triangle of (symmetric) distance matrix"""
-    n = len(coo)
+    # n = len(coo)
     sdist = cdist(coo, coo)  # pixel distance between stars
     # since the distance matrix is symmetric, ignore lower half
-    ix = np.tril_indices(n, -1)
-    return sdist[ix]
+    return sdist[np.tril_indices(len(coo), -1)]
 
 
 # @timer
@@ -1225,22 +1209,22 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     # FIXME: percentage format in total wrong
     # TODO: align +- values
-    col_headers = ['n (%)', 'x', 'y']  # '(px.)'
-    formatters = {0: ftl.partial(pprint.decimal_with_percentage,
-                                 total=n_points, precision=0, right_pad=1)}  #
+    col_headers = ['x', 'y', 'n']  # '(px.)'
+    formatters = {'n': ftl.partial(pprint.decimal_with_percentage,
+                                   total=n_points, precision=0)}  #
 
     if detect_frac_min is not None:
         n_min = detect_frac_min * n_points
-        formatters[0] = ConditionalFormatter('y', op.le, n_min, formatters[0])
+        formatters['n'] = ConditionalFormatter('y', op.le, n_min,
+                                               formatters['n'])
 
     # get array with number ± std representations
-    columns = [points_per_star,
-               pprint.uarray(centres, σ_xy, 2)[:, ::-1]]
+    columns = [pprint.uarray(centres, σ_xy, 2)[:, ::-1], points_per_star]
     # FIXME: don't print uncertainties if less than 6 measurement points
 
     if counts is not None:
         # TODO highlight counts?
-        cn = 'counts (e⁻)'
+        cn = 'counts'  # (ADU)
         formatters[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
                                      compact=False)
         if count_thresh:
@@ -1257,12 +1241,14 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     tbl = Table.from_columns(*columns,
                              title='Measured star locations',
                              title_props=TABLE_STYLE,
-                             col_heade=col_headers,
+                             units=['px', 'px', ''],
+                             col_head=col_headers,
                              col_head_props=TABLE_STYLE,
+                             col_head_align='^',
                              precision=3,
                              align='r',
                              row_nrs=True,
-                             totals=[0],
+                             totals=[-1],
                              formatters=formatters)
 
     # fix formatting with percentage in total.
@@ -1272,175 +1258,6 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     logger.info('\n' + str(tbl) + extra)
     return tbl
-
-
-class SkyImage(object):
-    """
-    Helper class for image registration. Represents an image with some
-    associated meta data like pixel scale as well as detected sources and their
-    counts.
-    """
-
-    def __init__(self, data, fov=None, scale=None):
-        """
-        Create and SkyImage object with a know size on sky.
-
-        Parameters
-        ----------
-        data : array-like
-            The image data as a 2d
-        fov : float or array_like of float, optional
-            Field-of-view of the image in arcminutes. The default None, however
-            either `fov` or `scale` must be given.
-        scale : float or array_like of float, optional
-            Pixel scale in arcminutes/pixel. The default None, however
-            either `fov` or `scale` must be given.
-
-        Raises
-        ------
-        ValueError
-            If both `fov` and `scale` are None
-        """
-
-        if (fov is scale is None):
-            raise ValueError('Either field-of-view, or pixel scale must be '
-                             'given and not be `None`')
-
-        # data array
-        self.data = np.asarray(data)
-        self.fov = np.array(duplicate_if_scalar(fov))
-
-        # pixel size in arcmin xy
-        self.pixel_scale = self.fov / self.data.shape
-
-        # segmentation data
-        self.seg = None  # : SegmentedArray:
-        # self.xyp = None  # : np.ndarray: center-of-mass coordinates pixels
-        self.xy = None  # : np.ndarray: center-of-mass coordinates arcmin
-        self.counts = None  # : np.ndarray: pixel sums for segmentation
-
-    def detect(self, **kws):
-        self.seg, yx, counts = detect_measure(self.data, **kws)
-
-        # sometimes, we get nans from the center-of-mass calculation
-        ok = np.isfinite(yx).all(1)
-        if not ok.any():
-            warnings.warn('No detections for image')
-
-        self.xy = yx[ok, ::-1]
-        # self.xy = self.xyp * self.pixel_scale
-        self.counts = counts[ok]
-        return self.seg, self.xy, self.counts
-
-    def __array__(self):
-        return self.data
-
-    def get_scale(self, scale):
-        """scale in data units per pixel for required coordinate system"""
-        if isinstance(scale, str):
-            scale = scale.lower()
-            if scale in ('pixel', 'pixels'):
-                scale = 1
-
-            elif scale in ('fov', 'sky'):
-                scale = self.pixel_scale
-            else:
-                raise ValueError(f'scale value {scale!r} not understood')
-
-        return np.array(duplicate_if_scalar(scale), float)
-
-    def get_transform(self, params, scale='pixels'):
-        scale = self.get_scale(scale)
-        *xyo, theta = params
-        return Affine2D().scale(*scale).rotate(theta).translate(*xyo)
-
-    def get_corners(self, p, scale='pixels'):
-        """
-        Get corners xy coords anti-clockwise from lower left
-        """
-        # lower left, upper right xy
-        c = np.array([[0, 0], self.data.shape]) * self.get_scale(scale)
-        # corners = np.c_[c[0], c[:, 1], c[1], c[::-1, 0]].T  # / clockwise yx
-        corners = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
-        return trans.rigid(corners, p)
-
-    # @lazyproperty
-    # def grid(self):
-    #     return np.indices(self.data.shape)
-
-    def grid(self, p, scale):
-        """transformed pixel location grid cartesian xy coordinates"""
-        g = np.indices(self.data.shape).reshape(2, -1).T[:, ::-1]
-        return trans.affine(g, p, scale)
-
-    def plot(self, ax=None, p=(0, 0, 0), scale='fov', frame=True, set_lims=True,
-             **kws):
-        #  regions=False, labels=False,
-        """
-        Display the image in the axes, applying the affine transformation for
-        parameters `p`
-        """
-
-        scale = self.get_scale(scale)
-        ishape = self.data.shape
-
-        # logger.debug(f'{corners=}')
-        im = ImageDisplay(self.data, ax=ax,
-                          **{**dict(hist=False,
-                                    sliders=False,
-                                    cbar=False,
-                                    interpolation='none'),
-                             **kws})
-
-        # Rotate + offset the image by setting the transform
-        transform = self.get_transform(p, scale=scale)
-        art_trans = transform + im.ax.transData
-        im.imagePlot.set_transform(art_trans)
-
-        # Add frame
-        if frame:
-            frame_kws = dict(fc='none', lw=1, ec='0.5', alpha=kws.get('alpha'))
-            if isinstance(frame, dict):
-                frame_kws.update(frame)
-
-            frame = Rectangle((-0.5, -0.5), *ishape,
-                              transform=art_trans,
-                              **frame_kws)
-            im.ax.add_patch(frame)
-
-        if set_lims:
-            corners = UNIT_CORNERS * ishape - 0.5
-            corners = transform.transform(corners)
-            xlim, ylim = np.sort([corners.min(0), corners.max(0)]).T
-            im.ax.set(xlim=xlim, ylim=ylim)
-
-        # if regions:
-        #     image.seg.show_overlay(ax)
-        #     image.seg.draw_labels(ax, size=8, color='w', weight='heavy')
-
-        return im.imagePlot, frame
-
-
-# class TransformedImageGrids(col.defaultdict, LoggingMixin):
-#     """
-#     Container for segment masks
-#     """
-
-#     def __init__(self, reg):
-#         self.reg = reg
-#         col.defaultdict.__init__(self, None)
-
-#     def __missing__(self, i):
-#         # the grid is computed at lookup time here and inserted into the dict
-#         # after this func executes
-#         shape = self.reg.images[i].shape
-#         r = (self.reg.fovs[i] / shape) / self.reg.pixel_scale
-#         g = np.indices(shape).reshape(2, -1).T * r
-#         g = roto_translate(g[:, ::-1], self.reg.params[i])
-#         return g  # .reshape ??
-
-
-# from obstools.phot.image import SourceDetectionMixin
 
 
 class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
@@ -1787,15 +1604,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # group_features(self.labels, self.labels)[0]
         return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
 
-    @property
-    def corners(self):
-        corners = np.empty((len(self), 4, 2))
-        frame_size = self.fovs / self.pixel_scale
-        for i, (p, fov) in enumerate(zip(self.params, frame_size)):
-            c = np.array([[0, 0], fov[::-1]])
-            xy = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
-            corners[i] = trans.affine(xy, p)
-        return corners
+
 
     @lazyproperty
     def model(self):
