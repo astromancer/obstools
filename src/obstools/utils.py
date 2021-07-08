@@ -1,33 +1,32 @@
-from astropy.coordinates import jparser
-from io import BytesIO
-import urllib.request
-import logging
-import re
-from pathlib import Path
-import numbers
 
+# std libs
+import re
+import logging
+import numbers
+from io import BytesIO
+
+# third-party libs
 import numpy as np
 from astropy.io import fits
 from astropy.time import Time
-from astropy.coordinates import SkyCoord, EarthLocation, UnknownSiteException
 from astropy.coordinates.name_resolve import NameResolveError
+from astropy.coordinates import (jparser, SkyCoord, EarthLocation,
+                                 UnknownSiteException)
 
+# local libs
 from recipes import caches
-# from motley.profiling.timers import timer
-
 from recipes.logging import get_module_logger
+
+# relative libs
+from . import cachePaths as cached
+
+
+# from motley.profiling.timers import timer
 
 
 # module level logger
 logger = get_module_logger()
 logging.basicConfig()
-
-# persistent caches for faster object coordinate and image retrieval
-cachePath = Path.home() / '.cache/obstools'  # NOTE only for linux!
-cooCachePath = cachePath / 'coords.pkl'
-siteCachePath = cachePath / 'sites.pkl'
-dssCachePath = cachePath / 'dss.pkl'
-skyCachePath = cachePath / 'skymapper.pkl'
 
 
 RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
@@ -37,13 +36,12 @@ def int2tup(v):
     """wrap integer in a tuple"""
     if isinstance(v, numbers.Integral):
         return v,
-    else:
-        return tuple(v)
+    return tuple(v)
     # else:
     #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
 
-@caches.to_file(siteCachePath)
+@caches.to_file(cached.site)
 def get_site(name):
     """resolve site name and cache the result"""
     if isinstance(name, EarthLocation):
@@ -134,7 +132,7 @@ def get_coords_named(name):
         return coo
 
 
-@caches.to_file(cooCachePath)
+@caches.to_file(cached.coo)
 def resolver(name):
     """
     Get the target coordinates from object name if known.  This function is
@@ -263,7 +261,7 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
     return hdus
 
 
-@caches.to_file(skyCachePath)  # memoize for performance
+@caches.to_file(cached.sky)  # memoize for performance
 def _get_skymapper(url):
     # get raw image data
     logger.debug(f'Reading data from {url=}')
@@ -277,7 +275,7 @@ def _get_skymapper(url):
 
 
 # @timer
-@caches.to_file(dssCachePath)  # memoize for performance
+@caches.to_file(cached.dss)  # memoize for performance
 def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     """
     Grab a image from STScI server and load as HDUList. 
