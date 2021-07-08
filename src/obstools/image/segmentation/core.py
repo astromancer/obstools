@@ -577,7 +577,7 @@ class Sliced(vdict):
 #     'TODO: com / gmean / mean / argmax'  # maybe
 
 
-class MaskedStatsMixin(object):
+class MaskedStatsMixin:
     """
     This class gives inheritors access to methods for doing statistics on
     segmented images (from `scipy.ndimage.measurements`)
@@ -615,7 +615,7 @@ class MaskedStatsMixin(object):
                 setattr(cls, alias, method)
 
 
-class MaskedStatistic(object):
+class MaskedStatistic:
     # Descriptor class that enables statistical computation on masked
     # input data with segmented images
     _doc_template = \
@@ -728,7 +728,7 @@ class SegmentMasks(col.defaultdict):  # SegmentMasks
         return self.seg.sliced(label) != label
 
 
-class SegmentMasksMixin(object):
+class SegmentMasksMixin:
     @lazyproperty
     def masks(self):
         """

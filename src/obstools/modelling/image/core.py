@@ -627,7 +627,7 @@ class PSFModeller(SegmentedImageModel):
 #         self.params_std[i, j] = pu
 
 
-class ModellingResultsMixin(object):
+class ModellingResultsMixin:
     def __init__(self, save_residual=False):
 
         # Data containers

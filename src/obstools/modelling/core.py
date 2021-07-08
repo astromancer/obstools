@@ -83,7 +83,7 @@ class UnconvergedOptimization(Exception):
 #         raise ValueError('Invalid axis')
 
 
-# class OptionallyNamed(object):
+# class OptionallyNamed:
 #     """
 #     Implements optional mutable `name` for inherited classes
 #     """
@@ -106,7 +106,7 @@ class UnconvergedOptimization(Exception):
 #         assert isinstance(name, str)
 #         cls._name = name
 
-class OptionallyNamed(object):
+class OptionallyNamed:
     """
     Implements optional, mutable name for inherited classes via `name` property
     """
@@ -128,7 +128,7 @@ class OptionallyNamed(object):
         self._name = name
 
 
-class Likelihood(object):
+class Likelihood:
     pass
 
 
@@ -168,7 +168,7 @@ class PoissonLikelihood(Likelihood):
     pass
 
 
-class Lp(object):
+class Lp:
     'todo'
 
 
@@ -718,7 +718,7 @@ class RescaleInternal(DataTransformBase):
         return p * self._yscale
 
 
-class SummaryStatsMixin(object):
+class SummaryStatsMixin:
     """
     Mixin class that computes a summary statistic across one (or more) of
     the data axes before doing the fit.
@@ -1165,7 +1165,7 @@ class CompoundModel(Model):
 #     def __getitem__(self, key):
 
 
-class FixedGrid(object):
+class FixedGrid:
     """
     Mixin class that allows optional static grid to be set.  This makes the
     `grid` argument an optional is the model evaluation call and checks for

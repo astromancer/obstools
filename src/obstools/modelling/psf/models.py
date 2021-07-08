@@ -740,7 +740,7 @@ def Moffat(p, x, y):
 
 
 # ****************************************************************************************************
-class StarFit(object):
+class StarFit:
     # TODO: Kernel Density Estimation... or is this too slow??
     def __init__(self, psf=None, algorithm=None, caching=True, hints=True,
                  _print=False, **kw):

@@ -96,7 +96,7 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
 #     return SegmentedArray(*args)
 
 
-class LabelUser(object):
+class LabelUser:
     """
     Mixin class for inheritors that use `SegmentedImage`.
     Adds the `use_label` and `ignore_label` properties.  Whenever a function
@@ -150,7 +150,7 @@ class LabelUser(object):
         return [len(labels) for labels in self.values()]
 
 
-# class MaskUser(object):
+# class MaskUser:
 #     """Mixin class giving masks property"""
 #
 #     def __init__(self, groups=None):
