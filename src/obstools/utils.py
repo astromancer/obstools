@@ -3,6 +3,7 @@
 import re
 import logging
 import numbers
+import urllib.request
 from io import BytesIO
 
 # third-party libs
