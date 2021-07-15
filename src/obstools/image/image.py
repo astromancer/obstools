@@ -1,5 +1,6 @@
 
 
+
 # std libs
 import warnings
 
@@ -12,10 +13,10 @@ from matplotlib.transforms import Affine2D
 from scrawl.imagine import ImageDisplay
 from recipes.oo import SelfAware
 from recipes.misc import duplicate_if_scalar
-from recipes.dicts import AttrDict as ArtistContainer
+from recipes.dicts import pformat, AttrDict as ArtistContainer
 
 # relative libs
-from .segmentation import SegmentedImage
+from .segmentation.detect import SourceDetectionMixin
 
 
 UNIT_CORNERS = np.array([[0., 0.],
@@ -24,24 +25,16 @@ UNIT_CORNERS = np.array([[0., 0.],
                          [0., 1.]])
 
 
-# from obstools.phot.image import SourceDetectionMixin
-
-
-def detect_measure(image, mask=False, background=None, snr=3., npixels=5,
-                   edge_cutoff=None, deblend=False, dilate=0):
-    #
-    seg = SegmentedImage.detect(image, mask, background, snr, npixels,
-                                edge_cutoff, deblend, dilate)
-
-    counts = seg.sum(image) - seg.median(image, [0]) * seg.areas
-    coords = seg.com_bg(image)
-    return seg, coords, counts
+def attr_dict(obj, keys):
+    return {key: getattr(obj, key) for key in keys}
 
 
 class Image(SelfAware):
     """
     A simple image class
     """
+
+    _repr_keys = ('shape', )
 
     def __init__(self, data):
         """
@@ -55,9 +48,15 @@ class Image(SelfAware):
         """
 
         # data array
-        self.data = np.asarray(data)
+        self.data = np.asanyarray(data)
         # artists
         self.art = ArtistContainer(image=None, frame=None)
+
+    def __repr__(self):
+        return pformat(attr_dict(self, self._repr_keys),
+                       self.__class__.__name__,
+                       brackets='[]',
+                       hang=True)
 
     @property
     def shape(self):
@@ -72,7 +71,7 @@ class Image(SelfAware):
         """
         xy coords of image corners anti-clockwise from lower left
         """
-        return self.transform.transform(UNIT_CORNERS * self.shape)
+        return self.transform.transform(UNIT_CORNERS * self.shape - 0.5)
 
     def __array__(self):
         return self.data
@@ -103,7 +102,6 @@ class Image(SelfAware):
                 frame_kws.update(frame)
 
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape,
-
                                                **frame_kws)
             ax.add_patch(frame)
 
@@ -120,6 +118,9 @@ class Image(SelfAware):
 
 
 class TransformedImage(Image):
+
+    _repr_keys = ('shape', 'scale', 'offset', 'angle')
+
     # @doc.inherit('Parameters')
     def __init__(self, data, offset=(0, 0), angle=0, scale=1):
         """
@@ -179,12 +180,12 @@ class TransformedImage(Image):
     def plot(self, ax=None, frame=True, set_lims=True, **kws):
 
         art = super().plot(ax, frame, set_lims, **kws)
-        ax = art.image
+        ax = art.image.axes
 
         # Rotate + offset the image by setting the transform
         art_trans = self.transform + ax.transData
-        art.image.set_transform(art_trans)
-        art.frame.set_transform(art_trans)
+        for artist in art.values():
+            artist.set_transform(art_trans)
 
         # update axes limits
         if set_lims:
@@ -195,13 +196,15 @@ class TransformedImage(Image):
         return art
 
 
-class SkyImage(TransformedImage):
+class SkyImage(TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
     associated meta data like pixel scale as well as detected sources and their
     counts.
     """
     # @doc.inherit('Parameters')
+    
+    _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
 
     def __init__(self, data, fov=None, scale=None):
         """
@@ -231,8 +234,8 @@ class SkyImage(TransformedImage):
             scale = fov / data.shape
 
         # init
-        super().__init__(data, scale=scale)
-
+        TransformedImage.__init__(self, data, scale=scale)
+        
         # segmentation data
         self.seg = None     # : SegmentedArray:
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels
@@ -243,18 +246,22 @@ class SkyImage(TransformedImage):
         """Field of view"""
         return self.shape * self.scale
 
-    def detect(self, **kws):
-        self.seg, yx, counts = detect_measure(self.data, **kws)
+    def detect(self, snr=3, max_iter=1, **kws):
+
+        self.seg = super().detect(self.data, snr=snr, **kws)
+
+        # centre of mass, counts
+        yx = self.seg.com_bg(self.data)
+        counts, noise = self.seg.flux(self.data)
 
         # sometimes, we get nans from the center-of-mass calculation
         ok = np.isfinite(yx).all(1)
         if not ok.any():
             warnings.warn('No detections for image.')
 
-        self.xy = yx[ok, ::-1]
-        # self.xy = self.xyp * self.pixel_scale
+        self.xy = yx[ok, ::-1]  # / self.scale
         self.counts = counts[ok]
-        return self.seg, self.xy, self.counts
+        # return xy
 
     def plot(self, ax=None, frame=True, positions=False, regions=False,
              labels=False, set_lims=True, **kws):
