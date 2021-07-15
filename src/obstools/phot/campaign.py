@@ -20,17 +20,18 @@ import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
-from pyxides.type_check import OfType
+from pyxides.typing import OfType
 from pyxides.getitem import ItemGetter
 from pyxides.grouping import Groups, AttrGrouper
-from pyxides.vectorize import AttrMapper, AttrProp
+from pyxides.vectorize import Vectorize, AttrVector
 from pyxides.pprint import PrettyPrinter, PPrintContainer
 
 # local libs
+import docsplice as doc
 from motley.table import AttrTable
 from recipes import io, bash
 from recipes.oo import SelfAware
-from recipes.oo.null import Null
+from recipes.oo.null import NULL
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 
@@ -87,7 +88,7 @@ class FilenameHelper:
         return str(self._path.stem)
 
 
-class FileList(UserList, AttrMapper):  # OfType(FilenameHelper)
+class FileList(UserList, Vectorize):  # ListOf(FilenameHelper)
     """
     Helper class for working with lists of filenames
     """
@@ -97,7 +98,7 @@ class FileList(UserList, AttrMapper):  # OfType(FilenameHelper)
         kls = campaign._allowed_types[0]._FilenameHelperClass
         for name, _ in inspect.getmembers(kls, is_property):
             # print('creating property', name)
-            setattr(cls, f'{name}s', AttrProp(name))
+            setattr(cls, f'{name}s', AttrVector(name))
 
         return obj
 
@@ -245,9 +246,9 @@ class ItemGlobber(ItemGetter):
         return super().__getitem__(key)
 
 
-# metaclass to avoid conflicts
+# 
 class CampaignType(SelfAware, OfType):
-    pass
+    """metaclass to avoid conflicts"""
 
 
 class PhotCampaign(PPrintContainer,
@@ -255,6 +256,7 @@ class PhotCampaign(PPrintContainer,
                    UserList,
                    CampaignType(_BaseHDU),
                    AttrGrouper,
+                   Vectorize,
                    LoggingMixin):
     """
     A class containing multiple CCD observations potentially from different
@@ -268,9 +270,9 @@ class PhotCampaign(PPrintContainer,
           attributes of the contained HDUs or arbitrary functions via
           :meth:`sort_by`, :meth:`select_by`, :meth:`filter_by`,
           :meth:`group_by` and :meth:`join` methods
-        * Removing of duplicates :meth:`filter_duplicates` 
-        * Vectorized attribute lookup and method calling on the contained
-          objects courtesy of :class:`AttrMapper` via :meth:`attrs` and
+        * Removing of duplicates :meth:`filter_duplicates`
+        * Vectorize attribute lookup and method calling on the contained
+          objects courtesy of :class:`Vectorize` via :meth:`attrs` and
           :meth:`calls`
         * Pretty printing in table format via :meth:`pprint` method
         * Image registration. ie. Aligning sample images from

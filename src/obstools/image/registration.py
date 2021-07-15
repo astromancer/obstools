@@ -37,9 +37,9 @@ from scipy.spatial.distance import cdist
 from scipy.spatial.ckdtree import cKDTree
 from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
-from pyxides.type_check import OfType
+from pyxides import ListOf
 from pyxides.getitem import ItemGetter
-from pyxides.vectorize import AttrMapper, AttrVector
+from pyxides.vectorize import Vectorize, AttrVector
 
 # local libs
 from scrawl.imagine import ImageDisplay
@@ -1260,7 +1260,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     return tbl
 
 
-class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
+class ImageContainer(ListOf(SkyImage), ItemGetter, Vectorize):
     def __init__(self, images=(), fovs=()):
         """
         A container of `SkyImages`'s
@@ -1307,12 +1307,13 @@ class ImageContainer(col.UserList, OfType(SkyImage), ItemGetter, AttrMapper):
         self.set_returned_type(list)
 
     # properties: vectorized attribute getters on `SkyImage`
-    images = AttrProp('data')
-    shapes = AttrProp('data.shape', np.array)
-    detections = AttrProp('seg')
-    coms = AttrProp('xy')
-    fovs = AttrProp('fov', np.array)
-    scales = AttrProp('pixel_scale', np.array)
+    images = AttrVector('data')
+    shapes = AttrVector('data.shape', convert=np.array)
+    detections = AttrVector('seg')
+    coms = AttrVector('xy')
+    fovs = AttrVector('fov', convert=np.array)
+    scales = AttrVector('scale', convert=np.array)
+    corners = AttrVector('corners', convert=np.array)
 
     # @property
     # def params(self):
