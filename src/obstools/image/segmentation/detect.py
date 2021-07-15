@@ -1,22 +1,46 @@
-import functools as ftl
-import itertools as itt
+
+
+
+# std libs
 import logging
+import functools as ftl
+from collections import defaultdict
 
+# third-party libs
 import numpy as np
+from sklearn.mixture import GaussianMixture
+from photutils import detect_threshold, detect_sources
 
+# local libs
+import recipes.pprint as pp
+from recipes.iter import iter_repeat_last
+from recipes.string import sub, pascal_case, snake_case
+from recipes.logging import get_module_logger, LoggingMixin
 from motley.table import Table
 
-# from obstools.modelling import UnconvergedOptimization
-from obstools.phot.utils import iter_repeat_last
-from photutils import detect_threshold, detect_sources
-from recipes.pprint.misc import seq_repr_trunc
-from recipes.logging import get_module_logger, LoggingMixin
+# relative libs
+from .groups import auto_id
+from . import SegmentedImage
+from ...modelling import UnconvergedOptimization
 
 
 # module level logger
 logger = get_module_logger()
 logging.basicConfig()
 logger.setLevel(logging.INFO)
+
+
+def make_border_mask(data, edge_cutoffs):
+    if isinstance(edge_cutoffs, int):
+        return _make_border_mask(data,
+                                 edge_cutoffs, -edge_cutoffs,
+                                 edge_cutoffs, -edge_cutoffs)
+    edge_cutoffs = tuple(edge_cutoffs)
+    if len(edge_cutoffs) == 4:
+        return _make_border_mask(data, *edge_cutoffs)
+
+    raise ValueError('Invalid edge_cutoffs %s' % edge_cutoffs)
+
 
 def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
     """Edge mask"""
@@ -32,121 +56,356 @@ def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
     return mask
 
 
-def make_border_mask(data, edge_cutoffs):
-    if isinstance(edge_cutoffs, int):
-        return _make_border_mask(data,
-                                 edge_cutoffs, -edge_cutoffs,
-                                 edge_cutoffs, -edge_cutoffs)
-    edge_cutoffs = tuple(edge_cutoffs)
-    if len(edge_cutoffs) == 4:
-        return _make_border_mask(data, *edge_cutoffs)
+class DetectionBase(LoggingMixin):
+    """Base class for source detection"""
 
-    raise ValueError('Invalid edge_cutoffs %s' % edge_cutoffs)
+    members = {}
 
+    def __new__(cls, algorithm, *args, **kws):
+        if isinstance(algorithm, str):
+            cls = cls.members[snake_case(algorithm)]
+            return super().__new__(cls, *args, **kws)
 
-def detect(image, mask=False, background=None, snr=3., npixels=7,
-           edge_cutoff=None, deblend=False):
-    """
-    Image detection that returns a SegmentedImage instance
+        return super().__new__(cls, algorithm, *args, **kws)
 
-    Parameters
-    ----------
-    image
-    mask
-    background
-    snr
-    npixels
-    edge_cutoff:
-        only used for threshold calculation
-    deblend
-    dilate
+    def __init__(self, algorithm, *args, **kws):
+        assert callable(algorithm)
+        self.fit_predict = staticmethod(algorithm)
 
-    Returns
-    -------
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        cls.members[snake_case(cls.__name__)] = cls
 
-    """
+    def fit_predict(self, *args, **kws):
+        raise NotImplementedError
 
-    logger.debug('Running detect(snr=%.1f, npixels=%i)', snr, npixels)
-
-    if mask is None:
-        mask = False  # need this for logical operators below to work
-
-    # separate pixel mask for threshold calculation (else the mask gets
-    # duplicated to threshold array, which will skew the detection stats)
-    # calculate threshold without masked pixels so that std accurately measured
-    # for region of interest
-    if np.ma.isMA(image):
-        mask = mask | image.mask
-        image = image.data
-
-    # # check mask reasonable
-    # if mask.sum() == mask.size:
-
-    # detection
-    threshold = detect_threshold(image, snr, background, mask=mask)
-    if not np.any(mask):
-        mask = None  # annoying photutils #HACK
-
-    seg = detect_sources(image, threshold, npixels, mask=mask)
-
-    # check if anything detected
-    no_sources = (seg is None)  # or (np.sum(seg) == 0)
-    if no_sources:
-        logger.debug('No objects detected')
-        return np.zeros_like(image, bool)
-
-    if deblend and not no_sources:
-        from photutils import deblend_sources
-        seg = deblend_sources(image, seg, npixels)
-
-    if edge_cutoff:
-        border = make_border_mask(image, edge_cutoff)
-        # labels = np.unique(seg.data[border])
-        seg.remove_masked_labels(border)
-
-    # intentionally return an array
-    return seg.data
+    def __call__(self, image, mask=False,  dilate=0, *args, **kws):
+        """
+        Image object detection that returns a SegmentedImage instance
 
 
-def detect_measure(image, mask=False, background=None, snr=3., npixels=7,
-                   edge_cutoff=None, deblend=False, dilate=0):
-    #
-    from .core import SegmentedImage
-    seg = SegmentedImage.detect(image, mask, background, snr, npixels,
-                                edge_cutoff, deblend, dilate)
-
-    # for images with strong gradients, local median in annular region around
-    # source is a better background estimator. Accurate count estimate here
-    # is relatively important since we edit the background mask based on
-    # source fluxes to account for photon bleed during frame transfer
-    # bg = [np.median(image[region]) for region in
-    #       seg.to_annuli(width=sky_width)]
-    # bg = seg.median(image, 0)
-    # sum = seg.sum(image) - bg * seg.areas
-    return seg, seg.com_bg(image)  # , counts
+        Parameters
+        ----------
+        image
+        mask
+        dilate
 
 
-class MultiThresholdBlobDetection(LoggingMixin):
-    # algorithm defaults
-    snr = (10, 7, 5, 3)
-    npixels = (7, 5, 3)
-    deblend = (True, False)
-    dilate = (4, 2, 1)
-    edge_cutoff = None
-    max_iter = np.inf
+        Returns
+        -------
+        obstools.image.segmentation.SegmentedImage
+        """
 
-    def __call__(self, image, mask=None, snr=snr, npixels=npixels,
-                 deblend=deblend, dilate=dilate, edge_cutoff=edge_cutoff,
-                 max_iter=max_iter, group_name_format='sources{count}',
-                 model=None, opt_kws=None, report=None):
-        #
-        'todo ?'
+        # Initialize
+        seg = SegmentedImage(self.fit_predict(image, mask, *args, **kws))
+
+        # dilate
+        if dilate != 'auto':
+            seg.dilate(iterations=dilate)
+
+        if self.logger.getEffectiveLevel() == logging.INFO:
+            self.logger.info('Detected %i objects covering %i pixels.',
+                            seg.nlabels, seg.to_binary().sum())
+
+        return seg
 
 
-def detect_loop(image, mask=None, snr=3, npixels=3,
-                deblend=True, dilate=0, edge_cutoff=None,
-                max_iter=np.inf, group_name_format='sources{count}',
-                model=None, opt_kws=None, report=None):
+class GMM(DetectionBase):
+    def __init__(self, n_components=5, **kws):
+        self.gmm = GaussianMixture(n_components, **kws)
+
+    def fit_predict(self, image, mask=False):
+        """
+        Construct a SegmentedImage using Gaussian Mixture Model prediction
+        for pixels.
+
+        Parameters
+        ----------
+        image
+        mask
+        n_components
+        kws
+
+        Returns
+        -------
+
+        """
+
+        pixels = ...
+        if (mask is not None) or (mask is not False):
+            image = np.ma.MaskedArray(image, mask)
+            pixels = ~image.mask
+
+        # model
+        y = np.ma.compressed(image).reshape(-1, 1)
+
+        seg = np.zeros(image.shape, int)
+        seg[pixels] = self.gmm.fit_predict(y)
+        return seg
+
+    def __call__(self, image, mask=False, *args, plot=False, **kws):
+
+        if plot:
+            from matplotlib import pyplot as plt
+            from matplotlib.colors import ListedColormap
+
+            m = gmm.means_.T
+            v = gmm.covariances_.T
+            w = gmm.weights_ / np.sqrt(2 * np.pi * v)
+            x = np.linspace(y.min(), y.max(), 250).reshape(-1, 1)
+            components = w * np.exp(-0.5 * np.square((x - m)) / v).squeeze()
+
+            fig, ax = plt.subplots()
+            ax.hist(y.squeeze(), bins=100, density=True, log=True)
+            for c in components.T:
+                ax.plot(x, c, scaley=False)
+
+            cmap = ListedColormap([l.get_color() for l in ax.lines])
+            obj.display(cmap=cmap, draw_labels=False)
+
+        return self.seg
+
+
+class SigmaThreshold(DetectionBase):
+    def fit_predict(self, image, mask=False, background=None, snr=3., npixels=7,
+                    edge_cutoff=None, deblend=False):
+        """
+        Image detection worker
+
+        Parameters
+        ----------
+        image
+        mask
+        background
+
+
+        Returns
+        -------
+
+        """
+
+        # logger.debug('Running detect with: %s', self)
+
+        if mask is None:
+            mask = False  # need this for logical operators below to work
+
+        # separate pixel mask for threshold calculation (else the mask gets
+        # duplicated to threshold array, which will skew the detection stats)
+        # calculate threshold without masked pixels so that std accurately
+        # measured for region of interest
+        if np.ma.isMA(image):
+            mask = mask | image.mask
+            image = image.data
+
+        # # check mask reasonable
+        # if mask.sum() == mask.size:
+
+        # detection
+        threshold = detect_threshold(image, snr, background, mask=mask)
+        if not np.any(mask):
+            mask = None  # annoying photutils #HACK
+
+        seg = detect_sources(image, threshold, npixels, mask=mask)
+
+        # check if anything detected
+        no_sources = (seg is None)  # or (np.sum(seg) == 0)
+        if no_sources:
+            logger.debug('No objects detected')
+            return np.zeros_like(image, bool)
+
+        if deblend and not no_sources:
+            from photutils import deblend_sources
+            seg = deblend_sources(image, seg, npixels)
+
+        if edge_cutoff:
+            border = make_border_mask(image, edge_cutoff)
+            # labels = np.unique(seg.data[border])
+            seg.remove_masked_labels(border)
+
+        # intentionally return an array
+        return seg.data
+
+
+class BackgroundFitter(DetectionBase):
+    """Source detection with optional background model"""
+
+    opt_kws = {}  # default
+
+    def __init__(self, algorithm, model=None):
+        super().__init__(algorithm)
+        self.model = model
+        self.result = self.residual = self.gof = None
+
+    def __call__(self, image, mask=False, opt_kws=opt_kws, **kws):
+        # detect on residual image. Only previously undetected sources will
+        # be present here
+        self.residual = image
+
+        self.logger.debug('Running detection: %s', kws)
+        seg = super().__call__(self.residual, mask, **kws)
+
+        if not self.model:
+            return seg
+
+        # initialize the model if required
+        if isinstance(self.model, type):
+            self.model = self.model(seg)
+
+        # fit the background. update state variables
+        mimage = np.ma.MaskedArray(image, mask)
+        # result = residual = gof = None
+        try:
+            self.result = self.model.fit(mimage, **opt_kws)
+        except UnconvergedOptimization:
+            self.logger.info('Model optimization unsuccessful. Breaking loop.')
+        else:
+            self.residual = self.model.residuals(self.result, image)
+            self.gof = self.model.redchi(self.result, mimage)
+
+        return seg
+
+
+class SourceAggregator(DetectionBase):
+
+    def __init__(self, algorithm, model=None):
+        self.count = 0
+        self.seg = None
+        super().__init__(algorithm, model)
+
+    def __call__(self, image, mask=False, group_id=auto_id, **kws):
+        # update mask
+        if mask is None:
+            mask = False
+
+        if self.seg is None:
+            # first round
+            self.seg = SegmentedImage.empty_like(image)
+
+        # ignore previous detections
+        new_seg = super().__call__(image, mask | seg.to_binary(), **kws)
+        self.seg.add_segments(new_seg, group_id=group_id)
+
+        self.count += 1
+        return self.seg
+
+
+class ResultsAggregator(SourceAggregator, BackgroundFitter):
+    def __init__(self, algorithm, model=None):
+        super().__init__(algorithm, model)
+        self.info = defaultdict(list)
+        self.fitness = []
+
+    def __call__(self, image, mask=False, *args, **kws):
+        new_seg = super().__call__(image, mask, *args, **kws)
+
+        # log what was found
+        if self.logger.getEffectiveLevel() == logging.INFO:
+            self.logger.info('Detected %i objects covering %i pixels.',
+                             self.seg.nlabels, self.seg.to_binary().sum())
+
+        # aggregate info
+        if new_seg.nlabels:
+            for k, v in kws.items():
+                self.info[k].append(v)
+
+        # aggregate fitting results
+        if self.model and self.result is None:
+            self.fitness.append(self.gof)
+
+
+class SourceDetection(ResultsAggregator):
+    def __get__(self, obj, kls=None):
+        if obj is None:
+            # called from class. Re-init to start clean.
+            return self.__class__(self.algorithm)
+        return self
+
+    def __set__(self, obj, algorithm):
+        # resolve strings
+        if isinstance(algorithm, str):
+            return cls.members[sub(algorithm.lower(), {' ': '', '_': ''})]
+
+        if not callable(algorithm):
+            raise TypeError('Invalid algorithm')
+
+        # create detector class from callable algorithm
+        return self.__class__(algorithm)
+
+
+class SourceDetectionLoop(SourceDetection):
+
+    def __init__(self, algorithm, model=None, *args, max_iter=1, **kws):
+        super().__init__(algorithm, model, *args, **kws)
+        self.max_iter = max_iter
+        self.params = self.iter_params(**kws)
+
+    def __call__(self, image, mask=False, max_iter=None, *args, **kws):
+        if max_iter is None:
+            max_iter = self.max_iter
+
+        for _ in self:
+            pass
+
+        return self.seg
+
+    @staticmethod
+    def iter_params(**kws):
+        for values in zip(*map(iter_repeat_last, kws.values())):
+            yield dict(zip(kws.keys(), values))
+
+    def __next__(self):
+        if self.count >= self.max_iter:
+            self.logger.debug('break: max_iter %i reached', self.max_iter)
+            raise StopIteration
+
+        # detect new
+        params = next(self.params)
+        new_segs = super().__call__(self.image, self.mask, **params)
+
+        if not new_segs.nlabels:
+            self.logger.debug('break: no new detections')
+            raise StopIteration
+
+        # debug log!
+        self.logger.debug('Detection iteration %i: %i new detections: %s',
+                          self.count, new_segs.nlabels,
+                          pp.truncated(tuple(new_segs.labels)))
+
+        if self.model and self.result is None:
+            logger.info('break: Model optimization unsuccessful. Returning.')
+            raise StopIteration
+
+        return new_segs
+
+    def report(self, gof):
+
+        if not self.info:
+            return 'No detections!'
+
+        # log what you found
+        seq_repr = ftl.partial(pp.truncated, max_items=3)
+
+        # report detections here
+        col_headers = list(self.info.keys())
+        info_list = list(self.info.values())
+        tbl = np.column_stack([np.array(info_list, 'O'),
+                               list(map(len, self.seg.groups)),
+                               list(map(seq_repr, self.seg.groups))])
+
+        title = 'Object detections'
+        if self.model:
+            title += f' with {self.model.__class__.__name__} model'
+            col_headers.insert(-1, 'χ²ᵣ')
+            tbl = np.insert(tbl, -1, list(map(pp.nr, gof)), 1)
+
+        return Table(tbl,
+                     title=title,
+                     col_headers=col_headers,
+                     totals=(4,),
+                     minimal=True)
+
+
+class MultiThreshold(SourceDetectionLoop):
     """
     Multi-threshold image blob detection, segmentation and grouping. This
     function runs multiple iterations of the blob detection algorithm on the
@@ -162,236 +421,137 @@ def detect_loop(image, mask=None, snr=3, npixels=3,
     A background model may also be provided.  This model will be fit to the
     image background region after each round of detection.  The model
     optimization can be controlled by passing `opt_kws` dict.
-
-    Parameters
-    ----------
-    image: array-like
-    mask: array-like, same shape as image
-    snr: float or sequence of float
-    npixels: int or sequence of int
-    deblend: bool or sequence of bool
-
-    dilate: int or sequence of int or 'auto'
-
-    edge_cutoff: int or tuple
-    max_iter: int
-        Maximum number of iteration of the algorithm
-
-    group_name_format: str
-    model
-    opt_kws: dict
-    report: bool
-
-    Returns
-    -------
-    seg: SegmentedImage
-        The segmented image
-    groups: dict
-        Groups of detected sources.  One group for each iteration of the
-        algorithm.
-    info: dict
-        Detection parameters for each round
-    result: np.ndarray or None
-        Fit parameters for model
-    residual: np.ndarray
-
     """
-    # todo: this could be a method of the SourceDetectionMixin class
 
-    from .core import SegmentedImage
+    # Parameter defaults
+    snr = (10, 7, 5, 3)
+    npixels = (7, 5, 3)
+    deblend = (True, False)
+    dilate = 'auto'
+    edge_cutoff = None
+    max_iter = 5
 
-    # short circuit
-    if max_iter == 0:
-        # seg, info, model, result, residual
-        return np.zeros(image.shape, int), [], [], None, image
+    # group labels
+    # auto_key_template = 'sources{count}'
 
-    if not isinstance(group_name_format, str):
-        raise TypeError('`group_name_format` parameter should be a format '
-                        'string')
+    def __init__(self, max_iter=max_iter, model=None):
+        super().__init__('sigma_threshold', model, max_iter)
 
-    # log
-    logger.info('Running detection loop')
-    lvl = logger.getEffectiveLevel()
-    debug = logger.getEffectiveLevel() >= logging.DEBUG
-    if report is None:
-        report = lvl <= logging.INFO
+    def __call__(self, image, mask=False,
+                 snr=snr, npixels=npixels, deblend=deblend, dilate=dilate,
+                 edge_cutoff=edge_cutoff):
+        """
 
-    # make iterables
-    var_names = ('snr', 'npixels', 'dilate', 'deblend')
-    var_iters = tuple(map(iter_repeat_last, (snr, npixels, dilate, deblend)))
-    var_gen = zip(*var_iters)
+        Parameters
+        ----------
+        image: array-like
+        mask: array-like, same shape as image
+        snr: float or sequence of float
+        npixels: int or sequence of int
+        deblend: bool or sequence of bool
 
-    # original_mask = mask
-    if mask is None:
-        mask = np.zeros(image.shape, bool)
+        dilate: int or sequence of int or 'auto'
 
-    # first round detection without background model
-    # opt_kws.setdefault('method', 'leastsq')
-    opt_kws = opt_kws or {}
-    residual = image
-    result = None
+        edge_cutoff: int or tuple
+        max_iter: int
+            Maximum number of iteration of the algorithm
 
-    # get empty segmented image
-    seg = SegmentedImage.empty_like(image)
+        group_name_format: str
+        model
+        opt_kws: dict
+        report: bool
 
-    # label groups
-    # keep track of group info + detection meta data
-    groups = []
-    info = []
-    gof = []
+        Returns
+        -------
+        seg: SegmentedImage
+            The segmented image
+        groups: dict
+            Groups of detected sources.  One group for each iteration of the
+            algorithm.
+        info: dict
+            Detection parameters for each round
+        result: np.ndarray or None
+            Fit parameters for model
+        residual: np.ndarray
 
-    # detection loop
-    counter = itt.count()
-    while True:
-        # keep track of iteration number
-        count = next(counter)
-        logger.debug('count %i', count)
-
-        if count >= max_iter:
-            logger.debug('break: max_iter reached')
-            break
-
-        # get detect options and assign group name
-        # noinspection PyTupleAssignmentBalance
-        snr_, npix, dil, debl = opts = next(var_gen)
-        info_dict = dict(zip(var_names, opts))
-        group_name = group_name_format.format(count=count, **info_dict)
-
-        # detect on residual image
-        new_seg = seg.detect(residual, mask, None, snr_, npix, edge_cutoff,
-                             debl, dil, group_name)
-        # im = new_seg.display()
-        # im.ax.set_title(f'new {count}')
-
-        if not new_seg.data.any():
-            logger.debug('break: no new detections')
-            break
-
-        # aggregate
-        if count == 0:
-            seg = new_seg
-            new_labels = new_seg.labels
-
-            # initialize the model if required
-            if type(model) is type:
-                model = model(seg)
-
-        else:
-            _, new_labels = seg.add_segments(new_seg)
-
-        # debug log!
-        if debug:
-            logger.debug('detect_loop: round %i: %i new detections: %s',
-                         count, len(new_labels),
-                         seq_repr_trunc(tuple(new_labels)))
-
-        # update mask
-        mask = mask | new_seg.to_binary()
-
-        # group info
-        groups.append(new_labels)
-        info.append(info_dict)
-
-        if model:
-            # fit model, get residuals
-            mimage = np.ma.MaskedArray(image, mask)
-
-            try:
-                result = model.fit(mimage, **opt_kws)
-                residual = model.residuals(result, image)
-                if report:
-                    gof.append(model.redchi(result, mimage))
-            except UnconvergedOptimization as err:
-                logger.info('Model optimization unsuccessful. Returning.')
-                break
-
-        # if dilate == 'auto':
-
-    # seg.groups.update()
-
-    # def report_detection(groups, info, model, gof):
-    if report:
-        if len(info):
-            # log what you found
-            from recipes import pprint
-
-            seq_repr = ftl.partial(seq_repr_trunc, max_items=3)
-
-            # report detections here
-            col_headers = ['snr', 'npix', 'dil', 'debl', 'n_obj', 'labels']
-            info_list = list(map(list, map(dict.values, info)))
-            tbl = np.column_stack([np.array(info_list, 'O'),
-                                   list(map(len, groups)),
-                                   list(map(seq_repr, groups))])
-            if model:
-                col_headers.insert(-1, 'χ²ᵣ')
-                tbl = np.insert(tbl, -1, list(map(pprint.numeric, gof)), 1)
-
-            title = 'Object detections'
-            if model:
-                title += f' with {model.__class__.__name__} model'
-
-            msg = Table(tbl,
-                        title=title,
-                        col_headers=col_headers,
-                        totals=(4,), minimalist=True)
-        else:
-            msg = 'No detections!'
-        logger.info(f'\n{msg}')
-        # print(logger.name)
-
-    return seg, info, model, result, residual
+        """
+        return super().__call__(image, mask,
+                                snr=snr,
+                                npixels=npixels,
+                                deblend=deblend,
+                                dilate=dilate,
+                                edge_cutoff=edge_cutoff,
+                                max_iter=max_iter)
 
 
-class SourceDetectionMixin(object):
+# class SourceDetectionDescriptor:
+#     """Descriptor class for source detection"""
+
+#     def __init__(self, algorithm):
+#         # self.algorithm = algorithm
+#         self.algorithm = SourceDetection(algorithm)
+
+#     def __get__(self, instance, objtype=None):
+#         if instance is None:  # called from class
+#             return self
+
+#         # called from instance
+#         return self.detect
+
+# #     def __call__(self, *args, **kws):
+#         return self.detect
+
+# class DetectionMeta(type):
+
+#     _algorithm = sigma_threshold  # default
+#     """
+#     Default blob detection algorithm. Instances of this metaclass can set this
+#     with the `detection` property
+#     """
+
+#     # todo register the algorithms
+
+#     @property
+#     def detection(self):
+#         """The source detection algorithm"""
+#         return self._algorithm
+
+#     @detection.setter
+#     def detection(self, algorithm):
+#         # resolve strings
+#         if isinstance(algorithm, str):
+#             algorithm = algorithms[algorithm]
+
+#         self._algorithm = algorithm
+
+
+class SourceDetectionMixin:
     """
     Provides the `from_image` classmethod and the `detect` staticmethod that
     can be used to construct image models from images.
     """
 
-    def __init__(self, seg):
-        """Base initializer only sets the `seg` attribute"""
-        self.seg = seg
+    detect = SourceDetection('sigma_threshold')
 
     @classmethod
-    def detect(cls, image, *args, **kws):
-        """
-        Default blob detection algorithm.  Subclasses can override as needed
-
-        Parameters
-        ----------
-        image
-
-        kws:
-            Keywords for source detection algorithm
-
-        Returns
-        -------
-
-        """
-
-        return detect_loop(image, *args, **kws)
-        # return cls._detect(image, **kws)
-
-    @classmethod
-    def from_image(cls, image, detect_sources=True, **detect_opts):
+    def from_image(cls, image, detect=True, **detect_opts):
         """
         Construct a instance of this class from an image.
         Sources in the image will be identified using `detect` method.
         Segments for detected sources will be added to the segmented image.
         Source groups will be added to `groups` attribute dict.
 
-`
         Parameters
         ----------
-        image
-        detect_sources: bool
+        image : np.ndarray
+            Image with sources
+        detect : bool
             Controls whether source detection algorithm is run. This argument
             provides a shortcut to the default source detection by setting
             `True`, or alternatively to skip source detection by setting
             `False`
 
-        detect_opts: dict
+        detect_opts : Keywords passed to
 
         Returns
         -------
@@ -399,10 +559,9 @@ class SourceDetectionMixin(object):
         """
 
         # Detect objects & segment image
-        if isinstance(detect_sources, dict):
-            detect_opts.update(detect_sources)
-
-        if not ((detect_sources is True) or detect_opts):
+        detect_opts = dict(detect if isinstance(detect, dict) else {},
+                           **detect_opts)
+        if not detect_opts:
             # short circuit the detection loop
             detect_opts['max_iter'] = 0
 
@@ -412,11 +571,9 @@ class SourceDetectionMixin(object):
         # useful models. Subclasses can overwrite this method to add useful
         # models to the segments.
 
-        # Detect objects & segment image
-        seg, info, model, result, residual = cls.detect(image, **detect_opts)
+        # Detect objects & init with segmented image
+        return cls.detect(image, **detect_opts)
 
-        # add detected sources
-        seg.groups.update(seg.groups)
 
-        # init
-        return cls(seg)
+# algorithms = {'sigma_threshold': sigma_threshold,
+#               }
