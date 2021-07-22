@@ -173,6 +173,16 @@ class TransformedImage(Image):
     def scale(self, scale):
         self._scale = np.array(duplicate_if_scalar(scale))
 
+    pixel_scale = scale
+
+    @property
+    def params(self):
+        return np.array([*self._offset, self.angle])
+
+    @params.setter
+    def params(self, params):
+        *self.offset, self.angle = params
+
     @property
     def transform(self):
         return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.offset)
@@ -203,10 +213,16 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     counts.
     """
     # @doc.inherit('Parameters')
-    
-    _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
 
-    def __init__(self, data, fov=None, scale=None):
+    # _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
+
+    @classmethod
+    def from_image(cls, image, fov=None, scale=None, **kws):
+        image = cls(image, fov, scale=scale)
+        image.detect(**kws)
+        return image
+
+    def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None):
         """
         Create and SkyImage object with a know size on sky.
 
@@ -234,8 +250,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             scale = fov / data.shape
 
         # init
-        TransformedImage.__init__(self, data, scale=scale)
-        
+        TransformedImage.__init__(self, data, offset, angle, scale)
+
         # segmentation data
         self.seg = None     # : SegmentedArray:
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels

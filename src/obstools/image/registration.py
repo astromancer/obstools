@@ -1462,46 +1462,27 @@ class ImageRegister(ImageContainer, LoggingMixin):
         plot
 
         Returns
-        # -------
-
+        -------
+        params : np.ndarray
+            Fitted transform parameters (Δx, Δy, θ); xy offsets in pixels,
+            rotation angle in radians.
         """
-        if not isinstance(image, SkyImage):
-            image = SkyImage(image, fov)
 
-        # defaults
-        for k, v in self.find_kws.items():
-            find_kws.setdefault(k, v)
-
-        # source detection
-        image.detect(**find_kws)
-
-        if len(self.images):
-            # NOTE: work internally in units of pixels of the reference image
-            # since it makes plotting the images easier without having to pass
-            # through the reference scale to the plotting routines...
-            xy = (image.pixel_scale / self.pixel_scale) * image.xy
-            p = self.match_points(xy, rotation, refine, plot)
-
-        else:
-            # Make initial reference coordinates.
-            # `xy` are the initial target coordinates for matching. Theses will
-            # be updated in `recentre` and `refine`
-            self._xy = image.xy
-            p = np.zeros(3)
+        image = self.match_image(image, fov, rotation, refine, plot)
 
         # aggregate
         self.append(image)
-        self._params.append(p)
+
         # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
         # self.logger.debug('sigma guess: %s' % self._sigma_guess)
 
         # update minimal source seperation
-        self._min_dist = min(self._min_dist, dist_flat(image.xy).min())
+        # self._min_dist = min(self._min_dist, dist_flat(xy).min())
 
-        # reset model
+        # reset model.
         del self.model
 
-        return p
+        return image.params
 
     def __repr__(self):
         return (f'{self.__class__.__name__}: {len(self)} images' +
@@ -1672,16 +1653,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # convert coordinates to pixel coordinates of reference image
         # reg.convert_to_pixels_of(self)
         xy, params = reg.convert_to_pixels_of(self)
-
-        reg.copy()
+        # reg.copy()
 
         # use `match points` so we don't aggregate data just yet
         # xy = rotate(xy.T, rotation).T
         p = self.match_points(xy, rotation)
-        # params = np.array(reg.params)
-        params[:, :2] += p[:2]
-        params[:, -1] += rotation
-        #reg.params = list(params)
+        params = reg.params + p
 
         # finally aggregate the results from the new register
         self.extend(reg.data)
@@ -1695,7 +1672,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #     ax.plot(*xy.T, 'x')
         # ax.plot(*imr.xy.T, 'o', mfc='none', ms=8)
 
-    def match_image(self, image, fov, rotation=0., refine=True, plot=False,
+    def match_image(self, image, fov=None, rotation=0., refine=True, plot=False,
                     **find_kws):
         """
         Search heuristic for image offset and rotation.
@@ -1714,20 +1691,17 @@ class ImageRegister(ImageContainer, LoggingMixin):
         seg: SegmentationImage
         """
 
-        # detect
-        seg, xy, counts = SkyImage(image, fov).detect(**find_kws)
-
-        # match images directly
-        # mr = self.match_pixels(image, fov[::-1], p)
+        # source detection
+        # scale free xy (same units as `scale`)
+        image = SkyImage(image, fov)
+        if image.xy is None:
+            image.detect(**{**self.find_kws, **find_kws})
 
         #
-        p = self.match_points(xy, rotation, refine, plot)
-        # p = self.match_points(xy, fov, rotation, plot)
-
-        # return yx (image) coordinates
-        # yx = roto_translate_yx(yx, p)
-
-        return p, xy, counts, seg
+        if self:
+            xy = image.xy * image.scale / self.pixel_scale
+            image.params = self.match_points(xy, rotation, refine, plot)
+        return image
 
     # @timer
     def match_points(self, xy, rotation=0., refine=True, plot=False):
@@ -2285,19 +2259,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # return im, s
 
-    def mosaic(self, axes=None, names=(), number_sources=False, **kws):
+    def mosaic(self, axes=None, names=(), scale='sky', number_sources=False,
+               **kws):
 
-        from obstools.image.mosaic import MosaicPlotter
-
-        mos = MosaicPlotter.from_register(self, axes)
-        # params are in units of pixels convert to units of `fov` (arcminutes)
-        params = self.params
-        params[:, :2] *= self.pixel_scale
-        mos.mosaic(params, names,  **kws)
+        mos = MosaicPlotter.from_register(self, axes, scale)
+        mos.mosaic(names, **kws)
 
         if number_sources:
-            off = -4 * self.rscale.min(0) * self.pixel_scale
-            mos.mark_sources(self.xy * self.pixel_scale,
+            off = -4 * self.scales.min(0)
+            mos.mark_sources(self.xy,
                              marker=None,
                              xy_offset=off)
 
@@ -2369,14 +2339,25 @@ class ImageRegisterDSS(ImageRegister):
 
     def mosaic(self, axes=None, names=(), **kws):
 
-        # from obstools.image.mosaic import MosaicPlotter
-
         header = self.hdu[0].header
         name = ' '.join(filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
         names = (name, )
 
         ff = apl.FITSFigure(self.hdu)
-        return super().mosaic(ff.ax, names, **kws)
+
+        mos = MosaicPlotter.from_register(self, axes, 'pixels')
+        # params are in units of pixels convert to units of `fov` (arcminutes)
+        # params = self.params
+        # params[:, :2] *= self.pixel_scale
+        mos.mosaic(self.params, names,  **kws)
+
+        if number_sources:
+            off = -4 * self.scales.min(0)
+            mos.mark_sources(self.xy,
+                             marker=None,
+                             xy_offset=off)
+
+        return mos
 
         # for art, frame in mos.art
 

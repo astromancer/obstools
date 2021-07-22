@@ -107,11 +107,6 @@ class MosaicPlotter(ImageContainer):
 
         #
         ImageContainer.__init__(self, images, fovs)
-
-        # self.names = names
-        self.params = []
-
-        # todo: _fov_internal = self.reg.image.shape
         self.art = {}  # art
         self.image_label = None
 
@@ -147,7 +142,7 @@ class MosaicPlotter(ImageContainer):
 
     # def __call__()
 
-    def mosaic(self, params, names=(),
+    def mosaic(self, names=(), params=(),
                cmap=None, cmap_ref=default_cmap_ref, alpha=None, alpha_ref=1,
                **kws):
         """Create a mosaiced image"""
@@ -190,6 +185,8 @@ class MosaicPlotter(ImageContainer):
         -------
 
         """
+        if p is None:
+            p = image.params if isinstance(image, SkyImage) else (0, 0, 0)
 
         if not np.isfinite(p).all():
             raise ValueError('Received non-finite parameter value(s)')
@@ -202,18 +199,18 @@ class MosaicPlotter(ImageContainer):
             # name = name or (self.names[0] if len(self.names) else None)
 
         # if image.__class__.__name__ != 'SkyImage':
-        if not isinstance(image, SkyImage):
-            image = SkyImage(image, fov)
+        *offset, angle = p
+        image = SkyImage(image, fov, offset, angle)
 
         # name image
         if name is None:
             name = self.label_fmt % next(self._counter)
 
         # plot
-        *image.offsets, image.angle = p
-        art = self.art[name] = image.plot(self.ax, frame=frame, set_lim=False,
+        # *image.offsets, image.angle = p
+        art = self.art[name] = image.plot(self.ax,
+                                          frame=frame, set_lims=False,
                                           **kws)
-        self.params.append(p)
 
         # if coords is not None:
         #     line, = self.ax.plot(*coords.T, 'x')
