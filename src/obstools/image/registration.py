@@ -26,7 +26,7 @@ import numpy as np
 import aplpy as apl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
-from drizzle.drizzle import Drizzle
+from joblib import Parallel, delayed
 from astropy import wcs
 from astropy.utils import lazyproperty
 from scipy.cluster.vq import kmeans
@@ -1277,25 +1277,30 @@ class ImageRegister(ImageContainer, LoggingMixin):
         pixel_scales = np.divide(fovs, shapes)
         if ridx is None:
             ridx = pixel_scales.argmin(0)[0]
-
-        indices = np.arange(n)
-        if ridx:  # put this index first
-            indices[0], indices[ridx] = indices[ridx], indices[0]
+        indices = np.delete(np.arange(n), ridx)
+        # if ridx:  # put this index first
+        #     indices[0], indices[ridx] = indices[ridx], indices[0]
 
         # message
-        cls.logger.info('Aligning %i images on image %i', n, ridx)
+        cls.logger.info('Aligning %i images on image %i.', n, ridx)
+
+        # initialize workers
+        parallel = Parallel(n_jobs=-1, verbose=50)
+        # detect sources
+        images = parallel(delayed(SkyImage.from_image)(image, fov)
+                          for image, fov in zip(images, fovs))
 
         # initialize register
-        reg = cls(fit_rotation=fit_rotation, **find_kws)
+        reg = cls(images, fit_rotation=fit_rotation, **find_kws)
+        reg.primary = ridx
+
+        # do alignment
         angles = np.ones(n) * angles
         angles -= angles[ridx]
-        # do alignment
-        for i in indices:
-            reg(images[i], fovs[i], angles[i], plot=plot)
-
-        # # re-order everything
-        # for at in 'images, fovs, detections, coms, counts, params'.split(', '):
-        #     setattr(reg, at, list(map(getattr(reg, at).__getitem__, indices)))
+        #
+        reg.data[:] = parallel(
+            delayed(reg.match_image)(image, rotation=angle, plot=plot)
+            for image, angle in zip(reg[indices], angles[indices]))
 
         reg.register()
         return reg
@@ -1856,12 +1861,24 @@ class ImageRegister(ImageContainer, LoggingMixin):
         failed = []
         # TODO: multiprocess
         self.model.fit_rotation = fit_rotation
-        for i in range(len(self.images)):
-            p = self.model.fit(xyt[i], p0=(0, 0, 0))
-            if p is None:
-                failed.append(i)
-            else:
-                params[i] += p
+
+        n_jobs = -1  # make sure you can pickle everything before you change
+        # this value
+        with Parallel(n_jobs=n_jobs) as parallel:
+            for i, p in enumerate(parallel(
+                    delayed(self.model.fit)(xy, p0=(0, 0, 0))
+                    for xy in self.xyt)):
+                if p is None:
+                    failed.append(i)
+                else:
+                    params[i] += p
+
+        # for i in range(len(self.images)):
+        #     p = self.model.fit(xyt[i], p0=(0, 0, 0))
+        #     if p is None:
+        #         failed.append(i)
+        #     else:
+        #         params[i] += p
 
         self.logger.info('Fitting successful %i / %i', i - len(failed), i)
 
