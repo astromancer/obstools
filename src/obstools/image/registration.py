@@ -48,9 +48,9 @@ from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
 
 # relative libs
-from . import transforms
-from .image import SkyImage
+from .mosaic import MosaicPlotter
 from .segmentation import SegmentedImage
+from .image import SkyImage, ImageContainer
 from ..modelling import Model
 from ..stats import geometric_median
 from ..utils import get_coordinates, get_dss, STScIServerError
@@ -1258,66 +1258,6 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     logger.info('\n' + str(tbl) + extra)
     return tbl
-
-
-class ImageContainer(ListOf(SkyImage), ItemGetter, Vectorize):
-    def __init__(self, images=(), fovs=()):
-        """
-        A container of `SkyImages`'s
-
-        Parameters
-        ----------
-        images : sequence, optional
-            A sequence of `SkyImages` or 2d `np.ndarrays`, by default ()
-        fovs : sequence, optional
-            A sequence of field-of-views, each being of size 1 or 2. If each
-            item in the sequence is of size 2, it is the field-of-view along the
-            image array dimensions (rows, columns). It an fov is size 1, it is
-            as being the field-of-view along each dimension of a square image.
-            If `images` is a sequence of `np.ndarrays`, `fovs` is a required
-            parameter
-
-        Raises
-        ------
-        ValueError
-            If `images` is a sequence of `np.ndarrays` and `fovs` is not given.
-        """
-        # check init parameters.  If `images` are arrays, also need `fovs`
-        n = len(images)
-        if n != len(fovs):
-            # items = self.checks_type(images, silent=True)
-            types = set(map(type, images))
-
-            if len(types) == 1 and issubclass(types.pop(), SkyImage):
-                fovs = [im.fov for im in images]
-            else:
-                raise ValueError(
-                    'When initializing this class from a stack of images, '
-                    'please also proved the field-of-views `fovs`.')
-                # as well as the set transformation parameters `params`.')
-
-            # create instances of `SkyImage`
-            images = map(SkyImage, images, fovs)
-
-        # initialize container
-        super().__init__(images)
-
-        # ensure we get lists back from getitem lookup since the initializer
-        # works differently to standard containers
-        self.set_returned_type(list)
-
-    # properties: vectorized attribute getters on `SkyImage`
-    images = AttrVector('data')
-    shapes = AttrVector('data.shape', convert=np.array)
-    detections = AttrVector('seg')
-    coms = AttrVector('xy')
-    fovs = AttrVector('fov', convert=np.array)
-    scales = AttrVector('scale', convert=np.array)
-    corners = AttrVector('corners', convert=np.array)
-
-    # @property
-    # def params(self):
-    #     return np.array(self._params)
 
 
 class ImageRegister(ImageContainer, LoggingMixin):

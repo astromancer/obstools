@@ -16,7 +16,7 @@ from scrawl.imagine import ImageDisplay
 
 # relative libs
 from . import transforms
-from .registration import ImageContainer, SkyImage
+from .image import ImageContainer, SkyImage
 
 
 def get_corners(p, fov):

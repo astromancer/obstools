@@ -1,13 +1,19 @@
-
+"""
+Image and image container classes
+"""
 
 
 # std libs
 import warnings
+from copy import copy
 
 # third-party libs
 import numpy as np
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
+from pyxides import ListOf
+from pyxides.getitem import IndexerMixin
+from pyxides.vectorize import Vectorize, AttrVector
 
 # local libs
 from scrawl.imagine import ImageDisplay
@@ -55,8 +61,11 @@ class Image(SelfAware):
     def __repr__(self):
         return pformat(attr_dict(self, self._repr_keys),
                        self.__class__.__name__,
-                       brackets='[]',
+                       brackets='<>',
                        hang=True)
+
+    def copy(self):
+        return copy(self)
 
     @property
     def shape(self):
@@ -104,7 +113,7 @@ class Image(SelfAware):
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape,
                                                **frame_kws)
             ax.add_patch(frame)
-
+        
         return self.art
 
     # @lazyproperty
@@ -275,9 +284,10 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         if not ok.any():
             warnings.warn('No detections for image.')
 
-        self.xy = yx[ok, ::-1]  # / self.scale
+        self.xy = yx[ok, ::-1]
         self.counts = counts[ok]
-        # return xy
+        # return xy coordinates in pixels
+        return self.seg, self.xy
 
     def plot(self, ax=None, frame=True, positions=False, regions=False,
              labels=False, set_lims=True, **kws):
@@ -325,3 +335,70 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
                        rotation_mode='anchor',
                        va='top',
                        **kws)
+
+
+class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorize):
+    def __init__(self, images=(), fovs=()):
+        """
+        A container of `SkyImages`'s
+
+        Parameters
+        ----------
+        images : sequence, optional
+            A sequence of `SkyImages` or 2d `np.ndarrays`, by default ()
+        fovs : sequence, optional
+            A sequence of field-of-views, each being of size 1 or 2. If each
+            item in the sequence is of size 2, it is the field-of-view along the
+            image array dimensions (rows, columns). It an fov is size 1, it is
+            as being the field-of-view along each dimension of a square image.
+            If `images` is a sequence of `np.ndarrays`, `fovs` is a required
+            parameter
+
+        Raises
+        ------
+        ValueError
+            If `images` is a sequence of `np.ndarrays` and `fovs` is not given.
+        """
+        # check init parameters.  If `images` are arrays, also need `fovs`
+        n = len(images)
+        if n != len(fovs):
+            # items = self.checks_type(images, silent=True)
+            types = set(map(type, images))
+
+            if len(types) == 1 and issubclass(types.pop(), SkyImage):
+                fovs = [im.fov for im in images]
+            else:
+                raise ValueError(
+                    'When initializing this class from a stack of images, '
+                    'please also proved the field-of-views `fovs`.')
+                # as well as the set transformation parameters `params`.')
+
+            # create instances of `SkyImage`
+            images = map(SkyImage, images, fovs)
+
+        # initialize container
+        super().__init__(images)
+
+        # ensure we get lists back from getitem lookup since the initializer
+        # works differently to standard containers
+        self.set_returned_type(list)
+
+    def __repr__(self):
+        n = len(self)
+        return f'{self.__class__.__name__}: {n} image{"s" * bool(n)}'
+    
+    # properties: vectorized attribute getters on `SkyImage`
+    images = AttrVector('data')
+    shapes = AttrVector('data.shape', convert=np.array)
+    detections = AttrVector('seg')
+    coms = AttrVector('xy')
+    fovs = AttrVector('fov', convert=np.array)
+    scales = AttrVector('scale', convert=np.array)
+    params = AttrVector('params', convert=np.array)
+    xy_offsets = AttrVector('offset', convert=np.array)
+    angles = AttrVector('angles', convert=np.array)
+    corners = AttrVector('corners', convert=np.array)
+
+    # @property
+    # def params(self):
+    #     return np.array(self._params)
