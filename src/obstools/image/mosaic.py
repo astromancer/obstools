@@ -95,9 +95,30 @@ class MosaicPlotter(ImageContainer):
         return list(self.art.keys())
 
     @classmethod
-    def from_register(cls, reg, axes=None, show_ref_image=True):
-        """Construct from `ImageRegister`"""
-        return cls(reg.data, (), axes, show_ref_image, reg.idx)
+    def from_register(cls, reg, axes=None, scale='sky', show_ref_image=True):
+        """
+        Construct from `ImageRegister`
+        """
+        scale = scale.lower()
+        if scale in ('fov', 'sky', 'world'):
+            rscale = 1
+            oscale = reg.pixel_scale
+        elif scale.startswith('pix'):
+            rscale = reg.pixel_scale
+            oscale = 1
+        else:
+            raise ValueError(f'Invalid scale: {scale!r}.')
+
+        # image offsets are in units of pixels by default. convert to units of
+        # `fov` (arcminutes)
+        images = []
+        for image in reg.data:
+            new = image.copy()
+            new.scale = image.scale / rscale
+            new.offset = image.offset * oscale
+            images.append(new)
+
+        return cls(images, (), axes, show_ref_image, reg.primary)
 
     def __init__(self, images, fovs=(), axes=None, show_ref_image=True, ridx=0):
         """

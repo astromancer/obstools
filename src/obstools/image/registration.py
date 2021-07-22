@@ -12,7 +12,6 @@ Image registration (point set registration) for astronomicall images.
 #   brute force search with gaussian mixtures on points
 
 
-
 # std libs
 import re
 import logging
@@ -20,7 +19,6 @@ import numbers
 import warnings
 import functools as ftl
 import itertools as itt
-import collections as col
 import multiprocessing as mp
 
 # third-party libs
@@ -37,18 +35,17 @@ from scipy.spatial.distance import cdist
 from scipy.spatial.ckdtree import cKDTree
 from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
-from pyxides import ListOf
-from pyxides.getitem import ItemGetter
-from pyxides.vectorize import Vectorize, AttrVector
 
 # local libs
 from scrawl.imagine import ImageDisplay
+from recipes.string import indent
 from recipes.functionals import echo0
 from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
 
 # relative libs
 from .mosaic import MosaicPlotter
+from . import transforms as transform
 from .segmentation import SegmentedImage
 from .image import SkyImage, ImageContainer
 from ..modelling import Model
@@ -91,7 +88,7 @@ def non_masked(xy):
 
 def objective_pix(target, values, xy, bins, p):
     """Objective for direct image matching"""
-    xy = transforms.rigid(xy, p)
+    xy = transform.rigid(xy, p)
     bs = binned_statistic_2d(*xy.T, values, 'mean', bins)
     rs = np.square(target - bs.statistic)
     return np.nansum(rs)
@@ -492,7 +489,7 @@ class CoherentPointDrift(Model):
 
     @property
     def transform(self):
-        return transforms.rigid if self._fit_rotation else np.add
+        return transform.rigid if self._fit_rotation else np.add
 
     def __init__(self, xy, sigmas, weights=None):
         self.gmm = GaussianMixtureModel(xy, sigmas, weights)
@@ -510,6 +507,10 @@ class CoherentPointDrift(Model):
     def fit(self, xy, stddev=None, p0=None):
         # This will evaluate the
         return super().fit(xy, p0, loss=self.loss_mle)
+
+    def lh_ratio(self, xy0, xy1):
+        # likelihood ratio
+        return np.exp(self.gmm.llh((), xy0) - self.gmm.llh((), xy1))
 
 
 # @timer
@@ -711,7 +712,7 @@ def display_multitab(images, fovs, params, coords):
 #     return centres, σ_pos, xy_offsets
 
 
-# def register_constellation(clustering, coms, centre_distance_max=1,
+# def register(clustering, coms, centre_distance_max=1,
 #                            f_detect_measure=0.5, plot=False, **plot_kws):
 #     #
 #     from collections import Callable
@@ -727,7 +728,7 @@ def display_multitab(images, fovs, params, coords):
 #
 #     # clustering + relative position measurement
 #     logger.info('Identifying stars')
-#     n_clusters, n_noise = cluster_id_stars(clustering, coms)
+#     n_clusters, n_noise = cluster_points(clustering, coms)
 #     xy, = group_features(clustering, coms)
 #
 #     if plot:
@@ -820,46 +821,6 @@ def id_stars_kmeans(images, segmentations):
     shifts = np.ma.average(cx - centroids, 1, np.dstack([w, w]))
 
     return cx, centroids, np.asarray(shifts)
-
-
-def cluster_id_stars(clf, xy):
-    """
-    fit the clustering model
-
-    Parameters
-    ----------
-    clf
-    xy
-
-    Returns
-    -------
-
-    """
-    X = np.vstack(xy)
-    n = len(X)
-    # stars_per_image = list(map(len, xy))
-    # no_detection = np.equal(stars_per_image, 0)
-    # scaler = StandardScaler()
-    # X = scaler.fit_transform(np.vstack(xy))
-
-    logger.info('Clustering %i position measurements using:\n\t%s', n,
-                str(clf).replace('\n', '\n\t'))
-    clf.fit(X)
-
-    labels = clf.labels_
-    # core_samples_mask = (clf.labels_ != -1)
-    # core_sample_indices_, = np.where(core_samples_mask)
-
-    # Number of clusters in labels, ignoring noise if present.
-    n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
-    n_noise = list(labels).count(-1)
-    # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-    logger.info('Identified %i stars using %i/%i points (%i noise)',
-                n_clusters, n - n_noise, n, n_noise)
-
-    # todo: check for clusters that are too close together
-
-    return n_clusters, n_noise
 
 
 def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
@@ -1090,18 +1051,18 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
 
         changed = (outliers != out_new).any()
-        if changed:
-            out = out_new
-            xym[out] = np.ma.masked
-            n_out = out.sum()
-
-            if n_out / n_points > 0.5:
-                raise Exception('Too many outliers!!')
-
-            logger.info('Ignoring %i/%i (%.1f%%) values with |δr| > %.3f',
-                        n_out, n_points, (n_out / n_points) * 100, d_cut)
-        else:
+        if not changed:
             break
+
+        out = out_new
+        xym[out] = np.ma.masked
+        n_out = out.sum()
+
+        if n_out / n_points > 0.5:
+            raise Exception('Too many outliers!!')
+
+        logger.info('Ignoring %i/%i (%.1f%%) values with |δr| > %.3f',
+                    n_out, n_points, (n_out / n_points) * 100, d_cut)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
@@ -1271,7 +1232,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # match a new (partially overlapping) image to the reference image:
     >>> xy_offset, rotation = reg(new_image, new_fov)
     # cross identify stars across images
-    >>> reg.register_constellation()
+    >>> reg.register()
     # plot a mosaic of the overlapping, images
     >>> mos = reg.mosaic()
 
@@ -1336,7 +1297,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # for at in 'images, fovs, detections, coms, counts, params'.split(', '):
         #     setattr(reg, at, list(map(getattr(reg, at).__getitem__, indices)))
 
-        reg.register_constellation()
+        reg.register()
         return reg
 
     def __init__(self, images=(), fovs=(), params=(), fit_rotation=True,
@@ -1425,40 +1386,33 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return image.params
 
     def __repr__(self):
-        return (f'{self.__class__.__name__}: {len(self)} images' +
-                ('' if self.labels is None else f'; {self.labels.max()} sources')
-                )
+        return (f'{super().__repr__()}; ' +
+                (f'{self.labels.max()} sources', 'unregistered')[self.labels is None])
 
     @property
     def image(self):
-        return self.images[self.idx]
+        return self.images[self.primary]
 
     @property
     def fov(self):
-        return self.fovs[self.idx]
+        return self.fovs[self.primary]
 
     @property
-    def pixel_scale(self):
-        return self.scales[self.idx]
+    def scale(self):
+        return self.scales[self.primary]
 
-    @property
-    def params(self):
-        return np.array(self._params)
-
-    @params.setter
-    def params(self, params):
-        self._params = list(params)
+    pixel_scale = scale
 
     @property
     def rscale(self):
         return self.scales / self.pixel_scale
 
     @property
-    def idx(self):
+    def primary(self):
         return self._idx
 
-    @idx.setter
-    def idx(self, idx):
+    @primary.setter
+    def primary(self, idx):
         idx = int(idx)
         n = len(self)
         if idx < 0:
@@ -1467,14 +1421,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if idx > n:
             raise ValueError(f'Invalid index ({n}) for reference frame.')
 
-        par = self.params
+        params = self.params
         rscale = self.rscale[idx]
 
-        self._xy = (self._xy - par[idx, :2]) / rscale
-
-        par[:, :2] /= rscale
-        par -= par[idx]
-        self._params = list(par)
+        self.xy = (self.xy - params[idx, :2]) / rscale
+        params[:, :2] /= rscale
+        params -= params[idx]
 
         self._idx = idx
 
@@ -1486,6 +1438,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         register and we can make a more accurate determination of the source
         positions by the :meth:`recentre` and :meth:`refine` methods.
         """
+        if self._xy is None:
+            # Make initial reference coordinates.
+            if not self:
+                raise ValueError('No images available. Add images by calling '
+                                 'the `ImageRegister` object on an image.')
+
+            # `xy` are the initial target coordinates for matching. Theses will
+            # be updated in `recentre` and `refine`
+            self.xy = self[self.primary].xy
+
         return self._xy
 
     @xy.setter
@@ -1503,7 +1465,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         Transform raw center-of-mass measurements with the current set of
         parameters
         """
-        return list(map(trans.affine, self.coms, self.params, self.rscale))
+        return list(map(transform.affine, self.coms, self.params, self.rscale))
+
+    @property
+    def n_points(self):
+        return sum(map(len, self.coms))
 
     # @lazyproperty
     @property
@@ -1515,18 +1481,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return group_features(self.labels, self.xyt)[0]
 
     @property
-    def xy_offsets(self):
-        return self.params[:, :2]
-
-    @property
     def source_indices(self):
         if self.labels is None:
             raise Exception('Unregistered')
 
         # group_features(self.labels, self.labels)[0]
         return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
-
-
 
     @lazyproperty
     def model(self):
@@ -1538,9 +1498,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #     # internal coordinates are in arcmin origin at (0,0) for image
     #     return np.divide(xy, self.pixel_scale)
 
-    def convert_to_pixels_of(self, imr):  # to_pixels_of
+    def convert_to_pixels_of(self, reg):  # to_pixels_of
         # convert coordinates to pixel coordinates of reference image
-        ratio = self.pixel_scale / imr.pixel_scale
+        ratio = self.pixel_scale / reg.pixel_scale
         xy = self.xy * ratio
 
         params = self.params
@@ -1554,12 +1514,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return xy, params
 
+    # def min_dist(self):
+    #     return min(dist_flat(xy).min() for xy in self.xyt)
+
+    @property
     def min_dist(self):
-        return min(dist_flat(xy).min() for xy in self.xyt)
+        return dist_flat(self.xy).min()
 
     def guess_sigma(self):
         """choose sigma for GMM based on distances between detections"""
-        return self._min_dist / self._dmin_frac_sigma
+        return self.min_dist / self._dmin_frac_sigma
 
     def match_hdu(self, hdu, depth=10, sample_stat='median', **findkws):
         """
@@ -1602,7 +1566,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # finally aggregate the results from the new register
         self.extend(reg.data)
-        self._params.extend(params)
 
         # convert back to original coords
         # reg.convert_to_pixels_of(reg)
@@ -1610,7 +1573,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # fig, ax = plt.subplots()
         # for xy in reg.xyt:
         #     ax.plot(*xy.T, 'x')
-        # ax.plot(*imr.xy.T, 'o', mfc='none', ms=8)
+        # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
 
     def match_image(self, image, fov=None, rotation=0., refine=True, plot=False,
                     **find_kws):
@@ -1665,11 +1628,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return p
 
-    def register_constellation(self, clustering=None, plot=False):
+    def register(self, clf=None, plot=False):
         # TODO: rename register / cluster
         # clustering + relative position measurement
-        clustering = clustering or self.get_clf()
-        self.cluster_id(clustering)
+        clf = clf or self.get_clf()
+        self.cluster_points(clf)
         # make the cluster centres the target constellation
         self.xy = self.xyt_block.mean(0)
 
@@ -1681,7 +1644,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # bandwidth size indicator.
             # todo: get this to remain anchored lower left but scale with zoom..
             xy = self.xy.min(0)  # - bw * 0.6
-            cir = Circle(xy, clustering.bandwidth, alpha=0.5)
+            cir = Circle(xy, clf.bandwidth, alpha=0.5)
             ax.add_artist(cir)
 
     def get_centres(self):
@@ -1709,26 +1672,44 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def get_clf(self, *args, **kws):
         from sklearn.cluster import MeanShift
 
-        # minimal distance between stars distance
-        return MeanShift(**{**kws, **dict(bandwidth=self.min_dist() / 2,
-                                          cluster_all=False)})
+        # choose bandwidth based on minimal distance between stars
+        return MeanShift(**{**kws,
+                            **dict(bandwidth=self.min_dist / 2,
+                                   cluster_all=False)})
 
-    def cluster_id(self, clustering):
+    def cluster_points(self, clf):
         # clustering to cross-identify stars
-        # assert len(self.params)
+        assert len(self.params)
 
-        logger.info('Identifying stars')
-        self.n_stars, self.n_noise = cluster_id_stars(clustering, self.xyt)
+        X = np.vstack(self.xyt)
+        n = len(X)
+        # stars_per_image = list(map(len, xy))
+        # no_detection = np.equal(stars_per_image, 0)
+        # scaler = StandardScaler()
+        # X = scaler.fit_transform(np.vstack(xy))
+
+        self.logger.info('Clustering %i position measurements to cross identify'
+                         ' sources using:\n\t%s', n, indent(str(clf)))
+        clf.fit(X)
+        labels = clf.labels_
+        # core_samples_mask = (clf.labels_ != -1)
+        # core_sample_indices_, = np.where(core_samples_mask)
+
+        # Number of clusters in labels, ignoring noise if present.
+        self.n_stars = n_stars = len(set(labels)) - (1 if -1 in labels else 0)
+        self.n_noise = n_noise = list(labels).count(-1)
+        # n_per_label = np.bincount(db.labels_[core_sample_indices_])
+        logger.info('Identified %i stars using %i/%i points (%i noise)',
+                    n_stars, n - n_noise, n, n_noise)
 
         # sanity check
-        # n_stars_most = np.vectorize(len, (int,))(xy).max()
-        # if n_stars_most < 2 * self.n_stars:
-        #     raise Exception('Looks like clustering produced too many clusters.'
-        #                     'Image with most detections has %i; clustering '
-        #                     'has %i clusters.' % (n_stars_most, self.n_stars))
-        #
+        n_stars_most = max(map(len, self.coms))
+        if n_stars_most < 2 * self.n_stars:
+            warnings.warn(f"Looks like we're overfitting clusters. Image with "
+                          f"most sources has {n_stars_most}, while clustering "
+                          f"produced {n_stars} clusters. Reduce bandwidth.")
 
-        self.labels = clustering.labels_
+        self.labels = clf.labels_
 
     # def check_labelled(self):
         # if not len(self):
@@ -1737,7 +1718,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # if self.labels is None:
         #     raise Exception('No clusters identified. Run '
-        #                     '`register_constellation` to fit clustering model '
+        #                     '`register` to fit clustering model '
         #                     'to the measured centre-of-mass points')
 
     def plot_clusters(self, show_bandwidth=True, **kws):
@@ -1752,7 +1733,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if self.labels is None:
             raise Exception(
-                'No clusters identified. Run `register_constellation` to fit '
+                'No clusters identified. Run `register` to fit '
                 'clustering model to the measured centre-of-mass points'
             )
 
@@ -1800,7 +1781,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         if self.labels is None:
-            self.register_constellation()
+            self.register()
 
         xy = self.xyt_block
 
@@ -1809,8 +1790,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
             compute_centres_offsets(xy, centre_distance_cut, f_detect_measure)
 
         # decide whether to accept new params! likelihood ratio test
-        lhr = self._lh_ratio(np.vstack(xy),
-                             np.vstack(xy - xy_offsets[:, None]))
+        lhr = self.lh_ratio(
+            np.vstack(xy),
+            np.vstack(xy - xy_offsets[:, None]))
         if lhr > 1:
             # some of the offsets may be masked. ignore those
             good = ~xy_offsets.mask.any(1)
@@ -1863,7 +1845,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         if self.labels is None:
-            self.register_constellation()
+            self.register()
 
         xyt = self.xyt
         params = self.params
@@ -1884,8 +1866,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.logger.info('Fitting successful %i / %i', i - len(failed), i)
 
         # likelihood ratio test
-        xyn = list(map(trans.affine, self.coms, params, self.rscale))
-        lhr = self._lh_ratio(np.vstack(xyt), np.vstack(xyn))
+        xyn = list(map(transform.affine, self.coms, params, self.rscale))
+        lhr = self.lh_ratio(np.vstack(self.xyt), np.vstack(xyn))
         better = (lhr > 1)
         # decide whether to accept new params!
         if better:
@@ -1900,17 +1882,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
                           self._colour_sequence_cache)
         return params, lhr
 
-    def _lh_ratio(self, xy0, xy1):
-        # likelihood ratio
-        ratio = np.exp(self.model.gmm.llh((), xy0) -
-                       self.model.gmm.llh((), xy1))
-        self.logger.info('Likelihood ratio: %.5f', ratio)
-
-        # decide whether to accept new params!
-        if ratio > 1:
-            self.logger.info('Accepting new parameters.')
-        else:
-            self.logger.info('Keeping same parameters.')
+    def lh_ratio(self, xy0, xy1):
+        ratio = self.model.lh_ratio(xy0, xy1)
+        self.logger.info(
+            'Likelihood ratio: %.5f\n\t' +
+            ('Keeping same', 'Accepting new')[ratio > 1] +
+            ' parameters.', ratio
+        )
         return ratio
 
     def reset(self):
@@ -2019,7 +1997,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         sidx = self.source_indices
         grid, pixels = self._stack_pixels(image_func=relabel)
 
-        xn, yn = np.ceil(grid.ptp(0) / self.rscale[self.idx]).astype(int)
+        xn, yn = np.ceil(grid.ptp(0) / self.rscale[self.primary]).astype(int)
         x0, y0 = grid.min(0)
         x1, y1 = grid.max(0)
         bins = np.ogrid[x0:x1:xn * 1j], np.ogrid[y0:y1:yn * 1j]
@@ -2053,7 +2031,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # effective when the fields have roughly the same rotation.
 
         # get coords.
-        xyr = trans.rigid(xy, (0, 0, rotation))
+        xyr = transform.rigid(xy, (0, 0, rotation))
         # create search grid.
 
         trials = (self.xy[None] - xyr[:, None]).reshape(-1, 2)
@@ -2108,7 +2086,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # ax.plot(*roto_translate(xy, pGs).T, 'r*')
 
             im, peak = self.model.gmm.plot(show_peak=False)
-            im.ax.plot(*trans.rigid(xy, pGs).T, 'rx')
+            im.ax.plot(*transform.rigid(xy, pGs).T, 'rx')
 
             extent = np.c_[g[:2, 0, 0], g[:2, -1, -1]].ravel()
             im = ImageDisplay(r.T, extent=extent)
@@ -2164,7 +2142,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             p = self.params[i]
             seg = self.detections[i].dilate(2, copy=True)
             for sub, g in seg.coslice(image, np.indices(image), flatten=True):
-                g = trans.rigid(g.reshape(-1, 2) * r, p)
+                g = transform.rigid(g.reshape(-1, 2) * r, p)
                 grid.extend(g)
                 pixels.extend(sub.ravel())
 
