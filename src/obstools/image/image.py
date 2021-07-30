@@ -17,11 +17,13 @@ from pyxides.vectorize import Vectorized, AttrVectorizer
 
 # local libs
 from scrawl.imagine import ImageDisplay
+from recipes import caches
 from recipes.oo import SelfAware
 from recipes.misc import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
 # relative libs
+from .. import cachePaths
 from .segmentation.detect import SourceDetectionMixin
 
 
@@ -113,7 +115,7 @@ class Image(SelfAware):
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape,
                                                **frame_kws)
             ax.add_patch(frame)
-        
+
         return self.art
 
     # @lazyproperty
@@ -215,6 +217,15 @@ class TransformedImage(Image):
         return art
 
 
+class ImageCache(caches.Cached):
+    def get_key(self, hdu, *args, **kws):
+        # Cache on the hdu filename
+        if hdu.file:
+            # not NULL --> file on drive
+            return super().get_key(str(hdu.file), *args, **kws)
+        return caches.Ignore(silent=True)
+
+
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
@@ -224,6 +235,13 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     # @doc.inherit('Parameters')
 
     # _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
+
+    @classmethod
+    @ImageCache(cachePaths.skyimage)
+    def from_hdu(cls, hdu, sample_stat='median', depth=10, **kws):
+        image = hdu.get_sample_image(sample_stat, depth)
+        # assert isinstance(hdu, HDUExtra)
+        return cls.from_image(image, hdu.fov, angle=hdu.pa, **kws)
 
     @classmethod
     def from_image(cls, image, fov=None, scale=None, **kws):

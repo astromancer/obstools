@@ -10,7 +10,7 @@ from astropy.utils import lazyproperty
 # local libs
 from recipes.logging import LoggingMixin
 from recipes import caches
-from .. import cachePaths as cached
+from .. import cachePaths
 
 
 class BootstrapResample(LoggingMixin):
@@ -110,11 +110,9 @@ class BootstrapResample(LoggingMixin):
 #         BootstrapResample.__init__(self, None, sample_size, subset, axis)
 
 
-class SampleCache(caches.to_file):
-
-    def get_key(self, *args, **kws):
+class SampleCache(caches.Cached):
+    def get_key(self, hdu, *args, **kws):
         # Cache on the hdu filename
-        hdu, *args = args
         if hdu.file:
             # not NULL --> file on drive
             return super().get_key(str(hdu.file), *args, **kws)
@@ -154,7 +152,7 @@ class ImageSamplerMixin:
 
         return BootstrapResample(data)
 
-    @SampleCache(cached.samples)
+    @SampleCache(cachePaths.samples)
     def get_sample_image(self, stat='median', min_depth=5):
         """
         Get sample image to a certain minimum simulated exposure depth by
