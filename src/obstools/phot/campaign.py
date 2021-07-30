@@ -38,6 +38,7 @@ from recipes.string.brackets import braces
 # relative libs
 from ..image.sample import ImageSamplerMixin
 from ..image.calibration import ImageCalibratorMixin
+from ..image.registration import ImageRegister, ImageRegisterDSS
 
 
 # translation for special "[22:34]" type file globbing
@@ -449,39 +450,39 @@ class PhotCampaign(PPrintContainer,
 
         return self.__class__(np.hstack((self.data, other.data)))
 
-    def coalign(self, depth=10, sample_stat='median', plot=False, **find_kws):
+    def coalign(self, sample_stat='median', depth=10, plot=False, **find_kws):
         """
-        Perform image alignment of all stacks in this PhotCampaign by
-        the method of point set registration.  This is essentially a search
-        heuristic that finds the positional and rotational offset between
-        partially or fully overlapping images.  The implementation of the
-        image registration algorithm is handled inside the
+        Perform image alignment internally for sample images from all stacks in
+        this campaign by the method of point set registration.  This is
+        essentially a search heuristic that finds the positional and rotational
+        offset between partially or fully overlapping images.  The
+        implementation of the image registration algorithm is handled inside the
         :class:`ImageRegister` class.
 
         See: https://en.wikipedia.org/wiki/Image_registration for the basics
 
         Parameters
         ----------
-        depth: float
-            Exposure depth (in seconds) for the sample image
-        sample_stat: str
-            statistic to use when retrieving sample images
-        reference_index: int
-            index of observation to use as reference for aligning others.
-            If `None`, the highest resolution image amongst the
-            observations will be used.
+        depth : float
+            Simulated exposure depth (in seconds) of sample images drawn from
+            each of the image stacks in the run. This determined how many images
+            from the stack will be used to create the sample image.
+        sample_stat : str or callable, default='median'
+            The statistic that will be used to compute the sample image from the
+            stack of sample images drawn from the original stack.
+        find_kws : dict
+            Keywords for object detection algorithm.
         plot: bool
             Whether to plot diagnostic figures
 
-        find_kws
 
         Returns
         -------
 
         """
         # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope', # 'date', # 'camera',
-                                         return_index=True)
+        groups, indices = self.group_by('telescope',  # 'date', # 'camera',
+                                        return_index=True)
 
         # start with the group having the most observations.  This will help
         # later when we need to align the different groups with each other
@@ -494,7 +495,7 @@ class PhotCampaign(PPrintContainer,
         # For each telescope, align images wrt each other
         for i in order:
             run = groups[keys[i]]
-            registers[i] = run._coalign(depth, sample_stat, plot=plot,
+            registers[i] = run._coalign(sample_stat, depth, plot=plot,
                                         **find_kws)
 
         # return registers, order
@@ -505,11 +506,11 @@ class PhotCampaign(PPrintContainer,
             reg = registers[i]
 
             imr.match_reg(reg)
-            imr.register_constellation()
+            imr.register()
 
         # refine alignment
         count = 0
-        lhr = 10 # likelihood ratio for gmm model before and and after refine
+        lhr = 10  # likelihood ratio for gmm model before and and after refine
         while (lhr > 1.01) and (count < 5):
             _, lhr = imr.refine()
             imr.recentre()
@@ -523,19 +524,18 @@ class PhotCampaign(PPrintContainer,
 
         return imr
 
-    def _coalign(self, depth=10, sample_stat='median', reference_index=None,
+    def _coalign(self, sample_stat='median', depth=10, reference_index=None,
                  plot=False, **find_kws):
 
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
-        from obstools.image.registration import ImageRegister
-
         # get sample images etc
-        images = self.calls('get_sample_image', sample_stat, depth)
+        images = self.calls.get_sample_image(sample_stat, depth)
         fovs, angles = zip(*self.attrs('fov', 'pa'))
         #
-        matcher = ImageRegister.from_images(images, fovs, **find_kws)
+        matcher = ImageRegister.from_images(images, fovs, ridx=reference_index,
+                                            **find_kws)
 
         if plot:
             matcher.mosaic(coords=matcher.xyt)
@@ -544,89 +544,72 @@ class PhotCampaign(PPrintContainer,
 
         # make sure we have the best possible alignment amongst sample images.
         # register constellation of stars
-        matcher.register_constellation(plot=plot)
-        # for i in range(3):
+        matcher.register(plot=plot)
         matcher.refine(plot=plot)
         matcher.recentre(plot=plot)
         return matcher
 
-    # TODO: coalign_survey
-    def coalign_dss(self, depth=10, sample_stat='median', reference_index=0,
-                    fov=None, plot=False, **find_kws):
+    @doc.splice(coalign, 'Parameters')
+    def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
+                       sample_stat='median', depth=10, reference_index=0,
+                       plot=False, **find_kws):
         """
-        Perform image alignment of all images in this campaign with
-        Digital Sky Survey image centred on the same field.  In astro-speak,
-        this is a first order wcs / astrometry estimation fitting only for 3
-        parfameters per frame: xy-offsets and rotation.
+        Align all the image stacks in this campaign with a survey image centred
+        on the same field. In astronomical parlance, this is a first order wcs /
+        astrometry estimation fitting only for 3 parameters per frame: 
+            xy-offset : The offset in pixels of the source position wrt to the
+                coordinates given in the header
+            theta : The rotation (in radians) of the image wrt equatorial
+                coordinates.
 
         Parameters
         ----------
-        depth
-        sample_stat
-        reference_index: int
-        fov: float or 2-tuple
-            Field of view for DSS image
-        find_kws
+        reference_index : int, default 0
+            The index of the image that will be used as the reference image for
+            the alignment. If `None`, the highest resolution image amongst the
+            observations will be used.
+        fov : float or array-like of size 2 or None
+            Field of view of survey image in arcminutes. If not given, the
+            field size will be taken as the maximal extent of the aligned
+            images multiplied by the scaling factor `fov_stretch`.
+        fov_stretch : float
+            Scaling factor for automatically choosing the field of view size of
+            the survey image. This factor is multiplied by the maximal extent of
+            the (partially overlapping) aligned images to get the field of view
+            size of the survey image.
+
 
         Returns
         -------
         `ImageRegisterDSS` object
 
         """
-        from obstools.image.registration import ImageRegisterDSS
 
-        reg = self.coalign(depth, sample_stat, plot, **find_kws)
+        # coalign images with each other
+        reg = self.coalign(sample_stat, depth, plot, **find_kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
         if fov is None:
-            fov = np.ceil(np.max(reg.fovs, 0)) * 1.1
+            fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
+
+        survey = survey.lower()
+        if survey != 'dss':
+            raise NotImplementedError('Only support for DSS image lookup atm.')
 
         dss = ImageRegisterDSS(self[reference_index].coords, fov, **find_kws)
         dss.match_reg(reg)
-        dss.register_constellation()
+        dss.register()
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
+
+        # self._build_wcs(dss)
         return dss
 
-        # group observations by telescope / instrument
-        # groups, indices = self.group_by('telescope', 'instrument',
-        #                                 return_index=True)
-
-        # start with the group having the most observations
-
-        # create data containers
-        # n = len(self)
-        # images = np.empty(n, 'O')
-        # params = np.empty((n, 3))
-        # fovs = np.empty((n, 2))
-        # coords = np.empty(n, 'O')
-        # ng = len(groups)
-        # aligned_on = np.empty(ng, int)
-        # matchers = np.empty(ng, 'O')
-
-        # # For each image group, align images wrt each other
-        # # ensure that `params`, `fovs` etc maintains the same order as `self`
-        # for i, (gid, run) in enumerate(groups.items()):
-        #     idx = indices[gid]
-        #     m = matchers[i] = run.coalign(depth, sample_stat, plot=plot,
-        #                                **find_kws)
-
-        #     aligned_on[i] = idx[m.idx]
-
-        # try:
-
-        #     #
-        #     dss = ImageRegisterDSS(self[reference_index].coords, fov_dss,
-        #                             **find_kws)
-
-        #     for i, gid in enumerate(groups.keys()):
-        #         mo = matchers[i]
-        #         theta = self[aligned_on[i]].get_rotation()
-        #         p = dss.match_points(mo.yx, mo.fov, theta)
-        #         params[indices[gid]] += p
-        # except:
-        #     from IPython import embed
-        #     embed()
+    def coalign_dss(self, fov=None, fov_stretch=1.2,
+                    sample_stat='median', depth=10, reference_index=0,
+                    plot=False, **find_kws):
+        return self.coalign_survey('dss', fov, fov_stretch, sample_stat, depth,
+                                   reference_index, plot, **find_kws)
 
         return dss
 
