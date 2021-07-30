@@ -164,7 +164,8 @@ class MosaicPlotter(ImageContainer):
     # def __call__()
 
     def mosaic(self, names=(), params=(),
-               cmap=None, cmap_ref=default_cmap_ref, alpha=None, alpha_ref=1,
+               cmap=None, cmap_ref=default_cmap_ref,
+               alpha=None, alpha_ref=1,
                **kws):
         """Create a mosaiced image"""
 
@@ -371,14 +372,14 @@ class MosaicPlotter(ImageContainer):
         if self.image_label:
             self.image_label.set_visible(self._idx_active != len(self.art))
 
-        for i, artists in enumerate(self.art.values()):
-            for j, art in enumerate(artists):
-                art.set_alpha(alphas[i])
+        for i, image in enumerate(self):
+            for name, artist in image.art.items():
+                artist.set_alpha(alphas[i])
                 if i == self._idx_active:
-                    art.set_zorder(-(i == -1))
+                    artist.set_zorder(1)
                 else:
                     # set image z-order 0, frame z-order 1
-                    art.set_zorder(j)
+                    artist.set_zorder(name == 'frame')
 
     def _scroll(self, event):
         """
@@ -394,17 +395,15 @@ class MosaicPlotter(ImageContainer):
             return
 
         # set alphas
-        n = len(self)
         self._idx_active += [-1, +1][event.button == 'up']  #
-        self._idx_active %= (n + 1)  # wrap
+        self._idx_active %= len(self)   # wrap
 
         #
         i = self._idx_active
         image = self[i]
         if self.image_label is None:
-            self.image_label = image.label_image()
+            self.image_label = image.label_image(self.ax)
 
-        i = i % n
         self.image_label.set_text(f'{i}: {self.names[i]}')
         xy = ulc(self.params[i], 0.98 * self.fovs[i])
         self.image_label.set_position(xy)
@@ -429,12 +428,9 @@ class MosaicPlotter(ImageContainer):
             self._scroll(event)
 
         except Exception as err:
-            import traceback
-
-            print('Scroll failed:')
-            traceback.print_exc()
-            print('len(self)', len(self))
-            print('self._idx_active', self._idx_active)
+            self.logger.exception(
+                f'Scroll failed: {len(self)=} {self._idx_active=}'
+                )
 
             self.image_label = None
             self.fig.canvas.draw()
