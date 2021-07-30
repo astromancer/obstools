@@ -1734,31 +1734,37 @@ class SegmentedImage(SegmentationImage,     # base
 
     # --------------------------------------------------------------------------
 
-    def relabel_many(self, old_labels, new_labels):
+    def relabel_many(self, *label_sets):
         """
         Reassign multiple labels
 
         Parameters
         ----------
-        old_labels
+        [old_labels]
         new_labels
 
         Returns
         -------
 
         """
-        old_labels = self.resolve_labels(old_labels)
+        assert len(label_sets) in (1, 2)
+        *old, new = label_sets
+        old, = old or (None, )
+        if isinstance(new, dict):
+            old, new = zip(*new.items())
+            
+        old = self.resolve_labels(old)
 
-        if len(old_labels) != len(new_labels):
+        if len(old) != len(new):
             raise ValueError('Unequal number of labels')
 
         # catch for empty label vectors
-        if old_labels.size == 0:
+        if old.size == 0:
             return
 
         # there may be labels missing
         forward_map = np.arange(self.max_label + 1)
-        forward_map[old_labels] = new_labels
+        forward_map[old] = new
         self.data = forward_map[self.data]
 
     def dilate(self, iterations=1, connectivity=4, labels=None, mask=None,
