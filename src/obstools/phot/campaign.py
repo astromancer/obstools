@@ -20,10 +20,10 @@ import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
-from pyxides.typing import OfType
-from pyxides.getitem import ItemGetter
+from pyxides.typing import ListOf
+from pyxides.getitem import IndexerMixin
 from pyxides.grouping import Groups, AttrGrouper
-from pyxides.vectorize import Vectorize, AttrVector
+from pyxides.vectorize import Vectorized, AttrVectorizer
 from pyxides.pprint import PrettyPrinter, PPrintContainer
 
 # local libs
@@ -86,9 +86,10 @@ class FilenameHelper:
     @property
     def stem(self):
         return str(self._path.stem)
+    
 
 
-class FileList(UserList, Vectorize):  # ListOf(FilenameHelper)
+class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
     """
     Helper class for working with lists of filenames
     """
@@ -98,7 +99,7 @@ class FileList(UserList, Vectorize):  # ListOf(FilenameHelper)
         kls = campaign._allowed_types[0]._FilenameHelperClass
         for name, _ in inspect.getmembers(kls, is_property):
             # print('creating property', name)
-            setattr(cls, f'{name}s', AttrVector(name))
+            setattr(cls, f'{name}s', AttrVectorizer(name))
 
         return obj
 
@@ -174,7 +175,7 @@ class HDUExtra(PrimaryHDU, ImageSamplerMixin, ImageCalibratorMixin,
 #     pass
 
 
-class ItemGlobber(ItemGetter):
+class GlobIndexing(IndexerMixin):
     """
     Mixin that allows retrieving items from the campaign by indexing with
     filename(s) or glob expressions
@@ -246,17 +247,16 @@ class ItemGlobber(ItemGetter):
         return super().__getitem__(key)
 
 
-# 
-class CampaignType(SelfAware, OfType):
+#
+class CampaignType(SelfAware, ListOf):
     """metaclass to avoid conflicts"""
 
 
 class PhotCampaign(PPrintContainer,
-                   ItemGlobber,
-                   UserList,
+                   GlobIndexing,     # needs to be before `UserList` in mro
                    CampaignType(_BaseHDU),
                    AttrGrouper,
-                   Vectorize,
+                   Vectorized,
                    LoggingMixin):
     """
     A class containing multiple CCD observations potentially from different
@@ -291,7 +291,7 @@ class PhotCampaign(PPrintContainer,
                            item_str=op.attrgetter('file.name'))
 
     # Initialize pprint helper
-    table = AttrTable(
+    tabulate = AttrTable(
         ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
 
     #
@@ -431,7 +431,7 @@ class PhotCampaign(PPrintContainer,
         return FileList(self)
 
     def pformat(self, attrs=None, **kws):
-        return self.table(self, attrs, **kws)
+        return self.tabulate(self, attrs, **kws)
 
     def pprint(self, attrs=None, **kws):
         print(self.pformat(attrs, **kws))
