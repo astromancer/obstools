@@ -92,7 +92,7 @@ class Image(SelfAware):
         """
         Display the image in the axes
         """
-
+        
         # logger.debug(f'{corners=}')
         im = ImageDisplay(self.data, ax=ax,
                           **{**dict(hist=False,
@@ -325,29 +325,24 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             )
 
         # add segmentation contours
+        transform = self.transform + ax.transData
         if regions:
             regions = regions if isinstance(regions, dict) else {}
             regions.setdefault('alpha', kws.get('alpha'))
-            self.draw_segments(ax, labels, **regions)
-
-        return art
-
-    def draw_segments(self, ax, labels=True, **kws):
-        transform = self.transform + ax.transData
-        self.art.seg = self.seg.draw_contours(ax, transform=transform, **kws)
+            art.seg = self.seg.draw_contours(
+                ax, transform=transform, **kws)
 
         if labels:
-            self.art.texts = self.seg.draw_labels(
+            art.texts = self.seg.draw_labels(
                 ax, **{**dict(size=8,
                               color='w',
                               weight='heavy',
                               transform=transform),
                        **(labels if isinstance(labels, dict) else {})}
             )
-        return self.art.seg, self.art.texts
+        return art
 
     def label_image(self, ax, name='', **kws):
-        #
         return ax.text(*self.corners[-1], name,
                        rotation=np.degrees(self.angle),
                        rotation_mode='anchor',
