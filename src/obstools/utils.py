@@ -167,7 +167,7 @@ def resolver(name):
         # check if the name is bad - something like "FLAT" or "BIAS", we want
         # to cache these bad values also to avoid multiple sesame queries for
         # bad values like these
-        if str(err).startswith("Unable to find coordinates for name"):
+        if str(err).startswith('Unable to find coordinates for name'):
             return None
 
         # If we are here, it probably means there is something wrong with the
@@ -182,8 +182,7 @@ def convert_skycoords(ra, dec):
         try:
             return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
         except ValueError:
-            logger.warning(
-                'Could not interpret coordinates: %s; %s' % (ra, dec))
+            logger.warning('Could not interpret coordinates: %s; %s', ra, dec)
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):
@@ -276,10 +275,10 @@ def _get_skymapper(url):
 
 
 # @timer
-@caches.to_file(cached.dss)  # memoize for performance
+@caches.to_file(cached.dss, typed={'size': tuple})  # memoize for performance
 def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     """
-    Grab a image from STScI server and load as HDUList. 
+    Grab a image from STScI server and load as HDUList.
     See [survey description]_.
 
     Parameters
@@ -308,7 +307,7 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
                      'poss2ukstu_ir',
                      'quickv'
                      )  # TODO: module scope ?
-    if not server in known_servers:
+    if server not in known_servers:
         raise ValueError('Unknown server: %s.  Please select from: %s'
                          % (server, str(known_servers)))
 
@@ -325,7 +324,8 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
              e=f'J{epoch}',
              h=h, w=w,
              f='fits',
-             c='none')).encode()
+             c='none')
+        ).encode()
 
     # submit the form
     with urllib.request.urlopen(url, params) as html:

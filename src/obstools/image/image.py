@@ -23,7 +23,7 @@ from recipes.misc import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
 # relative libs
-from .. import cachePaths
+from .. import cachePaths, _hdu_hasher
 from .segmentation.detect import SourceDetectionMixin
 
 
@@ -92,7 +92,7 @@ class Image(SelfAware):
         """
         Display the image in the axes
         """
-        
+
         # logger.debug(f'{corners=}')
         im = ImageDisplay(self.data, ax=ax,
                           **{**dict(hist=False,
@@ -217,14 +217,6 @@ class TransformedImage(Image):
         return art
 
 
-class ImageCache(caches.Cached):
-    def get_key(self, hdu, *args, **kws):
-        # Cache on the hdu filename
-        if hdu.file:
-            # not NULL --> file on drive
-            return super().get_key(str(hdu.file), *args, **kws)
-        return caches.Ignore(silent=True)
-
 
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
@@ -237,7 +229,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     # _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
 
     @classmethod
-    @ImageCache(cachePaths.skyimage)
+    @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
     def from_hdu(cls, hdu, sample_stat='median', depth=10, **kws):
         image = hdu.get_sample_image(sample_stat, depth)
         # assert isinstance(hdu, HDUExtra)
@@ -268,7 +260,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             If both `fov` and `scale` are None
         """
 
-        if (fov is scale is None):
+        if fov is scale is None:
             raise ValueError('Either field-of-view, or pixel scale must be '
                              'given and not be `None`')
 
@@ -329,8 +321,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         if regions:
             regions = regions if isinstance(regions, dict) else {}
             regions.setdefault('alpha', kws.get('alpha'))
-            art.seg = self.seg.draw_contours(
-                ax, transform=transform, **kws)
+            art.seg = self.seg.draw_contours(ax, transform=transform, **kws)
 
         if labels:
             art.texts = self.seg.draw_labels(
