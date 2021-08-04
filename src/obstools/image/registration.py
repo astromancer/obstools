@@ -1486,12 +1486,47 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return group_features(self.labels, self.xyt)[0]
 
     @property
-    def source_indices(self):
+    def labels_per_image(self):
         if self.labels is None:
-            raise Exception('Unregistered')
+            raise Exception('Unregistered!')
 
         # group_features(self.labels, self.labels)[0]
         return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
+
+    def remap_labels(self, target, flux_sort=True):
+        """
+        Re-order the *cluster* labels so that our target is 0, the rest follow
+        in descending order of brightness first listing those that occur within 
+        our science images, then those in the survey image.
+        """
+        
+        # get cluster labels bright to faint
+        counts, = group_features(self.labels, self.attrs.counts)
+
+        # get the labels of stars that are detected in at least one of the
+        # science frames
+        detected = ~counts[1:].mask
+        nb, = np.where(detected.any(0))
+        old = [target, *np.setdiff1d(nb, target)]
+        old += [*np.setdiff1d(np.where(detected.all(0)), nb)]
+
+        if flux_sort:
+            # measure relative brightness (scale by one of the frames, to account for
+            # gain differences between instrumental setups)
+            bright2faint = list(np.ma.median(
+                counts / counts[:, [old[0]]], 0).argsort()[::-1])
+            list(map(bright2faint.remove, old))
+            old += bright2faint
+        return np.argsort(old) # these are the new labels!
+
+    def relabel_segs(self, flux_sort=True):
+        # desired new cluster labels
+        new_labels = self.remap_labels(flux_sort)
+        
+        # relabel all segmentedImages for cross image consistency
+        for cluster_labels, image in zip(self.labels_per_image, self):
+            # we want non-zero labels for SegmentedImage
+            image.seg.relabel_many(new_labels[cluster_labels] + 1)
 
     @lazyproperty
     def model(self):
@@ -1636,10 +1671,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def register(self, clf=None, plot=False):
         # TODO: rename register / cluster
         # clustering + relative position measurement
-        clf = clf or self.get_clf()
+        clf = clf or self.clustering
         self.cluster_points(clf)
         # make the cluster centres the target constellation
         self.xy = self.xyt_block.mean(0)
+
+        # relabel segmentation images for identified stars
+        # self.relabel_segs()
 
         if plot:
             #
@@ -1674,7 +1712,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         self.xy = self.get_centres()
 
-    def get_clf(self, *args, **kws):
+    @lazyproperty
+    def clustering(self, *args, **kws):
+        """
+        Classifier for clustering source coordinates in order to cross identify
+        stars.
+        """
         from sklearn.cluster import MeanShift
 
         # choose bandwidth based on minimal distance between stars
@@ -1682,9 +1725,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
                             **dict(bandwidth=self.min_dist / 2,
                                    cluster_all=False)})
 
-    def cluster_points(self, clf):
+    def cluster_points(self, clf=None):
+        """
+        Run clustering algorithm on the set of position measurements in order to 
+        cross identify stars.
+        """
         # clustering to cross-identify stars
-        assert len(self.params)
+        assert len(self) > 1
+
+        clf = clf or self.clustering
 
         X = np.vstack(self.xyt)
         n = len(X)
@@ -1752,7 +1801,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # bandwidth size indicator.
         # todo: get this to remain anchored lower left but scale with zoom..
         xy = self.xy.min(0)  # - bw * 0.6
-        cir = Circle(xy, self.get_clf().bandwidth, alpha=0.5)
+        cir = Circle(xy, self.clustering.bandwidth, alpha=0.5)
         ax.add_artist(cir)
 
         # TODO: plot position error ellipses
@@ -2269,30 +2318,23 @@ class ImageRegisterDSS(ImageRegister):
         # FOV
 
         # save target coordinate position
-        self.targetCoords = coords
-        self.targetCoordsPix = np.divide(self.image.shape, 2) + 0.5
+        self.target_coords_world = coords
+        self.target_coords_pixels = np.divide(self.image.shape, 2) + 0.5
+
+    def remap_labels(self, flux_sort=True):
+        target, = self.clustering.predict([self.target_coords_pixels])
+        return super().remap_labels(target, flux_sort)
 
     def mosaic(self, axes=None, names=(), **kws):
 
         header = self.hdu[0].header
         name = ' '.join(filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
-        names = (name, )
 
+        # use aplpy to setup figure
         ff = apl.FITSFigure(self.hdu)
 
-        mos = MosaicPlotter.from_register(self, axes, 'pixels')
-        # params are in units of pixels convert to units of `fov` (arcminutes)
-        # params = self.params
-        # params[:, :2] *= self.pixel_scale
-        mos.mosaic(self.params, names,  **kws)
-
-        if number_sources:
-            off = -4 * self.scales.min(0)
-            mos.mark_sources(self.xy,
-                             marker=None,
-                             xy_offset=off)
-
-        return mos
+        # rescale images to DSS pixel scale
+        return super().mosaic(ff.ax, [name], 'pixels', **kws)
 
         # for art, frame in mos.art
 
@@ -2347,8 +2389,7 @@ class ImageRegisterDSS(ImageRegister):
         cram = crpixDSS / self.pixel_scale  # convert to arcmin
         rot = rotation_matrix(-theta)
         crpixSHOC = (rot @ (cram - yxoff)) / pxscl
-        # target coordinates in degrees
-        xtrg = self.targetCoords
+
         # coordinate increment
         cdelt = pxscl / 60  # in degrees
         flip = np.array(hdu.flip_state[::-1], bool)
@@ -2362,7 +2403,8 @@ class ImageRegisterDSS(ImageRegister):
         w.wcs.crpix = crpixSHOC
         # coordinate increment at reference point
         w.wcs.cdelt = cdelt
-        # coordinate value at reference point
+        # target coordinate in degrees reference point
+        xtrg = self.target_coords_world
         w.wcs.crval = xtrg.ra.value, xtrg.dec.value
         # rotation from stated coordinate type.
         w.wcs.crota = np.degrees([-theta, -theta])
