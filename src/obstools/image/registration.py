@@ -20,6 +20,7 @@ import warnings
 import functools as ftl
 import itertools as itt
 import multiprocessing as mp
+from collections import abc
 
 # third-party libs
 import numpy as np
@@ -49,6 +50,7 @@ from . import transforms as transform
 from .segmentation import SegmentedImage
 from .image import SkyImage, ImageContainer
 from ..modelling import Model
+from ..phot.campaign import HDUExtra
 from ..stats import geometric_median
 from ..utils import get_coordinates, get_dss, STScIServerError
 
@@ -63,12 +65,8 @@ logger = get_module_logger()
 logging.basicConfig()
 logger.setLevel(logging.INFO)
 
-
+#
 TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
-
-
-def qualname(kls):
-    return f'{kls.__module__}.{kls.__name__}'
 
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
@@ -102,7 +100,7 @@ def interpolate_nn(a, where):
     return a
 
 
-# def match_pixels(self, image, fov, p0):
+# def fit_pixels(self, image, fov, p0):
 #     """Match pixels directly"""
 #     sy, sx = self.data.shape
 #     dx, dy = self.fov
@@ -206,7 +204,8 @@ class MultiGauss(Model):
                                  title=self.__class__.__name__,
                                  chead='x y σₓ σᵥ A'.split(),
                                  # unicode subscript y doesn't exist!!
-                                 minimalist=True)
+                                 minimalist=True,
+                                 **kws)
         return str(tbl)
 
     @property
@@ -432,23 +431,23 @@ class GaussianMixtureModel(MultiGauss):
 #     therefore don't need to fit for the scale parameters.
 #     """
 
-#     _fit_rotation = True  # default
+#     _fit_angle = True  # default
 
 #     @property
 #     def dof(self):
-#         return 2 + self._fit_rotation
+#         return 2 + self._fit_angle
 
 #     @property
-#     def fit_rotation(self):
-#         return self._fit_rotation
+#     def fit_angle(self):
+#         return self._fit_angle
 
-#     @fit_rotation.setter
-#     def fit_rotation(self, tf):
-#         self._fit_rotation = tf
+#     @fit_angle.setter
+#     def fit_angle(self, tf):
+#         self._fit_angle = tf
 
 #     @property
 #     def transform(self):
-#         return transforms.rigid if self._fit_rotation else np.add
+#         return transforms.rigid if self._fit_angle else np.add
 
 #     def eval(self, p, xy, stddev=None):
 #         return super().eval((), self.transform(xy, p))
@@ -473,23 +472,23 @@ class CoherentPointDrift(Model):
     # FIXME: this should be a GMM subclass. Need to tweak some of the `Model`
     # features to get that to work
 
-    _fit_rotation = True  # default
+    _fit_angle = True  # default
 
     @property
     def dof(self):
-        return 2 + self._fit_rotation
+        return 2 + self._fit_angle
 
     @property
-    def fit_rotation(self):
-        return self._fit_rotation
+    def fit_angle(self):
+        return self._fit_angle
 
-    @fit_rotation.setter
-    def fit_rotation(self, tf):
-        self._fit_rotation = tf
+    @fit_angle.setter
+    def fit_angle(self, tf):
+        self._fit_angle = tf
 
     @property
     def transform(self):
-        return transform.rigid if self._fit_rotation else np.add
+        return transform.rigid if self._fit_angle else np.add
 
     def __init__(self, xy, sigmas, weights=None):
         self.gmm = GaussianMixtureModel(xy, sigmas, weights)
@@ -575,10 +574,10 @@ def dist_flat(coo):
 
 
 # @timer
+
+
 def gridsearch_mp(objective, grid, args=(), **kws):
     # grid search
-
-    from joblib import Parallel, delayed
 
     # f = ftl.partial(objective, *args, **kws)
     ndim, *rshape = grid.shape
@@ -646,7 +645,7 @@ def gridsearch_alt(func, args, grid, axes=..., output=None):
 #     return ur, uc
 
 
-# def match_cube(self, filename, object_name=None, coords=None):
+# def fit_cube(self, filename, object_name=None, coords=None):
 #     from .core import shocObs
 #
 #     cube = shocObs.load(filename, mode='update')  # ff = FitsCube(fitsfile)
@@ -946,10 +945,11 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     use_stars = f_det > detect_freq_min
     i_use, = np.where(use_stars)
     if not len(i_use):
-        raise Exception('Detected frequently for all sources appears to '
-                        'be too low. There are %i objects across %i images.'
-                        ' Their detection frequencies are: %s' %
-                        (n_stars, n, f_det))
+        raise Exception(
+            'Detected frequently for all sources appears to be too low. There '
+            'are {n_stars} objects across {n} images. Their detection '
+            'frequencies are: {fdet}.'
+        )
 
     if np.any(~use_stars):
         logger.info('Ignoring %i / %i stars with low (<=%.0f%%) detection '
@@ -1130,7 +1130,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     from recipes import pprint
     from motley.table import Table
     from motley.utils import ConditionalFormatter
-    from obstools.stats import mad
+    # from obstools.stats import mad
     # TODO: probably mask nans....
 
     #
@@ -1148,8 +1148,8 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
             logger.info(f'No stars detected in frames: {no_detection!s}')
 
         if n_noise:
-            extra = f'\nn_noise = {n_noise}/{n_points_tot} ' \
-                f'({n_noise / n_points_tot :.1%})'
+            extra = (f'\nn_noise = {n_noise}/{n_points_tot} '
+                     f'({n_noise / n_points_tot :.1%})')
     else:
         points_per_star = np.tile(n_points, n_stars)
         extra = ''
@@ -1200,24 +1200,26 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     # tbl = np.ma.column_stack(columns)
     tbl = Table.from_columns(*columns,
-                             title='Measured star locations',
-                             title_props=TABLE_STYLE,
-                             units=['px', 'px', ''],
-                             col_head=col_headers,
-                             col_head_props=TABLE_STYLE,
-                             col_head_align='^',
-                             precision=3,
-                             align='r',
-                             row_nrs=True,
-                             totals=[-1],
-                             formatters=formatters)
+                                title='Measured star locations',
+                                title_props=TABLE_STYLE,
+                                units=['pixels', 'pixels', ''],
+                                col_head=col_headers,
+                                col_head_props=TABLE_STYLE,
+                                col_head_align='^',
+                                precision=3,
+                                align='r',
+                                row_nrs=True,
+                                totals=[-1],
+                                formatters=formatters,
+                                max_rows=25)
 
     # fix formatting with percentage in total.
     # TODO Still need to think of a cleaner solution for this
     tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
     # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
 
-    logger.info('\n' + str(tbl) + extra)
+    logger.info('\n%s%s', tbl, extra)
+
     return tbl
 
 
@@ -1265,48 +1267,50 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: switch for units to arcminutes or whatever ??
     # TODO: uncertainty on center of mass from pixel noise!!!
 
-    @classmethod  # .            p0 -----------
-    def from_images(cls, images, fovs, angles=0, ridx=None, plot=False,
-                    fit_rotation=True, **find_kws):
+    # @classmethod
+    # def from_campaign(cls, run, sample_stat='median', depth=10, primary=None,
+    #                   plot=False, fit_angle=True, **find_kws):
+    #     # get sample images etc
+    #     # `from_hdu` is used since the sample image and source detection results
+    #     # are cached (persistantly), so this should be fast on repeated calls.
+    #     images = [SkyImage.from_hdu(hdu, sample_stat, depth, **find_kws)
+    #               for hdu in run]
 
-        n = len(images)
-        assert 0 < n == len(fovs)
+    #     return cls._from_images(images, primary=None,
+    #                             plot=False, fit_angle=True, **find_kws)
 
-        # align on highest res image if not specified
-        shapes = list(map(np.shape, images))
-        pixel_scales = np.divide(fovs, shapes)
-        if ridx is None:
-            ridx = pixel_scales.argmin(0)[0]
-        indices = np.delete(np.arange(n), ridx)
-        # if ridx:  # put this index first
-        #     indices[0], indices[ridx] = indices[ridx], indices[0]
+    # @classmethod                # p0 -----------
+    # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=False,
+    #                 fit_angle=True, **find_kws):
 
-        # message
-        cls.logger.info('Aligning %i images on image %i.', n, ridx)
+    #     # initialize workers
+    #     with Parallel(n_jobs=1) as parallel:
+    #         # detect sources
+    #         images = parallel(
+    #             delayed(SkyImage.from_image)(image, fov, **find_kws)
+    #             for image, fov in zip(images, fovs)
+    #         )
 
-        # initialize workers
-        parallel = Parallel(n_jobs=-1, verbose=50)
-        # detect sources
-        images = parallel(delayed(SkyImage.from_image)(image, fov)
-                          for image, fov in zip(images, fovs))
+    #     return cls._from_images(images, fovs, angles=0, primary=None,
+    #                             plot=False, fit_angle=True, **find_kws)
 
-        # initialize register
-        reg = cls(images, fit_rotation=fit_rotation, **find_kws)
-        reg.primary = ridx
+    # @classmethod                # p0 -----------
+    # def _from_images(cls, images, fovs, angles=0, primary=None, plot=False,
+    #                  fit_angle=True, **find_kws):
 
-        # do alignment
-        angles = np.ones(n) * angles
-        angles -= angles[ridx]
-        #
-        reg.data[:] = parallel(
-            delayed(reg.match_image)(image, rotation=angle, plot=plot)
-            for image, angle in zip(reg[indices], angles[indices]))
+    #     n = len(images)
+    #     assert 0 < n == len(fovs)
 
-        reg.register()
-        return reg
+    #     # message
+    #     cls.logger.info('Aligning %i images on image %i.', n, primary)
 
-    def __init__(self, images=(), fovs=(), params=(), fit_rotation=True,
-                 **find_kws):
+    #     # initialize and fit
+    #     return cls(images,
+    #                primary=primary,
+    #                fit_angle=fit_angle).fit(plot=plot)
+
+    def __init__(self, images=(), fovs=(), params=(), fit_angle=True,
+                 primary=None, **find_kws):
         """
         Initialize an image register. This class should generally be initialized
         without arguments. The model of the constellation of stars is built
@@ -1327,72 +1331,40 @@ class ImageRegister(ImageContainer, LoggingMixin):
         params:
         find_kws:
         """
+        # TODO: init from single image???
 
         if find_kws:
             self.find_kws.update(find_kws)
 
-        # TODO: init from single image???
-
         # init container
         ImageContainer.__init__(self, images, fovs)
-        self._params = []
 
-        # NOTE passing a reference index is only meaningful if the class is
-        #  initialized with a set of images
+        # NOTE passing a reference index `primary` is only meaningful if the
+        #  class is initialized with a set of images
         self._idx = 0
-        self.targetCoordsPix = None
+        if len(images) and (primary is None):
+            # align on highest res image if not specified
+            primary, *_ = self.scales.argmin(0)
+            self.primary = int(primary)
+
+        self.target_coords_pixels = None
         self.sigmas = None
         self._xy = None
         # keep track of minimal separation between sources
-        self._min_dist = np.inf
+        # self._min_dist = np.inf
 
-        self.fit_rotation = bool(fit_rotation)
+        self.fit_angle = bool(fit_angle)
         # self.grids = TransformedImageGrids(self)
         # self._sigma_guess = self.guess_sigma(self.xy)
 
-        # state variables
+        # state variable placeholders
         self.labels = self.n_stars = self.n_noise = None
         self._colour_sequence_cache = ()
 
-    def __call__(self, image, fov=None, rotation=0., refine=True, plot=False,
-                 **find_kws):
-        """
-        Run `match_image` and aggregate results. If this is the first time
-        calling this method, the reference image is set.
-
-        Parameters
-        ----------
-        image
-        fov
-        rotation
-        plot
-
-        Returns
-        -------
-        params : np.ndarray
-            Fitted transform parameters (Δx, Δy, θ); xy offsets in pixels,
-            rotation angle in radians.
-        """
-
-        image = self.match_image(image, fov, rotation, refine, plot)
-
-        # aggregate
-        self.append(image)
-
-        # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
-        # self.logger.debug('sigma guess: %s' % self._sigma_guess)
-
-        # update minimal source seperation
-        # self._min_dist = min(self._min_dist, dist_flat(xy).min())
-
-        # reset model.
-        del self.model
-
-        return image.params
-
     def __repr__(self):
         return (f'{super().__repr__()}; ' +
-                (f'{self.labels.max()} sources', 'unregistered')[self.labels is None])
+                ('unregistered' if self.labels is None
+                 else f'{self.labels.max()} sources'))
 
     @property
     def image(self):
@@ -1420,12 +1392,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def primary(self, idx):
         idx = int(idx)
         n = len(self)
+        # wrap index
         if idx < 0:
             idx += n
 
         if idx > n:
-            raise ValueError(f'Invalid index ({n}) for reference frame.')
+            raise ValueError(f'Invalid index ({n}) for `primary` reference '
+                             f'frame.')
 
+        self._idx = idx
         params = self.params
         rscale = self.rscale[idx]
 
@@ -1486,86 +1461,133 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return group_features(self.labels, self.xyt)[0]
 
     @property
-    def labels_per_image(self):
-        if self.labels is None:
-            raise Exception('Unregistered!')
-
-        # group_features(self.labels, self.labels)[0]
-        return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
-
-    def remap_labels(self, target, flux_sort=True):
-        """
-        Re-order the *cluster* labels so that our target is 0, the rest follow
-        in descending order of brightness first listing those that occur within 
-        our science images, then those in the survey image.
-        """
-        
-        # get cluster labels bright to faint
-        counts, = group_features(self.labels, self.attrs.counts)
-
-        # get the labels of stars that are detected in at least one of the
-        # science frames
-        detected = ~counts[1:].mask
-        nb, = np.where(detected.any(0))
-        old = [target, *np.setdiff1d(nb, target)]
-        old += [*np.setdiff1d(np.where(detected.all(0)), nb)]
-
-        if flux_sort:
-            # measure relative brightness (scale by one of the frames, to account for
-            # gain differences between instrumental setups)
-            bright2faint = list(np.ma.median(
-                counts / counts[:, [old[0]]], 0).argsort()[::-1])
-            list(map(bright2faint.remove, old))
-            old += bright2faint
-        return np.argsort(old) # these are the new labels!
-
-    def relabel_segs(self, flux_sort=True):
-        # desired new cluster labels
-        new_labels = self.remap_labels(flux_sort)
-        
-        # relabel all segmentedImages for cross image consistency
-        for cluster_labels, image in zip(self.labels_per_image, self):
-            # we want non-zero labels for SegmentedImage
-            image.seg.relabel_many(new_labels[cluster_labels] + 1)
-
-    @lazyproperty
-    def model(self):
-        model = CoherentPointDrift(self.xy, self.guess_sigma())
-        model.fit_rotation = self.fit_rotation
-        return model
-
-    # def to_pixel_coords(self, xy):
-    #     # internal coordinates are in arcmin origin at (0,0) for image
-    #     return np.divide(xy, self.pixel_scale)
-
-    def convert_to_pixels_of(self, reg):  # to_pixels_of
-        # convert coordinates to pixel coordinates of reference image
-        ratio = self.pixel_scale / reg.pixel_scale
-        xy = self.xy * ratio
-
-        params = self.params
-        params[:, :2] *= ratio
-        # NOTE: this does not edit internal `_params` since array is made
-        # through the `params` property
-
-        # note this means reg.mosaic will no longer work without fov keyword
-        #  since we have changed the scale and it substitutes image shape for
-        #  fov if not given
-
-        return xy, params
+    def min_dist(self):
+        return dist_flat(self.xy).min()
 
     # def min_dist(self):
     #     return min(dist_flat(xy).min() for xy in self.xyt)
-
-    @property
-    def min_dist(self):
-        return dist_flat(self.xy).min()
 
     def guess_sigma(self):
         """choose sigma for GMM based on distances between detections"""
         return self.min_dist / self._dmin_frac_sigma
 
-    def match_hdu(self, hdu, depth=10, sample_stat='median', **findkws):
+    @lazyproperty
+    def model(self):
+        model = CoherentPointDrift(self.xy, self.guess_sigma())
+        model.fit_angle = self.fit_angle
+        return model
+
+    def __call__(self, obj, *args, **kws):
+        result = self.fit(obj, *args, **kws)
+        if obj is None:
+            # refit => don't aggregate
+            return
+
+        # aggregate
+        aggregate = (self.extend if isinstance(result, abc.Collection)
+                     else self.append)
+        aggregate(result)
+        # print(result)
+
+        # reset model.
+        del self.model
+
+        # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
+        # self.logger.debug('sigma guess: %s' % self._sigma_guess)
+
+        # update minimal source seperation
+        # self._min_dist = min(self._min_dist, dist_flat(xy).min())
+
+    def fit(self, obj=None, p0=None, hop=True, refine=True, plot=False, **kws):
+        """
+        Flexible fitting method that dispatches fitting method based on the
+        type of `obj`, and aggregates results. If this is the first time
+        calling this method, the reference image is set.
+
+        Parameters
+        ----------
+        obj
+        fov
+        p0
+        plot
+
+        Returns
+        -------
+        params : np.ndarray
+            Fitted transform parameters (Δx, Δy, θ); the xy offsets in pixels,
+            rotation angle in radians.
+        """
+        self.logger.info('fitting %s', type(obj))
+
+        if obj is None:
+            # (re)fit all images
+            obj, p0, hop, refine = self, self.params, False, True
+
+        # if isinstance(obj, ImageRegister):
+        #     return self.fit_register(obj, p0, hop, refine, plot)
+        
+        if isinstance(obj, abc.Collection) and not isinstance(obj, np.ndarray):
+            return self.fit_sequence(obj, p0, hop, refine, plot)
+
+        if isinstance(obj, HDUExtra):
+            return self.fit_hdu(obj, p0, hop, refine, plot, **kws)
+
+        fov = kws.pop('fov', None)
+        return self.fit_image(obj, p0, fov, hop, refine, plot, **kws)
+
+    def fit_sequence(self, items, p0=None, hop=True, refine=True, plot=False,
+                     njobs=1, **kws):
+        #
+        assert len(items)
+
+        if p0 is None:
+            p0 = ()
+        else:
+            p0 = np.array(p0)
+            assert p0.shape == (len(items), self.model.dof)
+
+        # run fitting concurrently
+        # with Parallel(n_jobs=njobs) as parallel:
+        #     images = parallel(
+        #         delayed(self.fit)(image, p00, hop, refine, plot, **kws)
+        #         for image, p00 in itt.zip_longest(items, p0)
+        #     )
+
+        images = [self.fit(image, p00, hop, refine, plot, **kws)
+                  for image, p00 in itt.zip_longest(items, p0)]
+
+        # images.insert(primary, self[primary])
+        # self.data[:] = images
+
+        # fit clusters to points
+        # self.register()
+        return images
+
+    def fit_register(self, reg, p0=None, hop=True, refine=True, plot=False):
+        """
+        cross match with another `ImageRegister` and aggregate points
+        """
+
+        # convert coordinates to pixel coordinates of reference image
+        xy, params = reg.convert_to_pixels_of(self)
+        
+        # use `fit_points` so we don't aggregate images just yet
+        p = self.fit_points(xy, p0, hop, refine, plot)
+
+        # finally aggregate the results from the new register
+        self.extend(reg.data)
+        self.params = [(0, 0, 0), *(params + p)]
+
+        # convert back to original coords
+        # reg.convert_to_pixels_of(reg)
+
+        # fig, ax = plt.subplots()
+        # for xy in reg.xyt:
+        #     ax.plot(*xy.T, 'x')
+        # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
+
+    def fit_hdu(self, hdu, p0=None, hop=True, refine=True,
+                plot=False, sample_stat='median', depth=10, **find_kws):
         """
 
         Parameters
@@ -1578,52 +1600,24 @@ class ImageRegister(ImageContainer, LoggingMixin):
         -------
 
         """
-        if not isinstance(hdu, ImageSamplerMixin):
-            raise TypeError(
-                'Can only match HDUs if they inherit from '
-                f'`{qualname(ImageSamplerMixin)}`. Alternatively use the '
-                '`match_image` or `__call__` methods to match an image array '
-                'directly.'
-            )
+        return self.fit_image(
+            SkyImage.from_hdu(hdu, sample_stat, depth, **find_kws),
+            p0, None, hop, refine, plot
+        )
 
-        image = hdu.get_sample_image(depth, sample_stat)
-        return self(image, hdu.fov, **findkws)
-
-    def match_reg(self, reg, rotation=0):
+    def fit_image(self, image, p0=None, fov=None, hop=True, refine=True,
+                  plot=False, **find_kws):
         """
-        cross match with another `ImageRegister` and aggregate points
-        """
-
-        # convert coordinates to pixel coordinates of reference image
-        # reg.convert_to_pixels_of(self)
-        xy, params = reg.convert_to_pixels_of(self)
-        # reg.copy()
-
-        # use `match points` so we don't aggregate data just yet
-        # xy = rotate(xy.T, rotation).T
-        p = self.match_points(xy, rotation)
-        params = reg.params + p
-
-        # finally aggregate the results from the new register
-        self.extend(reg.data)
-
-        # convert back to original coords
-        # reg.convert_to_pixels_of(reg)
-
-        # fig, ax = plt.subplots()
-        # for xy in reg.xyt:
-        #     ax.plot(*xy.T, 'x')
-        # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
-
-    def match_image(self, image, fov=None, rotation=0., refine=True, plot=False,
-                    **find_kws):
-        """
-        Search heuristic for image offset and rotation.
+        If p0 is None:
+            Search heuristic for image offset and rotation.
+        else:
 
 
         Parameters
         ----------
         image
+        p0: 
+            (δy, δx, θ)
         fov
         rotation
 
@@ -1634,37 +1628,42 @@ class ImageRegister(ImageContainer, LoggingMixin):
         seg: SegmentationImage
         """
 
-        # source detection
-        # scale free xy (same units as `scale`)
+        # p0 = () if p0 is None else p0
+        # p0 = *xy0, angle = p0
+
         image = SkyImage(image, fov)
         if image.xy is None:
+            # source detection
             image.detect(**{**self.find_kws, **find_kws})
 
-        #
         if self:
+            # get xy in units of `primary` image pixels
             xy = image.xy * image.scale / self.pixel_scale
-            image.params = self.match_points(xy, rotation, refine, plot)
+            image.params = self.fit_points(xy, p0, hop, refine, plot)
+
         return image
 
     # @timer
-    def match_points(self, xy, rotation=0., refine=True, plot=False):
+    def fit_points(self, xy, p0=None, hop=True, refine=True, plot=False):
 
-        if rotation is None:
-            raise NotImplementedError
-            #  match gradient descent
-            # p = self.model.fit_trans(pGs, xy, fit_angle=True)
+        if p0 is None:
+            p0 = np.zeros(self.model.dof)
 
-        # get shift (translation) via brute force search through point to
-        # point distances. This is gauranteed to find the optimal alignment
-        # between the two point clouds in the absense of rotation between them
-        dxy = self._dxy_hop(xy, rotation, plot)
-        p = np.r_[dxy, rotation]
+        if hop:
+            # get shift (translation) via brute force search through point to
+            # point displacements. This is gauranteed to find the optimal
+            # alignment between the two point clouds in the absense of rotation
+            # between them
 
-        if refine:
-            # do mle via gradient decent to refine
-            r = self.model.fit(xy, p0=p[:self.model.dof])
-            if r is not None:
-                p[:self.model.dof] = r
+            # get coords.
+            xyr = transform.rigid(xy, p0)
+            dxy = self._dxy_hop(xyr, plot)
+            p = p0 + [*dxy, 0]
+
+        if not hop or refine:
+            # do mle via gradient decent
+            self.model.fit_angle = self.fit_angle
+            p = self.model.fit(xy, p0)
 
         return p
 
@@ -1689,6 +1688,69 @@ class ImageRegister(ImageContainer, LoggingMixin):
             xy = self.xy.min(0)  # - bw * 0.6
             cir = Circle(xy, clf.bandwidth, alpha=0.5)
             ax.add_artist(cir)
+
+    @property
+    def labels_per_image(self):
+        if self.labels is None:
+            raise Exception('Unregistered!')
+
+        # group_features(self.labels, self.labels)[0]
+        return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
+
+    def remap_labels(self, target, flux_sort=True):
+        """
+        Re-order the *cluster* labels so that our target is 0, the rest follow
+        in descending order of brightness first listing those that occur within 
+        our science images, then those in the survey image.
+        """
+
+        # get cluster labels bright to faint
+        counts, = group_features(self.labels, self.attrs.counts)
+
+        # get the labels of stars that are detected in at least one of the
+        # science frames
+        detected = ~counts[1:].mask
+        nb, = np.where(detected.any(0))
+        old = [target, *np.setdiff1d(nb, target)]
+        old += [*np.setdiff1d(np.where(detected.all(0)), nb)]
+
+        if flux_sort:
+            # measure relative brightness (scale by one of the frames, to account for
+            # gain differences between instrumental setups)
+            bright2faint = list(np.ma.median(
+                counts / counts[:, [old[0]]], 0).argsort()[::-1])
+            list(map(bright2faint.remove, old))
+            old += bright2faint
+        return np.argsort(old)  # these are the new labels!
+
+    def relabel_segs(self, flux_sort=True):
+        # desired new cluster labels
+        new_labels = self.remap_labels(flux_sort)
+
+        # relabel all segmentedImages for cross image consistency
+        for cluster_labels, image in zip(self.labels_per_image, self):
+            # we want non-zero labels for SegmentedImage
+            image.seg.relabel_many(new_labels[cluster_labels] + 1)
+
+    # def to_pixel_coords(self, xy):
+    #     # internal coordinates are in arcmin origin at (0,0) for image
+    #     return np.divide(xy, self.pixel_scale)
+
+    def convert_to_pixels_of(self, reg):  # to_pixels_of
+        # convert coordinates to pixel coordinates of reference image
+        ratio = self.pixel_scale / reg.pixel_scale
+        xy = self.xy * ratio
+
+        params = self.params
+        params[:, :2] *= ratio
+        # NOTE: this does not edit image `params` since array is made
+        # through the `params` property
+
+        # note this means reg.mosaic will no longer work without fov keyword
+        #  since we have changed the scale and it substitutes image shape for
+        #  fov if not given
+
+        return xy, params
 
     def get_centres(self):
         """
@@ -1763,6 +1825,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                           f"most sources has {n_stars_most}, while clustering "
                           f"produced {n_stars} clusters. Reduce bandwidth.")
 
+        #
         self.labels = clf.labels_
 
     # def check_labelled(self):
@@ -1851,7 +1914,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # some of the offsets may be masked. ignore those
             good = ~xy_offsets.mask.any(1)
             for i in np.where(good)[0]:
-                self._params[i][:-1] -= xy_offsets[i]
+                self[i].offset -= xy_offsets[i]
 
             self.xy = centres
             self.sigmas = xy_std
@@ -1891,7 +1954,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     # TODO: refine_mcmc
 
-    def refine(self, fit_rotation=True, plot=False):
+    def refine(self, fit_angle=True, plot=False):
         """
         Refine alignment parameters by fitting transform parameters for each
         image using maximum likelihood objective for gmm model with peaks
@@ -1901,7 +1964,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if self.labels is None:
             self.register()
 
-        xyt = self.xyt
         params = self.params
         # guess sigma:  needs to be larger than for brute search `_dxy_hop`
         # since we are searching a smaller region of parameter space
@@ -1909,7 +1971,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         failed = []
         # TODO: multiprocess
-        self.model.fit_rotation = fit_rotation
+        self.model.fit_angle = fit_angle
 
         n_jobs = -1  # make sure you can pickle everything before you change
         # this value
@@ -2083,7 +2145,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             return seg.circularize()
         return seg
 
-    def _dxy_hop(self, xy, rotation=0., plot=False):
+    def _dxy_hop(self, xy, plot=False):
         # This is a strategic brute force search along all the offset values
         # that will align pairs of points in the two fields for a known
         # rotation. One of the test offsets is the true offset value. Each
@@ -2096,11 +2158,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # avoids getting stuck in a local minimum. This search heuristic is only
         # effective when the fields have roughly the same rotation.
 
-        # get coords.
-        xyr = transform.rigid(xy, (0, 0, rotation))
         # create search grid.
-
-        trials = (self.xy[None] - xyr[:, None]).reshape(-1, 2)
+        trials = (self.xy[None] - xy[:, None]).reshape(-1, 2)
         # Ignore extremal points in grid search.  These represent single
         # point matches at the edges of the frame which are almost certainly
         # not the best match
@@ -2117,9 +2176,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #          break
 
         # find minimum
-        state = self.model.fit_rotation
-        self.model.fit_rotation = False
-        # TODO parallelize
+        state = self.model.fit_angle
+        self.model.fit_angle = False
+
+        # parallelize
+        # r = gridsearch_mp(self.model.loss_mle, trials.T, (xy, ))
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
 
@@ -2127,19 +2188,19 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if plot:
             im = self.model.gmm.plot(show_peak=False)
-            im.ax.plot(*(xyr + p).T, 'ro', ms=12, mfc='none')
+            im.ax.plot(*(xy + p).T, 'ro', ms=12, mfc='none')
 
         # restore sigma
-        self.model.fit_rotation = state
+        self.model.fit_angle = state
         return np.array(p)
 
     # TODO: relative brightness
 
     # @timer
-    def match_points_brute(self, xy, rotation=0., gridsize=(50, 50),
-                           plot=False):
+    def fit_points_brute(self, xy, rotation=0., gridsize=(50, 50),
+                         plot=False):
         # grid search with gmm loglikelihood objective
-        g, r, ix, pGs = self._match_points_brute(xy, gridsize, rotation, )
+        g, r, ix, pGs = self._fit_points_brute(xy, gridsize, rotation, )
         pGs[-1] = rotation
 
         if plot:
@@ -2160,7 +2221,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return pGs
 
-    def _match_points_brute(self, xy, size, rotation=0.):
+    def _fit_points_brute(self, xy, size, rotation=0.):
 
         # create grid
         # shape = np.array(self.image.shape)
@@ -2197,7 +2258,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.logger.debug('Grid search optimum: %s', pGs)
         return grid, r, ix, pGs
 
-    def match_pixels(self, index):
+    def fit_pixels(self, index):
 
         indices = set(range(len(self.images))) - {index}
         grid = []
@@ -2214,7 +2275,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         bs = binned_statistic_2d(*grid, pixels, 'mean', bins)
 
-    def _match_pixels(self, image, fov, p0):
+    def _fit_pixels(self, image, fov, p0):
         """Match pixels directly"""
         sy, sx = self.image.shape
         dx, dy = self.fov
@@ -2234,19 +2295,20 @@ class ImageRegister(ImageContainer, LoggingMixin):
                         yx, bins),
             p0)
 
-    # def match_image_brute(self, image, fov, rotation=0., step_size=0.05,
+    # def fit_image_brute(self, image, fov, rotation=0., step_size=0.05,
     #                       return_coords=False, plot=False, sigma_gmm=0.03):
     #
     #     seg, yx, counts = self.find_stars(image, fov)
-    #     return self.match_points_brute(yx, fov, rotation, step_size,
+    #     return self.fit_points_brute(yx, fov, rotation, step_size,
     #                                    return_coords, plot, sigma_gmm)
 
         # return im, s
 
-    def mosaic(self, axes=None, names=(), scale='sky', number_sources=False,
+    def mosaic(self, axes=None, names=(), scale='sky',
+               show_ref_image=True, number_sources=False,
                **kws):
 
-        mos = MosaicPlotter.from_register(self, axes, scale)
+        mos = MosaicPlotter.from_register(self, axes, scale, show_ref_image)
         mos.mosaic(names, **kws)
 
         if number_sources:
@@ -2260,7 +2322,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
 class ImageRegisterDSS(ImageRegister):
     """
-    Image registration using Digitized Sky Survey images
+    Align images with the Digitized Sky Survey archival plate images and infer
+    WCS parameters.
     """
     #
     _servers = ('all',
@@ -2306,7 +2369,7 @@ class ImageRegisterDSS(ImageRegister):
         data = self.hdu[0].data.astype(float)
         find_kws.setdefault('deblend', True)
         ImageRegister.__init__(self, **find_kws)
-        self(data, fov)
+        self(data, fov=fov)
 
         # TODO: print some header info for DSS image - date!
         # DATE-OBS
@@ -2360,7 +2423,12 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
-    def build_wcs(self, hdu, p, telescope=None):
+    def build_wcs(self, run):
+        assert len(run) == len(self) - 1
+        for hdu, p, scale in zip(run, self.params[1:], self.scales[1:]):
+            self._build_wcs(hdu, p, scale)
+
+    def _build_wcs(self, hdu, p, scale):
         """
         Create tangential plane wcs
         Parameters
@@ -2378,29 +2446,29 @@ class ImageRegisterDSS(ImageRegister):
         from astropy import wcs
         from recipes.transforms.rotation import rotation_matrix
 
-        *yxoff, theta = p
-        fov = hdu.get_fov(telescope)
-        pxscl = fov / hdu.shape[-2:]
+        hdr = self.hdu[0].header
+        *xyoff, theta = p
         # transform target coordinates in DSS image to target in SHOC image
-        h = self.hdu[0].header
-        # target object pixel coordinates
-        crpix = np.array([h['crpix1'], h['crpix2']])
-        crpixDSS = crpix - 0.5  # convert to pixel llc coordinates
-        cram = crpixDSS / self.pixel_scale  # convert to arcmin
-        rot = rotation_matrix(-theta)
-        crpixSHOC = (rot @ (cram - yxoff)) / pxscl
+        # convert to pixel llc coordinates then to arcmin
+        # target coordinates DSS [pixel]
+        xyDSS = (np.array([hdr['crpix1'], hdr['crpix2']]
+                          ) - 0.5) / self.pixel_scale
+        # target coordinates SHOC [pixel]
+        xySHOC = (rotation_matrix(-theta) @ (xyDSS - xyoff)) / scale
+        # target coordinates celestial [degrees]
+        xySKY = self.target_coords_world
 
         # coordinate increment
-        cdelt = pxscl / 60  # in degrees
-        flip = np.array(hdu.flip_state[::-1], bool)
-        cdelt[flip] = -cdelt[flip]
+        # flip = np.array(hdu.flip_state[::-1], bool)
+        cdelt = scale / 60.  # image scale in degrees
+        # cdelt[flip] = -cdelt[flip]
 
         # see:
         # https://www.aanda.org/articles/aa/full/2002/45/aah3859/aah3859.html
         # for parameter definitions
         w = wcs.WCS(naxis=2)
         # array location of the reference point in pixels
-        w.wcs.crpix = crpixSHOC
+        w.wcs.crpix = xySHOC
         # coordinate increment at reference point
         w.wcs.cdelt = cdelt
         # target coordinate in degrees reference point
@@ -2412,14 +2480,15 @@ class ImageRegisterDSS(ImageRegister):
 
         return w
 
-    def plot_coords_nrs(self, coords):
-        fig, ax = plt.subplots()
+    def plot_coords_nrs(self, ax=None,  color='c', ms=10, **kws):
+        if ax is None:
+            fig, ax = plt.subplots()
 
-        for i, yx in enumerate(self.xy):
-            ax.plot(*yx[::-1], marker='$%i$' % i, color='r')
+        for i, xy in enumerate(self.xy):
+            ax.plot(*xy, marker='$%i$' % i, color=color, ms=ms, **kws)
 
-        for i, yx in enumerate(coords):
-            ax.plot(*yx[::-1], marker='$%i$' % i, color='g')
+        # for i, yx in enumerate(coords):
+        #     ax.plot(*yx[::-1], marker='$%i$' % i, color='g')
 
 
 # class TransformedImage():

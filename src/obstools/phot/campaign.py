@@ -29,20 +29,23 @@ from pyxides.pprint import PrettyPrinter, PPrintContainer
 # local libs
 import docsplice as doc
 from motley.table import AttrTable
-from recipes import io, bash
 from recipes.oo import SelfAware
 from recipes.oo.null import NULL
+from recipes import caches, io, bash
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 
 # relative libs
+from .. import cachePaths, _hdu_hasher
+from ..image.detect import SourceDetectionMixin
 from ..image.sample import ImageSamplerMixin
 from ..image.calibration import ImageCalibratorMixin
-from ..image.registration import ImageRegister, ImageRegisterDSS
+# from ..image.registration import ImageRegister, ImageRegisterDSS
 
 
 # translation for special "[22:34]" type file globbing
 REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
+
 
 # TODO: multiprocess generic methods
 # TODO: Create an abstraction layer that can split and merge multiple time
@@ -52,7 +55,7 @@ REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
 #  containing changes of observed brightness (etc ...) over time
 
 
-# class ImageRegisterMixin(object):
+# class ImageRegisterMixin:
 #     'todo maybe'
 
 
@@ -71,10 +74,10 @@ class FilenameHelper:
     """
 
     def __init__(self, hdu):
-        self._path = Path(hdu._file.name) if hdu._file else Null()
+        self._path = Path(hdu._file.name) if hdu._file else NULL
 
     def __str__(self):
-        return self.name
+        return str(self.path)
 
     @property
     def path(self):
@@ -87,7 +90,6 @@ class FilenameHelper:
     @property
     def stem(self):
         return str(self._path.stem)
-    
 
 
 class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
@@ -107,14 +109,48 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
     def __init__(self, campaign):
         super().__init__(campaign.attrs('file'))
 
+    def common_root(self):
+        parents = {p.parent for p in self.paths}
+        root = parents.pop()
+        if parents:  # more than one root
+            return
+        if root:
+            return root
+
 
 class HDUExtra(PrimaryHDU, ImageSamplerMixin, ImageCalibratorMixin,
-               LoggingMixin):
+               LoggingMixin, SourceDetectionMixin):
     """
     Some extra methods and properties that help PhotCampaign
     """
 
-    _FilenameHelperClass = FilenameHelper
+    #detect = SourceDetection('sigma_threshold')
+
+    @caches.to_file(cachePaths.detection, typed={'self': _hdu_hasher})
+    def detect(self,  stat='median', depth=5, snr=3, **kws):
+        """
+        Cached source detection for HDUs
+
+        Parameters
+        ----------
+        stat : str, optional
+            [description], by default 'median'
+        depth : int, optional
+            [description], by default 5
+        snr : int, optional
+            [description], by default 3
+
+        Examples
+        --------
+        >>> 
+
+        Returns
+        -------
+        [type]
+            [description]
+        """
+        image = self.get_sample_image(stat, depth)
+        return super().detect(image, snr=snr, **kws)
 
     @property
     def file(self):
@@ -137,6 +173,7 @@ class HDUExtra(PrimaryHDU, ImageSamplerMixin, ImageCalibratorMixin,
     def get_fov(self):
         raise NotImplementedError
 
+    @property
     def pixel_scale(self):
         return self.fov / self.ishape
 
@@ -264,7 +301,7 @@ class PhotCampaign(PPrintContainer,
     instruments and telescopes. Provides an interface for basic operations on
     sets of image stacks obtained during photometric observing campaigns. Each
     item in this container is a `astropy.io.fits.hdu.HDU` object encapsulating
-    the FITS data and header information.
+    the FITS data and header information of the observation.
 
     Built in capabilities include:
         * sort, select, filter, group, split and merge operations based on
@@ -273,12 +310,12 @@ class PhotCampaign(PPrintContainer,
           :meth:`group_by` and :meth:`join` methods
         * Removing of duplicates :meth:`filter_duplicates`
         * Vectorize attribute lookup and method calling on the contained
-          objects courtesy of :class:`Vectorize` via :meth:`attrs` and
+          objects courtesy of :class:`Vectorized` via :meth:`attrs` and
           :meth:`calls`
         * Pretty printing in table format via :meth:`pprint` method
         * Image registration. ie. Aligning sample images from
           the stacks with respect to each other via :meth:`coalign`
-        * Basic Astrometry. Aligning sample images from the stacks with 
+        * Basic Astrometry. Aligning sample images from the stacks with
           respect to some survey image (eg DSS, SkyMapper) and infering WCS via
           the :meth:`coalign_sky` method
 
@@ -300,7 +337,7 @@ class PhotCampaign(PPrintContainer,
     def load(cls, files_or_dir, recurse=False, extensions=('fits', 'FITS'),
              **kws):
         """
-        Load files into the campaign
+        Load files into the campaign.
 
         Parameters
         ----------
@@ -309,7 +346,7 @@ class PhotCampaign(PPrintContainer,
             filenames to load eg: '/path/SHA_20200715.000[1-5].fits' or any
             iterable that yields successive filenames
         extensions : tuple, optional
-            The file extensions to consider if `files` is a directory, by 
+            The file extensions to consider if `files` is a directory, by
             default ('fits',).  All files ending on any of the extensions in
             this list will be included
         recurse : bool
@@ -330,7 +367,7 @@ class PhotCampaign(PPrintContainer,
             if Path(files).is_file():
                 files = [files]
             else:
-                # is_special =
+                # files either special pattern or directory
                 files = str(files)
 
                 if all(map(files.__contains__, '{}')):
@@ -360,7 +397,7 @@ class PhotCampaign(PPrintContainer,
     @classmethod
     def load_files(cls, filenames, loader=_BaseHDU.readfrom, **kws):
         """
-        Load data from file(s).
+        Load data from (list of) filename(s).
 
         Parameters
         ----------
@@ -503,9 +540,7 @@ class PhotCampaign(PPrintContainer,
         # match coordinates of registers against each other
         imr = registers[order[0]]
         for i in order[1:]:
-            reg = registers[i]
-
-            imr.match_reg(reg)
+            imr.fit(registers[i])
             imr.register()
 
         # refine alignment
@@ -524,34 +559,46 @@ class PhotCampaign(PPrintContainer,
 
         return imr
 
-    def _coalign(self, sample_stat='median', depth=10, reference_index=None,
+    def _coalign(self, sample_stat='median', depth=10, primary=None,
                  plot=False, **find_kws):
-
+        
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
-        # get sample images etc
-        images = self.calls.get_sample_image(sample_stat, depth)
-        fovs, angles = zip(*self.attrs('fov', 'pa'))
-        #
-        matcher = ImageRegister.from_images(images, fovs, ridx=reference_index,
-                                            **find_kws)
-
+        from ..image.registration import ImageRegister
+        
+        
+        reg = ImageRegister(**find_kws)
+        # If no reference image indicated by user-specified `primary`, choose
+        # image with highest resolution if any, otherwise, just take the first.
+        primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
+        first = self[primary or 0]
+        # First fit detects sources and measures their CoM to establish a point
+        # cloud for the coherent point drift model
+        kws = dict(sample_stat=sample_stat, depth=depth, refine=False)
+        reg(first, **kws)
+        # Other images are fit concurrently
+        rest = self[np.delete(np.arange(len(self)), primary)]
+        reg(rest, **kws)
+        
+        # 
         if plot:
-            matcher.mosaic(coords=matcher.xyt)
+            reg.mosaic()
 
-        # return matcher, idx
+        # return reg, idx
 
         # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars
-        matcher.register(plot=plot)
-        matcher.refine(plot=plot)
-        matcher.recentre(plot=plot)
-        return matcher
+        # register constellation of stars by fitting clusters to center-of-mass 
+        # measurements. Refine the fit, by ...
+        reg.register(plot=plot)
+        reg.refine(plot=plot)
+        reg.recentre(plot=plot)
+
+        return reg
 
     @doc.splice(coalign, 'Parameters')
     def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
-                       sample_stat='median', depth=10, reference_index=0,
+                       sample_stat='median', depth=10, primary=0,
                        plot=False, **find_kws):
         """
         Align all the image stacks in this campaign with a survey image centred
@@ -564,7 +611,7 @@ class PhotCampaign(PPrintContainer,
 
         Parameters
         ----------
-        reference_index : int, default 0
+        primary : int, default 0
             The index of the image that will be used as the reference image for
             the alignment. If `None`, the highest resolution image amongst the
             observations will be used.
@@ -585,6 +632,12 @@ class PhotCampaign(PPrintContainer,
 
         """
 
+        from ..image.registration import ImageRegisterDSS
+        
+        survey = survey.lower()
+        if survey != 'dss':
+            raise NotImplementedError('Only support for DSS image lookup atm.')
+
         # coalign images with each other
         reg = self.coalign(sample_stat, depth, plot, **find_kws)
 
@@ -592,26 +645,20 @@ class PhotCampaign(PPrintContainer,
         if fov is None:
             fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
 
-        survey = survey.lower()
-        if survey != 'dss':
-            raise NotImplementedError('Only support for DSS image lookup atm.')
-
-        dss = ImageRegisterDSS(self[reference_index].coords, fov, **find_kws)
-        dss.match_reg(reg)
+        #
+        dss = ImageRegisterDSS(self[primary].coords, fov, **find_kws)
+        dss.fit_register(reg, refine=False)
         dss.register()
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
-
-        # self._build_wcs(dss)
+        dss.build_wcs(self)
         return dss
 
     def coalign_dss(self, fov=None, fov_stretch=1.2,
-                    sample_stat='median', depth=10, reference_index=0,
+                    sample_stat='median', depth=10, primary=0,
                     plot=False, **find_kws):
         return self.coalign_survey('dss', fov, fov_stretch, sample_stat, depth,
-                                   reference_index, plot, **find_kws)
-
-        return dss
+                                   primary, plot, **find_kws)
 
     def close(self):
         # close all files
@@ -623,7 +670,7 @@ class ObsGroups(Groups, LoggingMixin):
     Emulates dict to hold multiple `Campaign` instances keyed by their common
     attribute values. The attribute names given in `group_id` are the ones by
     which the original Campaign is separated into unique segments (which are
-    also `Campaign` instances). 
+    also `Campaign` instances).
 
     This class attempts to eliminate the tedium of doing computations on
     multiple files with identical observational setups by enabling flexible

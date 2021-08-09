@@ -17,8 +17,8 @@ from pyxides.vectorize import Vectorized, AttrVectorizer
 
 # local libs
 from scrawl.imagine import ImageDisplay
-from recipes import caches
 from recipes.oo import SelfAware
+from recipes.pprint import qualname
 from recipes.misc import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
@@ -171,7 +171,7 @@ class TransformedImage(Image):
 
     @offset.setter
     def offset(self, offset):
-        offset = np.asarray(offset)
+        offset = np.asarray(offset, float)
         assert offset.size == 2
         self._offset = offset.squeeze()
 
@@ -181,7 +181,7 @@ class TransformedImage(Image):
 
     @scale.setter
     def scale(self, scale):
-        self._scale = np.array(duplicate_if_scalar(scale))
+        self._scale = np.array(duplicate_if_scalar(scale), float)
 
     pixel_scale = scale
 
@@ -216,7 +216,6 @@ class TransformedImage(Image):
         return art
 
 
-
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
@@ -226,13 +225,51 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     # @doc.inherit('Parameters')
 
     # _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
+    # filename = None
 
     @classmethod
-    @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
+    # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
     def from_hdu(cls, hdu, sample_stat='median', depth=10, **kws):
+        """
+        Construct a SkyImage from an HDU by first drawing a sample image, then
+        running the source detection algorithm on it.
+
+        Parameters
+        ----------
+        hdu : [type]
+            [description]
+        sample_stat : str, optional
+            [description], by default 'median'
+        depth : int, optional
+            [description], by default 10
+
+        Returns
+        -------
+        SkyImage
+            [description]
+        """
+
+        from .sample import ImageSamplerMixin
+        
+        if not isinstance(hdu, ImageSamplerMixin):
+            raise TypeError(
+                f'Received object {hdu} of type: {type(hdu)}. '
+                'Can only initialize from HDUs that inherit from '
+                f'`{qualname(ImageSamplerMixin)}`. Alternatively use the '
+                '`from_image` constructor (which also runs source detection), '
+                'or initialize the class directly with an image array .'
+            )
+
+        # self.filename
+
+        # use `hdu.detect` so we cache the detections on the hdu filename
+        seg = hdu.detect(sample_stat, depth, **kws)
+        # pull the sample image (computed in the line above) from the cache
         image = hdu.get_sample_image(sample_stat, depth)
-        # assert isinstance(hdu, HDUExtra)
-        return cls.from_image(image, hdu.fov, angle=hdu.pa, **kws)
+        
+        # TODO: if wcs is defined, use that as default
+        
+        return cls(image, hdu.fov, angle=hdu.pa, segmentation=seg)
 
     @classmethod
     def from_image(cls, image, fov=None, scale=None, **kws):
@@ -240,7 +277,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         image.detect(**kws)
         return image
 
-    def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None):
+    def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None,
+                 segmentation=None):
         """
         Create and SkyImage object with a know size on sky.
 
@@ -271,7 +309,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         TransformedImage.__init__(self, data, offset, angle, scale)
 
         # segmentation data
-        self.seg = None     # : SegmentedArray:
+        self.seg = segmentation     # : SegmentedArray or None
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels
         self.counts = None  # : np.ndarray: pixel sums for segmentation
 
@@ -280,9 +318,10 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         """Field of view"""
         return self.shape * self.scale
 
-    def detect(self, snr=3, max_iter=1, **kws):
+    def detect(self, snr=3, **kws):  # max_iter=1,
 
-        self.seg = super().detect(self.data, snr=snr, **kws)
+        if self.seg is None:
+            self.seg = super().detect(self.data, snr=snr, **kws)
 
         # centre of mass, counts
         yx = self.seg.com_bg(self.data)
