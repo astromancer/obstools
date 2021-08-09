@@ -23,8 +23,7 @@ from recipes.misc import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
 # relative libs
-from .. import cachePaths, _hdu_hasher
-from .segmentation.detect import SourceDetectionMixin
+from .detect import SourceDetectionMixin
 
 
 UNIT_CORNERS = np.array([[0., 0.],

@@ -1,8 +1,7 @@
 
 
-
 # std libs
-import logging
+import logging, logging.config
 import functools as ftl
 from collections import defaultdict
 
@@ -14,20 +13,45 @@ from photutils import detect_threshold, detect_sources
 # local libs
 import recipes.pprint as pp
 from recipes.iter import iter_repeat_last
-from recipes.string import sub, pascal_case, snake_case
+from recipes.string import sub, snake_case
 from recipes.logging import get_module_logger, LoggingMixin
 from motley.table import Table
 
 # relative libs
-from .groups import auto_id
-from . import SegmentedImage
-from ...modelling import UnconvergedOptimization
+from .segmentation import groups, SegmentedImage
+from ..modelling import UnconvergedOptimization
 
 
 # module level logger
 logger = get_module_logger()
 logging.basicConfig()
 logger.setLevel(logging.INFO)
+
+# handler = logging.StreamHandler()
+# handler.setFormatter(logging.Formatter(style='{'))
+# logger.addHandler(handler)
+
+# logging.config.dictConfig({
+#     'version' : 1,
+#     'formatters': {
+#         'braced': {
+#             'class': 'logging.Formatter',
+#             'style': '{'
+#         }
+#     },
+#     'handlers': {
+#         'console': {
+#             'class': 'logging.StreamHandler',
+#             'formatter': 'braced',
+#             'level': 'INFO',
+#         }
+#     },
+#     'loggers': {
+#             'detect': {
+#                 'handlers' : ['console']
+#             }
+#         },
+# })
 
 
 def make_border_mask(data, edge_cutoffs):
@@ -63,8 +87,8 @@ class DetectionBase(LoggingMixin):
 
     def __new__(cls, algorithm, *args, **kws):
         if isinstance(algorithm, str):
-            cls = cls.members[snake_case(algorithm)]
-            return super().__new__(cls, *args, **kws)
+            kls = cls.members[snake_case(algorithm)]
+            return super().__new__(kls, *args, **kws)
 
         return super().__new__(cls, algorithm, *args, **kws)
 
@@ -103,11 +127,19 @@ class DetectionBase(LoggingMixin):
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
-        if self.logger.getEffectiveLevel() == logging.INFO:
-            self.logger.info('Detected %i objects covering %i pixels.',
-                            seg.nlabels, seg.to_binary().sum())
-
+        self.report(seg)
         return seg
+
+    def report(self, seg):
+        if self.logger.isEnabledFor(logging.INFO):
+            self.logger.info(
+                'Detected %i sources covering %.2f%% of image.',
+                             seg.nlabels, 100 * sum(seg.areas) / np.prod(seg.shape))
+
+
+# handler = logging.StreamHandler()
+# handler.setFormatter(logging.Formatter(style='{'))
+# logging.getLogger('detect').addHandler(handler)
 
 
 class GMM(DetectionBase):
@@ -149,9 +181,9 @@ class GMM(DetectionBase):
             from matplotlib import pyplot as plt
             from matplotlib.colors import ListedColormap
 
-            m = gmm.means_.T
-            v = gmm.covariances_.T
-            w = gmm.weights_ / np.sqrt(2 * np.pi * v)
+            m = self.gmm.means_.T
+            v = self.gmm.covariances_.T
+            w = self.gmm.weights_ / np.sqrt(2 * np.pi * v)
             x = np.linspace(y.min(), y.max(), 250).reshape(-1, 1)
             components = w * np.exp(-0.5 * np.square((x - m)) / v).squeeze()
 
@@ -210,7 +242,7 @@ class SigmaThreshold(DetectionBase):
         # check if anything detected
         no_sources = (seg is None)  # or (np.sum(seg) == 0)
         if no_sources:
-            logger.debug('No objects detected')
+            logger.debug('No objects detected.')
             return np.zeros_like(image, bool)
 
         if deblend and not no_sources:
@@ -241,7 +273,7 @@ class BackgroundFitter(DetectionBase):
         # be present here
         self.residual = image
 
-        self.logger.debug('Running detection: %s', kws)
+        self.logger.debug('Running detection: {}.', kws)
         seg = super().__call__(self.residual, mask, **kws)
 
         if not self.model:
@@ -266,13 +298,16 @@ class BackgroundFitter(DetectionBase):
 
 
 class SourceAggregator(DetectionBase):
+    """
+    Aggregate info from multiple detection loops
+    """
 
     def __init__(self, algorithm, model=None):
         self.count = 0
         self.seg = None
         super().__init__(algorithm, model)
 
-    def __call__(self, image, mask=False, group_id=auto_id, **kws):
+    def __call__(self, image, mask=False, group_id=groups.auto_id, **kws):
         # update mask
         if mask is None:
             mask = False
@@ -282,7 +317,7 @@ class SourceAggregator(DetectionBase):
             self.seg = SegmentedImage.empty_like(image)
 
         # ignore previous detections
-        new_seg = super().__call__(image, mask | seg.to_binary(), **kws)
+        new_seg = super().__call__(image, mask | self.seg.to_binary(), **kws)
         self.seg.add_segments(new_seg, group_id=group_id)
 
         self.count += 1
@@ -296,15 +331,16 @@ class ResultsAggregator(SourceAggregator, BackgroundFitter):
         self.fitness = []
 
     def __call__(self, image, mask=False, *args, **kws):
-        new_seg = super().__call__(image, mask, *args, **kws)
+        # new detections
+        seg = super().__call__(image, mask, *args, **kws)
 
         # log what was found
-        if self.logger.getEffectiveLevel() == logging.INFO:
-            self.logger.info('Detected %i objects covering %i pixels.',
-                             self.seg.nlabels, self.seg.to_binary().sum())
+        # if self.logger.getEffectiveLevel() == logging.INFO:
+        #     self.logger.info('Detected %i sources covering {:.2%} of image.',
+        #                      seg.nlabels, sum(seg.areas) / np.prod(image.shape))
 
         # aggregate info
-        if new_seg.nlabels:
+        if seg.nlabels:
             for k, v in kws.items():
                 self.info[k].append(v)
 
@@ -314,19 +350,31 @@ class ResultsAggregator(SourceAggregator, BackgroundFitter):
 
 
 class SourceDetection(ResultsAggregator):
+    """A descriptor object for managing source detection algorithms"""
+
     def __get__(self, obj, kls=None):
         if obj is None:
             # called from class. Re-init to start clean.
-            return self.__class__(self.algorithm)
+            return self.__class__(self.fit_predict)
         return self
 
     def __set__(self, obj, algorithm):
+        """
+        >>> class MyImage:
+        ...     detect = SourceDetection('gmm')
+        ... img = MyImage().detect
+        
+        later to switch algorithms:
+        >>> img.detect = 'sigma_threshold'
+        # FIXME: This is not really intuitive img.detect.algorithm better
+        """
+        
         # resolve strings
         if isinstance(algorithm, str):
-            return cls.members[sub(algorithm.lower(), {' ': '', '_': ''})]
+            return type(obj).members[sub(algorithm.lower(), {' ': '', '_': ''})]
 
         if not callable(algorithm):
-            raise TypeError('Invalid algorithm')
+            raise TypeError('Invalid algorithm.')
 
         # create detector class from callable algorithm
         return self.__class__(algorithm)
@@ -355,7 +403,7 @@ class SourceDetectionLoop(SourceDetection):
 
     def __next__(self):
         if self.count >= self.max_iter:
-            self.logger.debug('break: max_iter %i reached', self.max_iter)
+            self.logger.debug('break: max_iter %i reached.', self.max_iter)
             raise StopIteration
 
         # detect new
@@ -363,7 +411,7 @@ class SourceDetectionLoop(SourceDetection):
         new_segs = super().__call__(self.image, self.mask, **params)
 
         if not new_segs.nlabels:
-            self.logger.debug('break: no new detections')
+            self.logger.debug('break: no new detections.')
             raise StopIteration
 
         # debug log!
