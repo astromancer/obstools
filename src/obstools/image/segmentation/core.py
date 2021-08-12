@@ -2,36 +2,36 @@
 Extensions for segmentation images
 """
 
+
+
 # std libs
-import more_itertools as mit
-import collections as col
 import types
 import inspect
 import logging
+import numbers
 import warnings
 import itertools as itt
-from operator import attrgetter
-import numbers
-from collections import namedtuple
-# third-party libs
+from collections import abc, namedtuple, defaultdict
 
+# third-party libs
 import numpy as np
+import more_itertools as mit
 from scipy import ndimage
 from astropy.utils import lazyproperty
-from obstools.image.segmentation.trace import trace_boundary
-
-from .detect import detect
-from photutils.segmentation import SegmentationImage  # , Segment
+from photutils.segmentation import SegmentationImage
 
 # local libs
-from recipes.logging import LoggingMixin
-from recipes.logging import get_module_logger
-from obstools.phot.utils import LabelGroupsMixin
-from obstools.image.utils import shift_combine
 from recipes.dicts import pformat
+from recipes.logging import LoggingMixin, get_module_logger
 
-# from obstools.modelling.image import SegmentedImageModel
-# from collections import namedtuple
+# relative libs
+from ..utils import shift_combine
+from .trace import trace_boundary
+from .groups import LabelGroupsMixin, auto_id
+
+
+# from .detect import sigma_threshold
+
 
 # TODO: watershed segmentation on the negative image ?
 # TODO: detect_gmm():
@@ -50,13 +50,9 @@ def is_lazy(_):
     return isinstance(_, lazyproperty)
 
 
-def _echo(_):
-    return _
-
-
 def image_sub(background_estimator):
     if background_estimator in (None, False):
-        return _echo
+        return echo
 
     def sub(image):
         return image - background_estimator(image)
@@ -343,11 +339,11 @@ class SegmentedArray(np.ndarray):
         # lazyproperties by edits on data of derived array
         return np.array(out_arr)
 
-        # def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+        # def __array_ufunc__(self, ufunc, method, *inputs, **kws):
         #     # return a plain old array so we don't accidentally reset the parent
         #     # lazyproperties by edits on data of derived array
         #     result = super(SegmentedArray, self).__array_ufunc__(ufunc, method,
-        #                                                          *inputs, **kwargs)
+        #                                                          *inputs, **kws)
         #     return np.array(result)
 
         # class Slices(np.recarray):
@@ -373,7 +369,7 @@ class SegmentedArray(np.ndarray):
 #         obj.parent = parent
 #         return obj
 #
-#     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+#     def __array_ufunc__(self, ufunc, method, *inputs, **kws):
 #         return NotImplemented
 
 
@@ -385,7 +381,8 @@ class vdict(dict):
     def __getitem__(self, key):
         # dispatch on np.ndarray for vectorized item getting with arbitrary
         # nesting
-        if isinstance(key, (np.ndarray, list, tuple)): # Container and not str??
+        if isinstance(key, (np.ndarray, list, tuple)): 
+            # Container and not str
             return [self[_] for _ in key]
 
         if key in (Ellipsis, None):
@@ -518,7 +515,7 @@ class Sliced(vdict):
         return windows
 
 
-# class Slices(object):
+# class Slices:
 #     # FIXME: remove this now superceded by Sliced
 #     """
 #     Container emulation for tuples of slices. Aids selecting rectangular
@@ -577,7 +574,7 @@ class Sliced(vdict):
 #     'TODO: com / gmean / mean / argmax'  # maybe
 
 
-class MaskedStatsMixin(object):
+class MaskedStatsMixin:
     """
     This class gives inheritors access to methods for doing statistics on
     segmented images (from `scipy.ndimage.measurements`)
@@ -586,14 +583,15 @@ class MaskedStatsMixin(object):
     # Each supported method is wrapped in the `MaskedStatistic` class upon
     # construction.  `MaskedStatistic` is a descriptor and will dynamically
     # attach to inheritors of this class that invoke the method via attribute
-    # lookup eg: >>> obj.sum(image)
+    # lookup eg:
+    # >>> obj.sum(image)
     #
 
     _supported = ['sum',
                   'mean', 'median',
                   'minimum', 'minimum_position',
                   'maximum', 'maximum_position',
-                  #   'extrema', # return signature is different, so don't support
+                  # 'extrema', # return signature is different, so don't support
                   'variance', 'standard_deviation',
                   'center_of_mass']
     _aliases = {'minimum': 'min',
@@ -603,8 +601,8 @@ class MaskedStatsMixin(object):
                 'standard_deviation': 'std',
                 'center_of_mass': 'com'}
 
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
+    def __init_subclass__(cls, **kws):
+        super().__init_subclass__(**kws)
         # add methods for statistics on masked image to inheritors
         for stat in cls._supported:
             method = MaskedStatistic(getattr(ndimage, stat))
@@ -615,7 +613,7 @@ class MaskedStatsMixin(object):
                 setattr(cls, alias, method)
 
 
-class MaskedStatistic(object):
+class MaskedStatistic:
     # Descriptor class that enables statistical computation on masked
     # input data with segmented images
     _doc_template = \
@@ -709,14 +707,14 @@ def radial_source_profile(image, seg, labels=None):
     return profiles
 
 
-class SegmentMasks(col.defaultdict):  # SegmentMasks
+class SegmentMasks(defaultdict):  # SegmentMasks
     """
     Container for segment masks
     """
 
     def __init__(self, seg):
         self.seg = seg
-        col.defaultdict.__init__(self, None)
+        defaultdict.__init__(self, None)
 
     def __missing__(self, label):
         # the mask is computed at lookup time here and inserted into the dict
@@ -728,7 +726,7 @@ class SegmentMasks(col.defaultdict):  # SegmentMasks
         return self.seg.sliced(label) != label
 
 
-class SegmentMasksMixin(object):
+class SegmentMasksMixin:
     @lazyproperty
     def masks(self):
         """
@@ -744,11 +742,11 @@ class SegmentMasksMixin(object):
 
 
 # SegmentImage
-class SegmentedImage(SegmentationImage,  # base
-                     MaskedStatsMixin,  # stats methods for masked images
-                     SegmentMasksMixin,  # handles masks for foreground obj
-                     LabelGroupsMixin,  # keeps track of label groups
-                     LoggingMixin  # logger
+class SegmentedImage(SegmentationImage,     # base
+                     MaskedStatsMixin,      # stats methods for masked images
+                     SegmentMasksMixin,     # handles masks for foreground obj
+                     LabelGroupsMixin,      # keeps track of label groups
+                     LoggingMixin,          # logger
                      ):
     """
     Extends `photutils.segmentation.SegmentationImage` functionality.
@@ -759,7 +757,7 @@ class SegmentedImage(SegmentationImage,  # base
         * support for iterating over segments / slices
 
         * calculations on masked arrays
-        * methods for statistics on segments (min, max, mean, median, ...)
+        * methods for statistics on image segments (min, max, mean, median, etc)
         * methods for calculating center-of-mass, counts, flux in each segment
         * re-ordering (sorting) labels by any of the above statistics
 
@@ -775,18 +773,18 @@ class SegmentedImage(SegmentationImage,  # base
         * keeps track of logical groupings of labels
 
         * allows all zero data - base class does not allow this which is
-          perceived as unnecessarily restrictive
+          seen as unnecessarily restrictive
     """
 
-    # In terms of modelling, this class is a also domain mapping layer that
-    # lives on top of images.
+    # In terms of modelling, this class also functions as a domain mapping layer
+    # that lives on top of images.
 
-    # _allow_negative = False       # TODO: maybe
-
-    random_state = None
+    
+    seed = None
 
     # Constructors
     # --------------------------------------------------------------------------
+
     @classmethod
     def empty_like(cls, image):
         """
@@ -795,62 +793,10 @@ class SegmentedImage(SegmentationImage,  # base
         """
         return cls(np.zeros(image.shape, int))
 
-    @classmethod
-    def gmm(cls, image, mask=False, n_components=5, plot=False, **kws):
-        """
-        Construct a SegmentedImage using Gaussian Mixture Model prediction
-        for pixels.
 
-        Parameters
-        ----------
-        image
-        mask
-        n_components
-        kws
-
-        Returns
-        -------
-
-        """
-
-        from sklearn.mixture import GaussianMixture
-
-        pixels = ...
-        if (mask is not None) or (mask is not False):
-            image = np.ma.MaskedArray(image, mask)
-            pixels = ~image.mask
-
-        # model
-        gmm = GaussianMixture(n_components, **kws)
-        y = np.ma.compressed(image).reshape(-1, 1)
-
-        seg = np.zeros(image.shape, int)
-        seg[pixels] = gmm.fit_predict(y)
-        obj = cls(seg)
-
-        if plot:
-            from matplotlib import pyplot as plt
-            from matplotlib.colors import ListedColormap
-
-            m = gmm.means_.T
-            v = gmm.covariances_.T
-            w = gmm.weights_ / np.sqrt(2 * np.pi * v)
-            x = np.linspace(y.min(), y.max(), 250).reshape(-1, 1)
-            components = w * np.exp(-0.5 * np.square((x - m)) / v).squeeze()
-
-            fig, ax = plt.subplots()
-            ax.hist(y.squeeze(), bins=100, density=True, log=True)
-            for c in components.T:
-                ax.plot(x, c, scaley=False)
-
-            cmap = ListedColormap([l.get_color() for l in ax.lines])
-            obj.display(cmap=cmap, draw_labels=False)
-
-        return obj
 
     @classmethod
-    def from_image(cls, image, background=None, snr=3., npixels=7,
-                   edge_cutoff=None, deblend=False, dilate=1, flux_sort=True):
+    def from_image(cls, image, dilate=0, flux_sort=True, **kws):
         """
         Detect sources in an image and return a SegmentedImage object
 
@@ -871,17 +817,19 @@ class SegmentedImage(SegmentationImage,  # base
         """
         # detect
         # noinspection PyTypeChecker
-        obj = cls.detect(image, background, snr, npixels,
-                         edge_cutoff, deblend, dilate)
+        obj = cls.detect(image, dilate=dilate, **kws)
 
         if flux_sort:
             obj.flux_sort(image)
 
         return obj
 
+    # @classmethod
+    # def _detect(cls, algorithm, image, mask=False, **kws):
+        
+        
     @classmethod
-    def detect(cls, image, mask=False, background=None, snr=3., npixels=7,
-               edge_cutoff=None, deblend=False, dilate=0, group_name=None):
+    def detect(cls, image, mask=False, dilate=0, **kws):
         """
         Image object detection that returns a SegmentedImage instance
 
@@ -889,48 +837,31 @@ class SegmentedImage(SegmentationImage,  # base
         ----------
         image
         mask
-        background
-        snr
-        npixels
-        edge_cutoff
-        deblend
         dilate
-        group_name: hashable object
-            Key representing the name of this group.  By default
+
 
         Returns
         -------
 
         """
 
-        # segmentation image based on sigma-clipping
-        arr = detect(image, mask, background, snr, npixels, edge_cutoff,
-                     deblend)
-        # here `seg` is an array
-
-        # add group name
-        if group_name is not None and not isinstance(group_name, col.Hashable):
-            raise ValueError('Group name %r cannot be used since it is not a'
-                             'hashable object.' % group_name)
-
         # Initialize
-        seg = cls(arr)
-        seg.groups[group_name] = seg.labels
+        seg = cls(cls.detection(image, mask, **kws))
 
         # dilate
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
         if cls.logger.getEffectiveLevel() == logging.INFO:
-            logger.info('Detected %i objects covering %i pixels.', seg.nlabels,
-                        seg.to_binary().sum())
+            cls.logger.info('Detected %i objects covering %i pixels.',
+                            seg.nlabels, seg.to_binary().sum())
 
         return seg
 
     # --------------------------------------------------------------------------
-    def _detect_refine(self, image, mask=False, background=None, snr=3.,
-                       npixels=7, edge_cutoff=None, deblend=False,
-                       dilate=0, group_name=None, ignore_labels=()):
+    def _detect_refine(self, image, mask=False, dilate=0,
+                       group_id=None, ignore_labels=(),
+                       **kws):
         """
         Refine detection by running on image with current segments masked.
 
@@ -938,22 +869,34 @@ class SegmentedImage(SegmentationImage,  # base
           of this class. It runs a detection on the background region of the
           image - i.e. all detected objects masked out except those in
           `ignore_labels`
+
+        group_id: hashable object
+            Key representing the name of this group. This parameter controls
+            whether the new segments will be added to the original
+            SegmentedImage. If it is given
         """
         #
+        # check if group key ok
+        if group_id is auto_id:
+            group_id = self.groups.auto_key()
+        
+        if not isinstance(group_id, abc.Hashable):
+            raise ValueError('Group name {group_id} cannot be used since '
+                             'it is not a hashable object.')
 
+        # dilate existing labels
         if self.nlabels and (dilate == 'auto'):
-            self.auto_dilate(image, sigma=snr)
+            self.auto_dilate(image, sigma=kws.get('snr', 3))
             dilate = 0
 
         # update mask, get new labels
+        if mask is None:
+            mask = False
         mask = self.to_binary(None, ignore_labels) | mask
 
         # run detect classmethod
-        new = type(self).detect(image, mask, background, snr, npixels,
-                                edge_cutoff, deblend, dilate, group_name)
-
-        # update label groups
-        # new.groups.update(self.groups)
+        # print(kws)
+        new = type(self).detect(image, mask, dilate, **kws)
 
         # since we dilated the detection masks, we may now be overlapping
         # with previous detections. Remove overlapping pixels here.
@@ -961,11 +904,11 @@ class SegmentedImage(SegmentationImage,  # base
             overlap = self.to_binary() & new.to_binary()
             new.data[overlap] = 0
 
-        return new
+        # add labels and group
+        if group_id:
+            new, _ = self.add_segments(new, group_id=group_id)
 
-    # def __new__(cls, data):
-    #
-    #     return super().__new__(cls)
+        return new
 
     def __init__(self, data, label_groups=None):
         # self awareness
@@ -1113,13 +1056,13 @@ class SegmentedImage(SegmentationImage,  # base
 
     @lazyproperty
     def max_label(self):
-        if len(self.labels):
+        if self.labels.size:
             return super().max_label
-        else:
-            # otherwise `np.max` borks with empty sequence
-            return 0
 
-    def make_cmap(self, background_color='#000000', random_state=random_state):
+        # otherwise `np.max` borks with empty sequence
+        return 0
+
+    def make_cmap(self, background_color='#000000', seed=seed):
         # this function fails for all zero data since `make_random_cmap`
         # squeezes the rgb values into an array with shape (3,).  The parent
         # tries to set the background colour (a tuple) in the 0th position of
@@ -1129,7 +1072,7 @@ class SegmentedImage(SegmentationImage,  # base
         from photutils.utils.colormaps import make_random_cmap
         from matplotlib import colors
 
-        cmap = make_random_cmap(self.max_label + 1, random_state=random_state)
+        cmap = make_random_cmap(self.max_label + 1, seed=seed)
         cmap.colors = np.atleast_2d(cmap.colors)
 
         if background_color is not None:
@@ -1172,14 +1115,14 @@ class SegmentedImage(SegmentationImage,  # base
             # interpret tuples as sequences of labels, not as a group name
             labels = list(labels)
 
-        if isinstance(labels, col.Hashable):
+        if isinstance(labels, abc.Hashable):
             # interpret as a group label
             if labels not in self.groups:
                 raise ValueError('Could not interpret object %r as a set of '
                                  'labels, or as a key to any label group.' %
                                  labels)
-            else:
-                labels = self.groups[labels]
+
+            labels = self.groups[labels]
 
         # remove labels that are to be ignored
         if ignore is not None:
@@ -1585,7 +1528,7 @@ class SegmentedImage(SegmentationImage,  # base
     def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):  #
         """
         An estimate of the net (background subtracted) source counts, and its
-        associated uncertainty
+        associated uncertainty.
 
         Parameters
         ----------
@@ -1606,7 +1549,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         # estimate sky counts and noise from data
         counts, counts_bg_pp, n_pix_src, n_pix_bg = self._flux(
-            image, labels, bg)
+            image, labels, bg, statistic_bg)
 
         # bg subtracted source counts
         signal = counts - counts_bg_pp * n_pix_src
@@ -1791,31 +1734,37 @@ class SegmentedImage(SegmentationImage,  # base
 
     # --------------------------------------------------------------------------
 
-    def relabel_many(self, old_labels, new_labels):
+    def relabel_many(self, *label_sets):
         """
         Reassign multiple labels
 
         Parameters
         ----------
-        old_labels
+        [old_labels]
         new_labels
 
         Returns
         -------
 
         """
-        old_labels = self.resolve_labels(old_labels)
+        assert len(label_sets) in (1, 2)
+        *old, new = label_sets
+        old, = old or (None, )
+        if isinstance(new, dict):
+            old, new = zip(*new.items())
+            
+        old = self.resolve_labels(old)
 
-        if len(old_labels) != len(new_labels):
+        if len(old) != len(new):
             raise ValueError('Unequal number of labels')
 
         # catch for empty label vectors
-        if old_labels.size == 0:
+        if old.size == 0:
             return
 
         # there may be labels missing
         forward_map = np.arange(self.max_label + 1)
-        forward_map[old_labels] = new_labels
+        forward_map[old] = new
         self.data = forward_map[self.data]
 
     def dilate(self, iterations=1, connectivity=4, labels=None, mask=None,
@@ -1873,9 +1822,9 @@ class SegmentedImage(SegmentationImage,  # base
 
         if copy:
             return self.__class__(data)
-        else:
-            self.data = data
-            return self
+
+        self.data = data
+        return self
 
     def auto_dilate(self, image, labels=None, dmax=5, sigma=3):
         #
@@ -1886,8 +1835,7 @@ class SegmentedImage(SegmentationImage,  # base
         if len(labels) == 0:
             return self
 
-        count = 0
-        while count <= dmax:
+        for count in range(dmax + 1):
             self.logger.debug('round %i', count)
 
             mim = self.mask_sources(image, labels)
@@ -1909,8 +1857,6 @@ class SegmentedImage(SegmentationImage,  # base
                                  sum(~dark))
                     bb[tuple(w[:, dark])] = False
                     self.data[s][bb] = label
-
-            count += 1
 
     def blend(self):
         """
@@ -1983,8 +1929,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         return msky
 
-    def add_segments(self, data, label_insert=None, copy=False,
-                     group_name=None):
+    def add_segments(self, data, label_insert=None, copy=False, group_id=None):
         """
         Add segments from another SegmentationImage.  New segments will
         over-write old segments in the pixel positions where they overlap.
@@ -1997,7 +1942,7 @@ class SegmentedImage(SegmentationImage,  # base
             If int; value for starting label of new data. Current labels will be
               shifted upwards.
         copy
-        group_name
+        group_id
 
         Returns
         -------
@@ -2059,8 +2004,8 @@ class SegmentedImage(SegmentationImage,  # base
         for gid, nrs in groups.items():
             groups[gid] = forward_map[nrs]
 
-        if group_name is not None:
-            groups[group_name] = new_labels
+        if group_id is not None:
+            groups[group_id] = new_labels
 
         # mask for new label regions
         new_pix = data.astype(bool)
@@ -2069,11 +2014,11 @@ class SegmentedImage(SegmentationImage,  # base
             seg_data_out[new_pix] = data[new_pix]
             groups.update(self.groups)
             return self.__class__(seg_data_out, groups), new_labels
-        else:
-            self.data[new_pix] = data[new_pix]
-            self._reset_lazy_properties()
-            self.groups.update(groups)
-            return self, new_labels
+
+        self.data[new_pix] = data[new_pix]
+        self._reset_lazy_properties()
+        self.groups.update(groups)
+        return self, new_labels
 
     def inside_segment(self, coords, labels=None):
         # filter COM positions that are outside of detection regions
@@ -2194,20 +2139,22 @@ class SegmentedImage(SegmentationImage,  # base
         return im
 
     def draw_labels(self, ax, **kws):
-        
+
         import matplotlib.patheffects as path_effects
-        
-        
-        kws_ = dict(va='center', ha='center')
-        kws_.update(**kws)
+
+        kws = {**dict(va='center', ha='center'), **kws}
+        texts = []
         for lbl, pos in self._label_positions().items():
             for x, y in pos[:, ::-1]:
-                txt = ax.text(x, y, str(lbl), **kws_)
+                txt = ax.text(x, y, str(lbl), **kws)
 
                 # add border around text to make it stand out (like the arrows)
                 txt.set_path_effects(
                     [path_effects.Stroke(linewidth=1, foreground='black'),
                      path_effects.Normal()])
+                texts.append(txt)
+
+        return texts
 
     def display_term(self, show_labels=True, frame=True, origin=0):
         """
@@ -2312,7 +2259,7 @@ class SegmentedImage(SegmentationImage,  # base
             endings = (f'{codes.END}\n',) * nr
 
         # newline positions / strings
-        marks = col.defaultdict(str)
+        marks = defaultdict(str)
 
         # make line end markers.  New line begins with a coloured pixel.
         nli = np.arange(nc, nr * nc + 1, nc)
@@ -2443,7 +2390,7 @@ class SegmentedImage(SegmentationImage,  # base
         kws.setdefault('colors', cmap(list(boundaries.keys())))
         return LineCollection(list(mit.flatten(contours)), **kws)
 
-    def show_overlay(self, ax, labels=None, **kws):
+    def draw_contours(self, ax, labels=None, **kws):
         lines = self.get_contours(labels, **kws)
         ax.add_collection(lines)
         return lines

@@ -251,7 +251,7 @@ def fmt_dec(x):
     return pprint.hms(x * 3600, sep='°’”', precision=1)
 
 
-class RKCat(object):
+class RKCat:
     # TODO: inherit from Table??
 
     # @classmethod

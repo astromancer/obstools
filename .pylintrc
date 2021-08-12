@@ -142,6 +142,8 @@ disable=print-statement,
         import-outside-toplevel,
         protected-access,
         non-ascii-name,
+        superfluous-parens,
+        broad-except,
         too-many-instance-attributes,
         too-many-arguments,
         too-many-lines,
@@ -266,10 +268,10 @@ contextmanager-decorators=contextlib.contextmanager
 # List of members which are set dynamically and missed by pylint inference
 # system, and so shouldn't trigger E1101 when accessed. Python regular
 # expressions are accepted.
-generated-members=numpy.*,
-                  np.*,
-                  motley.*,
-                  astropy.constants.*
+generated-members=numpy.*, np.*,
+                  astropy.constants.*,
+                  cmasher.*, cmr.*,
+                  motley.*
 
 
 # Tells whether missing members accessed in mixin class should be ignored. A
@@ -297,7 +299,10 @@ ignored-classes=optparse.Values,
                 recipes.testing.Expect
                 recipes.testing.mock,
                 recipes.dicts.AttrReadItem,
-                recipes.dicts.AttrDict
+                recipes.dicts.AttrDict,
+                ; recipes.logging.LoggingMixin
+                shoc.pipeline.FolderTree,
+                
 
 # List of module names for which member attributes should not be checked
 # (useful for modules/projects where namespaces are manipulated during runtime
@@ -346,11 +351,10 @@ attr-naming-style=snake_case
 
 # Regular expression matching correct attribute names. Overrides attr-naming-
 # style.
-#attr-rgx=
+attr-rgx=\w[\w0-9]{0,30}$
 
 # Bad variable names which should always be refused, separated by a comma.
 bad-names=foo,
-          bar,
           baz,
           toto,
           tutu,

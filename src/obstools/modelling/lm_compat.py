@@ -173,7 +173,7 @@ def lmModelFactory(base_, method_names, param_names):
     return lmCompatModel
 
 
-class _InitializeParameterized(object):
+class _InitializeParameterized:
     """
     When called with the param value as the only argument, returns an
     un-initialized instance of the parameterized class. Subsequent __setstate__

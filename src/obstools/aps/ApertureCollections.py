@@ -854,7 +854,7 @@ class SkyApertures(ApertureCollection):
 #
 #         return lc
 
-# class Test(object):
+# class Test:
 # def connect(name):
 # def _decorator(func):
 # print( name, func )

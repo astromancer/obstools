@@ -68,7 +68,7 @@ def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
     return list(map('%s = %s'.__mod__, zip(names, s)))
 
 
-class _RecurseHelper(object):
+class _RecurseHelper:
     """
     Helper class for initializing array subclasses by walking arbitrarily nested
     object definitions.
@@ -418,7 +418,7 @@ class MCMCParams(Parameters):
     #     pass
 
 
-class _Prior(object):
+class _Prior:
     #
     def freeze(self, *args, **kwds):
         return Prior(self, *args, **kwds)

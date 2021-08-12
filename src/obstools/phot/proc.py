@@ -232,7 +232,7 @@ def opt_factory(p):
     return cls()
 
 
-class ApertureOptimizer(object):
+class ApertureOptimizer:
     def __init__(self, ap, ap_sky, method='exact', rmin=1, rmax=10):
         self.ap = ap
         self.ap_sky = ap_sky
@@ -332,7 +332,7 @@ class EllipseOptimizer(ApertureOptimizer):
             ap_sky.theta = theta
 
 
-class TaskExecutor(object):
+class TaskExecutor:
     """
     Decorator that catches and logs exceptions instead of actively raising.
 

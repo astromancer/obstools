@@ -13,7 +13,7 @@ import multiprocessing as mp
 # logging.Logger.debugv = debugv
 
 
-class MyHandler(object):
+class MyHandler:
     """
     A simple handler for logging events. It runs in the listener process and
     dispatches events to loggers based on the name in the received record,

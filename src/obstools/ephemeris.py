@@ -15,7 +15,7 @@ from matplotlib import ticker
 from matplotlib.transforms import Affine2D
 
 
-class Ephemeris(object):
+class Ephemeris:
     # TODO: def from_string(self):
     # TODO: fit method!!
 

@@ -57,7 +57,7 @@ def rigid(xy, p):
     if (np.ndim(xy) < 2) or (np.shape(xy)[-1] != 2):
         raise ValueError('Invalid dimensions for coordinate array `xy`')
 
-    if not len(p) == 3:
+    if len(p) != 3:
         raise ValueError('Invalid parameter array for rigid transform `xy`')
 
     return rotate(xy, p[-1]) + p[:2]
