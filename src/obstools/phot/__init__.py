@@ -1,4 +1,6 @@
 import logging
+from .core import PhotInterface
+
 
 # create module level logger
 logbase = 'phot'

@@ -3,7 +3,6 @@ Extensions for segmentation images
 """
 
 
-
 # std libs
 import types
 import inspect
@@ -17,10 +16,12 @@ from collections import abc, namedtuple, defaultdict
 import numpy as np
 import more_itertools as mit
 from scipy import ndimage
+from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
 
 # local libs
+from pyxides.vectorize import vdict
 from recipes.dicts import pformat
 from recipes.logging import LoggingMixin, get_module_logger
 
@@ -373,25 +374,7 @@ class SegmentedArray(np.ndarray):
 #         return NotImplemented
 
 
-class vdict(dict):
-    """
-    Dictionary with vectorized item lookup
-    """
-
-    def __getitem__(self, key):
-        # dispatch on np.ndarray for vectorized item getting with arbitrary
-        # nesting
-        if isinstance(key, (np.ndarray, list, tuple)): 
-            # Container and not str
-            return [self[_] for _ in key]
-
-        if key in (Ellipsis, None):
-            return list(self.values())
-
-        return super().__getitem__(key)
-
-
-class Sliced(vdict):
+class SliceDict(vdict):
     """
     Dict-like container for tuples of slices. Aids selecting rectangular
     sub-regions of images more easily.
@@ -458,14 +441,15 @@ class Sliced(vdict):
     #     return sizes
 
     def grow(self, labels, inc=1):
-        """Increase the size of each slice in all directions by an increment"""
+        """
+        Increase the size of each slice in all directions by an increment.
+        """
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
         urc = np.add(self.urc(labels), inc)  # .clip(None, self.seg.shape)
         llc = np.add(self.llc(labels), -inc).clip(0)
-        slices = [tuple(slice(*i) for i in yxix)
-                  for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
-        return slices
+        return [tuple(slice(*i) for i in _)
+                for _ in zip(*np.swapaxes([llc, urc], -1, 0))]
 
     # def around_centroids(self, image, size, labels=None):
     #     com = self.seg.centroid(image, labels)
@@ -516,7 +500,7 @@ class Sliced(vdict):
 
 
 # class Slices:
-#     # FIXME: remove this now superceded by Sliced
+#     # FIXME: remove this now superceded by SliceDict
 #     """
 #     Container emulation for tuples of slices. Aids selecting rectangular
 #     sub-regions of images more easil
@@ -587,6 +571,7 @@ class MaskedStatsMixin:
     # >>> obj.sum(image)
     #
 
+    # define supported statistics
     _supported = ['sum',
                   'mean', 'median',
                   'minimum', 'minimum_position',
@@ -594,6 +579,8 @@ class MaskedStatsMixin:
                   # 'extrema', # return signature is different, so don't support
                   'variance', 'standard_deviation',
                   'center_of_mass']
+
+    # define some convenient aliases for the ndimage functions
     _aliases = {'minimum': 'min',
                 'maximum': 'max',
                 'minimum_position': 'argmin',  # minpos # minloc
@@ -637,7 +624,7 @@ class MaskedStatistic:
         self.__name__ = name = func.__name__
         self.__doc__ = self._doc_template % name.title().replace('_', ' ')
 
-    def __get__(self, seg, objtype=None):
+    def __get__(self, seg, kls=None):
 
         if seg is None:  # called from class
             return self
@@ -651,49 +638,48 @@ class MaskedStatistic:
         seg._check_input_data(image)
         labels = seg.resolve_labels(labels, allow_zero=True)
 
-        worker = self.worker_ma if np.ma.is_masked(image) else self.worker
-        if image.ndim == 2:
-            result = worker(image, seg, labels)
-        else:
-            # TODO: may as well parallelize here!!
-            result = [worker(im, seg, labels) for im in image]
-
         # ensure return array or masked array and not list.
-        return np.asanyarray(result)
+        return np.asanyarray(self._run(image, seg, labels))
+
+    def _run(self, data, seg, labels, njobs=-1, **kws):
+        worker = (self.worker, self.worker_ma)[np.ma.is_masked(data)]
+
+        if data.ndim == 2:
+            return worker(data, seg, labels)
+
+        with Parallel(n_jobs=njobs, **kws) as parallel:
+            return parallel(delayed(worker)(im, seg, labels) for im in data)
 
     def worker(self, image, seg, labels):
         return self.func(image, seg.data, labels)
 
     def worker_ma(self, image, seg, labels):
         # ignore masked pixels
-        seg_data = seg.data
-        original = seg_data[image.mask]
+        seg_data = seg.data.copy()
+        # original = seg_data[image.mask]
         seg_data[image.mask] = seg.max_label + 1
-        # this label will not be used for statistic computation
+        # this label will not be used for statistic computation.
+        # NOTE: intentionally not using 0 here since that may be one of the
+        # labels for which we are computing the statistic.
 
-        # wrap the compute in an exception clause since we would like to restore
-        # the segmentation data if anything goes wrong during the compute
-        try:
-            # compute
-            result = self.func(image, seg_data, labels)
-        except:
-            raise
+        # compute
+        result = self.func(image, seg_data, labels)
+
+        # now we have to check which labels may be completely masked in
+        # image data, so we can mask those in output
+        mask = (ndimage.sum(~image.mask, seg_data, labels) == 0)
+        # get output mask
+        # for functions that return array-like results per segment (eg.
+        # com), we have to up-cast the mask
+        if mask.any():
+            result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
         else:
-            # now we have to check which labels may be completely masked in
-            # image data, so we can mask those in output
-            mask = (ndimage.sum(np.logical_not(image.mask),
-                                seg_data, labels) == 0)
-            # get output mask
-            # for functions that return array-like results per segment (eg.
-            # com), we have to up-cast the mask
-            if mask.any():
-                result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
-            else:
-                mask = False
-            return np.ma.MaskedArray(result, mask)
-        finally:
-            # restore the original labels of the masked pixels
-            seg.data[image.mask] = original
+            mask = False
+
+        return np.ma.MaskedArray(result, mask)
+        # finally:
+        #     # restore the original labels of the masked pixels
+        #     seg.data[image.mask] = original
 
 
 def radial_source_profile(image, seg, labels=None):
@@ -779,7 +765,6 @@ class SegmentedImage(SegmentationImage,     # base
     # In terms of modelling, this class also functions as a domain mapping layer
     # that lives on top of images.
 
-    
     seed = None
 
     # Constructors
@@ -792,8 +777,6 @@ class SegmentedImage(SegmentationImage,     # base
         Sources can be added later using the `add_segments` method
         """
         return cls(np.zeros(image.shape, int))
-
-
 
     @classmethod
     def from_image(cls, image, dilate=0, flux_sort=True, **kws):
@@ -826,8 +809,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     # @classmethod
     # def _detect(cls, algorithm, image, mask=False, **kws):
-        
-        
+
     @classmethod
     def detect(cls, image, mask=False, dilate=0, **kws):
         """
@@ -879,7 +861,7 @@ class SegmentedImage(SegmentationImage,     # base
         # check if group key ok
         if group_id is auto_id:
             group_id = self.groups.auto_key()
-        
+
         if not isinstance(group_id, abc.Hashable):
             raise ValueError('Group name {group_id} cannot be used since '
                              'it is not a hashable object.')
@@ -944,7 +926,7 @@ class SegmentedImage(SegmentationImage,     # base
         # unpickling
         return self.__class__, (self.data,)
 
-    def __array__(self, *args):
+    def __array__(self, *_):
         """
         Array representation of the segmentation image (e.g., for
         matplotlib).
@@ -960,7 +942,7 @@ class SegmentedImage(SegmentationImage,     # base
     # --------------------------------------------------------------------------
     def _reset_lazy_properties(self):
         """Reset all lazy properties.  Will work for subclasses"""
-        for key, value in inspect.getmembers(self.__class__, is_lazy):
+        for key, _ in inspect.getmembers(self.__class__, is_lazy):
             self.__dict__.pop(key, None)
         # TODO: base class method should suffice in recent versions - remove
 
@@ -998,7 +980,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     @lazyproperty
     def has_zero(self):
-        """Check if there are any zeros in the segmentation image"""
+        """Check if there are any zeros in the segmentation image."""
         return 0 in self.data
 
     @lazyproperty
@@ -1007,18 +989,21 @@ class SegmentedImage(SegmentationImage,     # base
         Segment bounding boxes as dict of tuple of slices.  The object
         returned by this method has builtin vectorized item getting, so you
         can get many slices at once (as a list) by indexing it with a tuple,
-        list, or np.ndarray.  Eg:
+        list, or np.ndarray.
+
+        Examples
+        --------
         >>> seg.slices[0, 1, 2]
 
         You can also choose only row or column slices like this:
-        >>> seg.slices.x[7, 8] # returns a list of slices
-        which is very nice.
+        >>> seg.slices.x[7, 8] # returns a list of slices which is very nice.
+
         """
         s = {0: (slice(None),) * self.data.ndim}
         s.update(zip(self.labels, SegmentationImage.slices.fget(self)))
-        return Sliced(s)
+        return SliceDict(s)
 
-    def sliced(self, label):
+    def sliced(self, label):  # cutout
         """
         Shorthand for
         >>> seg.data[seg.slices[label]]
@@ -1031,7 +1016,8 @@ class SegmentedImage(SegmentationImage,     # base
         return self.data[self.slices[label]]
 
     @lazyproperty
-    def heights(self):
+    def heights(self):  # TODO: manage these through MethodVectorizer api
+        """Vector of segment heights"""
         return self.get_heights()
 
     def get_heights(self, labels=None):
@@ -1039,6 +1025,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     @lazyproperty
     def widths(self):
+        """Vector of segment widths"""
         return self.get_widths()
 
     def get_widths(self, labels=None):
@@ -1525,7 +1512,7 @@ class SegmentedImage(SegmentationImage,     # base
         self._check_input_data(data)
         return list(self.coslice(data, labels=labels, masked=masked))
 
-    def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):  #
+    def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):
         """
         An estimate of the net (background subtracted) source counts, and its
         associated uncertainty.
@@ -1533,12 +1520,14 @@ class SegmentedImage(SegmentationImage,     # base
         Parameters
         ----------
         image: ndarray
+            2d image or 3d image stack (video).
         labels: sequence of int
+            Labels to use.
         bg: sequence of int, np.ndarray, SegmentationImage
             if sequence, must be of length 1 or same length as `labels`
-            if array of dimensionality 2, must be same shape as image
-
-        statistic_bg
+            if array of dimensionality 2, must be same shape as image.
+        statistic_bg: str or callable
+            Statistic to use for background flux estimate.
 
         Returns
         -------
@@ -1608,8 +1597,8 @@ class SegmentedImage(SegmentationImage,     # base
         segment as per Merlin & Howell '95
         """
 
-        signal, noise = self.flux(image, labels, bg)
-        return signal / noise
+        return np.divide(*self.flux(image, labels, bg))
+        # return signal / noise
 
     # def noise(self, image)
 
@@ -1752,7 +1741,7 @@ class SegmentedImage(SegmentationImage,     # base
         old, = old or (None, )
         if isinstance(new, dict):
             old, new = zip(*new.items())
-            
+
         old = self.resolve_labels(old)
 
         if len(old) != len(new):
