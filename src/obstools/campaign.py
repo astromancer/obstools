@@ -20,49 +20,33 @@ import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
+
+# local libs
+import docsplice as doc
+from motley.table import AttrTable
+from recipes.oo import SelfAware, null
+from recipes import caches, io, bash
+from recipes.logging import LoggingMixin
+from recipes.string.brackets import braces
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.grouping import Groups, AttrGrouper
 from pyxides.vectorize import Vectorized, AttrVectorizer
 from pyxides.pprint import PrettyPrinter, PPrintContainer
 
-# local libs
-import docsplice as doc
-from motley.table import AttrTable
-from recipes.oo import SelfAware
-from recipes.oo.null import NULL
-from recipes import caches, io, bash
-from recipes.logging import LoggingMixin
-from recipes.string.brackets import braces
-
 # relative libs
-from .. import cachePaths, _hdu_hasher
-from ..image.detect import SourceDetectionMixin
-from ..image.sample import ImageSamplerMixin
-from ..image.calibration import ImageCalibratorMixin
-# from ..image.registration import ImageRegister, ImageRegisterDSS
-
-
-# translation for special "[22:34]" type file globbing
-REGEX_SPECIAL = re.compile(r'(.*?)\[(\d+)\.{2}(\d+)\](.*)')
+from . import cachePaths, _hdu_hasher
+from .image.sample import ImageSamplerMixin
+from .image.detect import SourceDetectionMixin
+from .image.calibration import ImageCalibratorMixin
 
 
 # TODO: multiprocess generic methods
 # TODO: Create an abstraction layer that can split and merge multiple time
-#  series data sets
-
+#        series data sets
 # TODO: # each item in this container should have  MultivariateTimeSeries
 #  containing changes of observed brightness (etc ...) over time
 
-
-# class ImageRegisterMixin:
-#     'todo maybe'
-
-
-# def _get_file_name(hdu):
-#     # gets the item string for pprinting Campaign
-#     return hdu.file.name
-#
 
 def is_property(v):
     return isinstance(v, property)
@@ -74,7 +58,7 @@ class FilenameHelper:
     """
 
     def __init__(self, hdu):
-        self._path = Path(hdu._file.name) if hdu._file else NULL
+        self._path = Path(hdu._file.name) if hdu._file else null.NULL
 
     def __str__(self):
         return str(self.path)
@@ -98,12 +82,11 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
     """
     def __new__(cls, campaign):
         obj = super().__new__(cls)
-        # use all
+        # vectorize all properties of `FilenameHelper`
         kls = campaign._allowed_types[0]._FilenameHelperClass
         for name, _ in inspect.getmembers(kls, is_property):
             # print('creating property', name)
             setattr(cls, f'{name}s', AttrVectorizer(name))
-
         return obj
 
     def __init__(self, campaign):
@@ -112,14 +95,16 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
     def common_root(self):
         parents = {p.parent for p in self.paths}
         root = parents.pop()
-        if parents:  # more than one root
-            return
-        if root:
+        if root:  # single root
             return root
+        # multiple roots: return None
 
 
-class HDUExtra(PrimaryHDU, ImageSamplerMixin, ImageCalibratorMixin,
-               LoggingMixin, SourceDetectionMixin):
+class HDUExtra(PrimaryHDU,
+               ImageSamplerMixin,
+               ImageCalibratorMixin,
+               LoggingMixin,
+               SourceDetectionMixin):
     """
     Some extra methods and properties that help PhotCampaign
     """
@@ -548,20 +533,19 @@ class PhotCampaign(PPrintContainer,
             _, lhr = reg.refine()
             if lhr < 1.01:
                 break
-            
+
             reg.recentre()
 
         return reg
 
     def _coalign(self, sample_stat='median', depth=10, primary=None,
                  plot=False, **find_kws):
-        
+
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
-        from ..image.registration import ImageRegister
-        
-        
+        from .image.registration import ImageRegister
+
         reg = ImageRegister(**find_kws)
         # If no reference image indicated by user-specified `primary`, choose
         # image with highest resolution if any, otherwise, just take the first.
@@ -574,20 +558,19 @@ class PhotCampaign(PPrintContainer,
         # Other images are fit concurrently
         rest = self[np.delete(np.arange(len(self)), primary)]
         reg(rest, **kws)
-        
-        # 
+
+        #
         if plot:
             reg.mosaic()
 
         # return reg, idx
 
         # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars by fitting clusters to center-of-mass 
+        # register constellation of stars by fitting clusters to center-of-mass
         # measurements. Refine the fit, by ...
         reg.register(plot=plot)
         reg.refine(plot=plot)
         reg.recentre(plot=plot)
-
         return reg
 
     @doc.splice(coalign, 'Parameters')
@@ -626,8 +609,8 @@ class PhotCampaign(PPrintContainer,
 
         """
 
-        from ..image.registration import ImageRegisterDSS
-        
+        from .image.registration import ImageRegisterDSS
+
         survey = survey.lower()
         if survey != 'dss':
             raise NotImplementedError('Only support for DSS image lookup atm.')
@@ -643,7 +626,7 @@ class PhotCampaign(PPrintContainer,
         dss = ImageRegisterDSS(self[primary].coords, fov, **find_kws)
         dss.fit_register(reg, refine=False)
         dss.register()
-        
+
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
         dss.build_wcs(self)
@@ -658,7 +641,7 @@ class PhotCampaign(PPrintContainer,
     def close(self):
         # close all files
         self.calls('_file.close')
-    
+
     @property
     def phot(self):
         # The photometry interface

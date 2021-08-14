@@ -50,7 +50,7 @@ from . import transforms as transform
 from .segmentation import SegmentedImage
 from .image import SkyImage, ImageContainer
 from ..modelling import Model
-from ..phot.campaign import HDUExtra
+from ..campaign import HDUExtra
 from ..stats import geometric_median
 from ..utils import get_coordinates, get_dss, STScIServerError
 

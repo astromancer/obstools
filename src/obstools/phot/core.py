@@ -14,8 +14,8 @@ from recipes.logging import logging, get_module_logger
 
 # relative libs
 from ..lc.ascii import write
-from .campaign import PhotCampaign
-from . import io
+from ..campaign import PhotCampaign
+from .. import io
 
 # module level logger
 logger = get_module_logger()
