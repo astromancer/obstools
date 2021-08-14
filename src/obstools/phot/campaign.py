@@ -532,32 +532,26 @@ class PhotCampaign(PPrintContainer,
         # For each telescope, align images wrt each other
         for i in order:
             run = groups[keys[i]]
-            registers[i] = run._coalign(sample_stat, depth, plot=plot,
-                                        **find_kws)
-
-        # return registers, order
+            registers[i] = run._coalign(
+                sample_stat, depth, plot=plot, **find_kws)
 
         # match coordinates of registers against each other
-        imr = registers[order[0]]
+        reg = registers[order[0]]
         for i in order[1:]:
-            imr.fit(registers[i])
-            imr.register()
+            reg.fit(registers[i])
+            reg.register()
 
         # refine alignment
-        count = 0
-        lhr = 10  # likelihood ratio for gmm model before and and after refine
-        while (lhr > 1.01) and (count < 5):
-            _, lhr = imr.refine()
-            imr.recentre()
-            count += 1
+        refine = 5
+        for _ in range(refine):
+            # likelihood ratio for gmm model before and and after refine
+            _, lhr = reg.refine()
+            if lhr < 1.01:
+                break
+            
+            reg.recentre()
 
-        #
-        # imr.recentre(plot=plot)
-        # lhr = 2
-        # while lhr > 1.0005:
-        # _, lhr = imr.refine(plot=plot)
-
-        return imr
+        return reg
 
     def _coalign(self, sample_stat='median', depth=10, primary=None,
                  plot=False, **find_kws):
@@ -649,6 +643,7 @@ class PhotCampaign(PPrintContainer,
         dss = ImageRegisterDSS(self[primary].coords, fov, **find_kws)
         dss.fit_register(reg, refine=False)
         dss.register()
+        
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
         dss.build_wcs(self)
@@ -663,6 +658,12 @@ class PhotCampaign(PPrintContainer,
     def close(self):
         # close all files
         self.calls('_file.close')
+    
+    @property
+    def phot(self):
+        # The photometry interface
+        from .core import PhotInterface
+        return PhotInterface(self)
 
 
 class ObsGroups(Groups, LoggingMixin):
