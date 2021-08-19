@@ -173,19 +173,19 @@ class HDUExtra(PrimaryHDU,
         raise NotImplementedError
 
     # plotting
-    def display(self, **kws):
+    def show(self, **kws):
         """Display the data"""
 
         if self.ndim == 2:
             from scrawl.imagine import ImageDisplay
+            
             im = ImageDisplay(self.data, **kws)
             # `section` fails with 2d data
 
         elif self.ndim == 3:
-            from scrawl.imagine import VideoDisplay
-            # FIXME: this does not work since VideoDisplay tries to interpret
-            #  `self.section` as an array
-            im = VideoDisplay(self.section, **kws)
+            from .image.display import FitsVideo
+            
+            im = FitsVideo(self, **kws)
 
         else:
             raise TypeError('Data is not image or video.')
