@@ -1,24 +1,23 @@
 
 
-# std libs
-import logging, logging.config
+# std
+import logging
 import functools as ftl
 from collections import defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 from sklearn.mixture import GaussianMixture
 from photutils import detect_threshold, detect_sources
 
-# local libs
+# local
 import recipes.pprint as pp
 from recipes.iter import iter_repeat_last
 from recipes.string import sub, snake_case
 from recipes.logging import get_module_logger, LoggingMixin
 from motley.table import Table
 
-# relative libs
-from .segmentation import groups, SegmentedImage
+# relative
 from ..modelling import UnconvergedOptimization
 
 

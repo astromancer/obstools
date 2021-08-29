@@ -4,7 +4,7 @@ Functions to read and parse the MASTER transient alert website:
 """
 
 
-# std libs
+# std
 from astropy.coordinates import jparser
 from recipes.string import sub
 import re
@@ -15,12 +15,12 @@ from collections import OrderedDict
 from urllib.request import urlopen
 import warnings
 
-# third-party libs
+# third-party
 import numpy as np
 from astropy.time import Time, TimeDelta
 from astropy.table import Table
 
-# local libs
+# local
 from recipes.iter import first_true_idx
 
 from .utils import fmt_ra, fmt_dec

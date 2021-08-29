@@ -1,18 +1,18 @@
 
 
-# std libs
+# std
 import functools as ftl
 import itertools as itt
 
-# third-party libs
+# third-party
 import numpy as np
 
-# local libs
+# local
 from recipes.lists import split_like
 from recipes.iter import split_slices
 from recipes.logging import logging, get_module_logger
 
-# relative libs
+# relative
 from ..lc.ascii import write
 from ..campaign import PhotCampaign
 from .. import io

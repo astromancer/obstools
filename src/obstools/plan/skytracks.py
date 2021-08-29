@@ -3,7 +3,7 @@ Tools for visualising object tracks across the night sky
 """
 
 
-# std libs
+# std
 from astropy.utils import lazyproperty
 import functools as ftl
 from PyQt5 import QtCore
@@ -18,7 +18,7 @@ from functools import partial
 from datetime import datetime
 from collections import OrderedDict, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 import astropy.units as u
 from astropy.time import Time, TimeDelta
@@ -43,7 +43,7 @@ from recipes.dicts import DefaultOrderedDict
 from scrawl.ticks import DegreeFormatter, TransFormatter
 from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
-# local libs
+# local
 # from motley import profiling
 from recipes.lists import sortmore
 import recipes.pprint as ppr

@@ -4,7 +4,7 @@ observation files.
 """
 
 
-# std libs
+# std
 import re
 import glob
 import inspect
@@ -15,13 +15,13 @@ import itertools as itt
 from pathlib import Path
 from collections import UserList, abc
 
-# third-party libs
+# third-party
 import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
 
-# local libs
+# local
 import docsplice as doc
 from motley.table import AttrTable
 from recipes.oo import SelfAware, null
@@ -34,7 +34,7 @@ from pyxides.grouping import Groups, AttrGrouper
 from pyxides.vectorize import Vectorized, AttrVectorizer
 from pyxides.pprint import PrettyPrinter, PPrintContainer
 
-# relative libs
+# relative
 from . import cachePaths, _hdu_hasher
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin

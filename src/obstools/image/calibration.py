@@ -1,14 +1,14 @@
 
 
-# std libs
+# std
 from collections import abc
 
-# third-party libs
+# third-party
 import numpy as np
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 
-# local libs
+# local
 from recipes.dicts import pformat
 
 

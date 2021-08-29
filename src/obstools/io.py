@@ -5,10 +5,10 @@ Input / output helpers
 import logging
 from pathlib import Path
 
-# third-party libs
+# third-party
 import numpy as np
 
-# local libs
+# local
 from recipes.logging import logging, get_module_logger
 
 from .utils import int2tup

@@ -1,10 +1,10 @@
-# std libs
+# std
 import functools as ftl
 
-# third-party libs
+# third-party
 import numpy as np
 
-# local libs
+# local
 import motley
 from recipes.lists import split
 from recipes.functionals import echo0

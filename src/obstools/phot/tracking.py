@@ -2,7 +2,7 @@
 Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
-# std libs
+# std
 import logging
 import functools as ftl
 import itertools as itt
@@ -10,7 +10,7 @@ import multiprocessing as mp
 import tempfile
 from pathlib import Path
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 from sklearn.cluster import MeanShift
@@ -18,8 +18,7 @@ from scipy.spatial.distance import cdist
 from astropy.utils import lazyproperty
 from astropy.stats import median_absolute_deviation as mad
 
-# local libs
-<<<<<<< HEAD:src/obstools/phot/tracking.py
+# local
 from obstools.image.registration import compute_centres_offsets, \
     group_features, report_measurements  # register_constellation
 from recipes.dicts import AttrReadItem

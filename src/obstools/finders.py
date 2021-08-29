@@ -2,7 +2,7 @@
 Make finder charts from source name or coordinates.
 """
 
-# third-party libs
+# third-party
 import aplpy
 import numpy as np
 

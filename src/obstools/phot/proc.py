@@ -1,10 +1,10 @@
-# std libs
+# std
 import time
 import logging
 import tempfile
 import itertools as itt
 
-# third-party libs
+# third-party
 import numpy as np
 import astropy.units as u
 from scipy.optimize import minimize
@@ -13,12 +13,12 @@ from photutils.aperture import (CircularAperture, CircularAnnulus,
                                 EllipticalAnnulus
                                 )
 
-# local libs
+# local
 from recipes import pprint
 from recipes.string import resolve_percentage
 from recipes.logging import LoggingMixin, ProgressLogger
 
-# relative libs
+# relative
 from ..modelling.utils import load_memmap
 
 OPT_SNR_THRESH = 10

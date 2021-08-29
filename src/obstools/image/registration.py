@@ -12,7 +12,7 @@ Image registration (point set registration) for astronomicall images.
 #   brute force search with gaussian mixtures on points
 
 
-# std libs
+# std
 import re
 import logging
 import numbers
@@ -22,7 +22,7 @@ import itertools as itt
 import multiprocessing as mp
 from collections import abc
 
-# third-party libs
+# third-party
 import numpy as np
 import aplpy as apl
 import matplotlib.pyplot as plt
@@ -37,14 +37,14 @@ from scipy.spatial.ckdtree import cKDTree
 from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
 
-# local libs
+# local
 from scrawl.imagine import ImageDisplay
 from recipes.string import indent
 from recipes.functionals import echo0
 from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
 
-# relative libs
+# relative
 from .mosaic import MosaicPlotter
 from . import transforms as transform
 from .segmentation import SegmentedImage

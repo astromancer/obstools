@@ -3,7 +3,7 @@ Extensions for segmentation images
 """
 
 
-# std libs
+# std
 import types
 import inspect
 import logging
@@ -12,7 +12,7 @@ import warnings
 import itertools as itt
 from collections import abc, namedtuple, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 from scipy import ndimage
@@ -20,12 +20,13 @@ from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
 
-# local libs
+# local
 from pyxides.vectorize import vdict
 from recipes.dicts import pformat
 from recipes.logging import LoggingMixin, get_module_logger
 
-# relative libs
+# relative
+from ... import io
 from ..utils import shift_combine
 from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id

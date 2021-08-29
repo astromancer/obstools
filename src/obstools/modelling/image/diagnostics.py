@@ -2,14 +2,14 @@
 Diagnostic tools for modelling images
 """
 
-# std libs
+# std
 import time
 
-# third-party libs
+# third-party
 import numpy as np
 import matplotlib.pyplot as plt
 
-# local libs
+# local
 from recipes import pprint
 from scrawl.imagine import ImageDisplay
 

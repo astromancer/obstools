@@ -1,18 +1,18 @@
-# std libs
+# std
 import logging
 import warnings
 import itertools as itt
 import multiprocessing as mp
 from pathlib import Path
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-# local libs
+# local
 from scrawl.scatter import scatter_density
 from recipes.misc import is_interactive
 from motley.table import Table
