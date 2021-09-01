@@ -39,7 +39,7 @@ def trace_boundary(b, stop=int(1e4)):
     Parameters
     ----------
     b: array
-        Binary image array
+        Binary image array.
     stop: int
         Emergency stop criterion. Algorithm will terminate after this many
         pixels have been searched and the starting pixel has not yet been
@@ -50,11 +50,11 @@ def trace_boundary(b, stop=int(1e4)):
     Returns
     -------
     pixels: array (n, 2)
-        indices of pixels that make up the object boundary
+        Indices of pixels that make up the object boundary.
     boundary: array (m, 2)
-        The boundary outline of the object composed of pixel edges
+        The boundary outline of the object composed of pixel edges.
     perimeter: float
-        measurement of the object perimeter distance (circumference)
+        measurement of the object perimeter distance (circumference).
     """
 
     # find first pixel
@@ -89,8 +89,8 @@ def trace_boundary(b, stop=int(1e4)):
             new = current + mv  # new pixel position
 
             # check if new position is outside image, or is a black pixel
-            out_of_bounds = ((-1 in new) or (new == b.shape).any())
-            if out_of_bounds or not b[tuple(new)]:
+            # out_of_bounds = ((-1 in new) or (new == b.shape).any())
+            if ((-1 in new) or (new == b.shape).any()) or not b[tuple(new)]:
                 # add edge if not diagonal neighbour
                 if step_size == 1:
                     boundary.append(boundary[-1] + EDGES[tuple(mv)])

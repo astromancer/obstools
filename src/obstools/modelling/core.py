@@ -1,21 +1,21 @@
 # from pathlib import Path
 
 
-# std libs
+# std
 import numbers
 import operator as op
 # import multiprocessing as mp
 from collections import OrderedDict, MutableMapping, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 from scipy.optimize import minimize, leastsq
 
-# local libs
+# local
 from recipes.lists import tally
 from recipes.logging import LoggingMixin
 
-# relative libs
+# relative
 from ..io import load_memmap
 from ..utils import int2tup
 from .parameters import Parameters

@@ -1,13 +1,13 @@
 
-# std libs
+# std
 import logging
 import itertools as itt
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 
-# local libs
+# local
 from recipes.logging import get_module_logger
 from recipes.dicts import AttrReadItem, ListLike
 

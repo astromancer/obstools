@@ -1,8 +1,8 @@
 
-# third-party libs
+# third-party
 from scipy import stats
 
-# local libs
+# local
 from obstools.modelling.parameters import Priors
 
 

@@ -1,12 +1,12 @@
 
-# std libs
+# std
 import re
 import logging
 import numbers
 import urllib.request
 from io import BytesIO
 
-# third-party libs
+# third-party
 import numpy as np
 from astropy.io import fits
 from astropy.time import Time
@@ -14,11 +14,11 @@ from astropy.coordinates.name_resolve import NameResolveError
 from astropy.coordinates import (jparser, SkyCoord, EarthLocation,
                                  UnknownSiteException)
 
-# local libs
+# local
 from recipes import caches
 from recipes.logging import get_module_logger
 
-# relative libs
+# relative
 from . import cachePaths as cached
 
 

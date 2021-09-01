@@ -2,17 +2,17 @@
 Write light curves to plain text in utf-8
 """
 
-# std libs
+# std
 import re
 import textwrap
 from pathlib import Path
 from collections import OrderedDict as odict, Callable
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 
-# local libs
+# local
 from recipes.dicts import pformat
 
 # write oflag data to file

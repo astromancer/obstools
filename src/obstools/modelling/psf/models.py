@@ -1,17 +1,17 @@
 
 
 
-# std libs
+# std
 from warnings import warn
 from collections import Callable
 
-# third-party libs
+# third-party
 import numpy as np
 import numpy.linalg as la
 from scipy.special import erf
 from scipy.optimize import leastsq
 
-# local libs
+# local
 from obstools.modelling.core import Model
 from recipes.lists import find_missing_numbers
 

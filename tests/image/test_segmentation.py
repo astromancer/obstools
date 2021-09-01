@@ -1,8 +1,8 @@
-# third-party libs
+# third-party
 import pickle
 import numpy as np
 
-# local libs
+# local
 from obstools.image.segmentation import SegmentedImage, \
     MaskedStatsMixin, trace_boundary  # Sliced
 

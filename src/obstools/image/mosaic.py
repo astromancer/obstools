@@ -2,19 +2,19 @@
 Plotting mosaics of partially overlapping images
 """
 
-# std libs
+# std
 import itertools as itt
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
 from matplotlib.transforms import Affine2D
 
-# local libs
+# local
 from scrawl.imagine import ImageDisplay
 
-# relative libs
+# relative
 from . import transforms
 from .image import ImageContainer, SkyImage
 

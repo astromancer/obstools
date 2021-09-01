@@ -19,19 +19,19 @@ This edition has entries for 1429 CVs.
 """
 
 
-# std libs
+# std
 import re
 import logging
 import functools
 import itertools as itt
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
 
-# local libs
+# local
 from recipes import pprint
 from recipes.logging import get_module_logger
 

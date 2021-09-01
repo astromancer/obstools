@@ -3,11 +3,11 @@ Image and image container classes
 """
 
 
-# std libs
+# std
 import warnings
 from copy import copy
 
-# third-party libs
+# third-party
 import numpy as np
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
@@ -15,14 +15,14 @@ from pyxides import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.vectorize import Vectorized, AttrVectorizer
 
-# local libs
+# local
 from scrawl.imagine import ImageDisplay
 from recipes.oo import SelfAware
 from recipes.pprint import qualname
 from recipes.misc import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
-# relative libs
+# relative
 from .detect import SourceDetectionMixin
 
 

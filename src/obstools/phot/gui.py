@@ -1,10 +1,10 @@
 
 
-# std libs
+# std
 import logging
 from collections import namedtuple, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 from matplotlib.lines import Line2D
 from matplotlib._contour import QuadContourGenerator
@@ -12,7 +12,7 @@ from matplotlib.widgets import RadioButtons, CheckButtons
 from matplotlib.patches import Rectangle, Ellipse as _Ellipse
 from matplotlib.collections import LineCollection, PatchCollection
 
-# local libs
+# local
 from recipes.lists import flatten
 from recipes.dicts import AttrReadItem
 from recipes.logging import LoggingMixin

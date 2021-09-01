@@ -6,16 +6,16 @@ multiprocessing
 
 
 
-# std libs
+# std
 import inspect
 import functools
 import itertools as itt
 
-# third-party libs
+# third-party
 import lmfit as lm
 import numpy as np
 
-# local libs
+# local
 from recipes.pprint import decimal_repr
 
 

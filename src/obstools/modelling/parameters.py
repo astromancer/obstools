@@ -3,16 +3,16 @@ Classes for implementing prior probabilities in the context of Bayesian
 modelling and inference.
 """
 
-# std libs
+# std
 import numbers
 import functools as ftl
 
-# third-party libs
+# third-party
 import numpy as np
 from scipy import stats
 from scipy.stats._distn_infrastructure import rv_frozen
 
-# local libs
+# local
 from obstools.modelling.utils import prod
 from recipes import pprint
 from recipes.dicts import AttrReadItem, pformat as pformat_dict

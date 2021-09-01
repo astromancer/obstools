@@ -1,14 +1,13 @@
 
-# std libs
+# std
 import numbers
 import functools as ftl
 
-# third-party libs
+# third-party
 import numpy as np
 from astropy.utils import lazyproperty
 
-# local libs
-from recipes.logging import LoggingMixin
+# local
 from recipes import caches
 from .. import cachePaths
 

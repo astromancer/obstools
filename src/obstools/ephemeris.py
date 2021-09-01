@@ -1,13 +1,13 @@
 # coding: utf-8
 
 
-# std libs
+# std
 from functools import partial
 
-# third-party libs
+# third-party
 import numpy as np
 
-# local libs
+# local
 from recipes.lists import cosort
 
 from matplotlib import ticker

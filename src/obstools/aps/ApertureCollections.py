@@ -3,11 +3,11 @@
 
 
 
-# std libs
+# std
 import re
 from copy import copy
 
-# third-party libs
+# third-party
 import numpy as np
 from scipy.spatial.distance import cdist
 from matplotlib.colors import colorConverter
@@ -15,7 +15,7 @@ from matplotlib.collections import EllipseCollection, LineCollection
 from matplotlib.transforms import (IdentityTransform,
                                    blended_transform_factory as btf)
 
-# local libs
+# local
 # from recipes.io import warn as Warn
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory

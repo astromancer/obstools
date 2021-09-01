@@ -3,7 +3,7 @@ Extensions for segmentation images
 """
 
 
-# std libs
+# std
 import types
 import inspect
 import logging
@@ -12,7 +12,7 @@ import warnings
 import itertools as itt
 from collections import abc, namedtuple, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 from scipy import ndimage
@@ -20,15 +20,17 @@ from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
 
-# local libs
+# local
 from pyxides.vectorize import vdict
 from recipes.dicts import pformat
 from recipes.logging import LoggingMixin, get_module_logger
 
-# relative libs
+# relative
+from ... import io
 from ..utils import shift_combine
 from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id
+from .display import AnsiImage
 
 
 # from .detect import sigma_threshold
@@ -2075,10 +2077,10 @@ class SegmentedImage(SegmentationImage,     # base
                 pos[label] = yx[i][None]
         return pos
 
-    def display(self, cmap=None, contours=False, bbox=False, label=True,
-                **kws):
+    def show(self, cmap=None, contours=False, bbox=False, label=True,
+             **kws):
         # TODO: DisplayMixin: seg.show(), seg.show.term(), seg.show.overlay
-        # seg.show.labels()
+        #       seg.show.labels()
         """
         Plot the image using the `ImageDisplay` class
 
@@ -2123,11 +2125,13 @@ class SegmentedImage(SegmentationImage,     # base
 
         if label:
             # add label text (number) on each segment
-            self.draw_labels(im.ax, color='w', fontdict=dict(weight='bold'))
+            self.show_labels(im.ax, color='w', fontdict=dict(weight='bold'))
 
         return im
 
-    def draw_labels(self, ax, **kws):
+    display = show
+
+    def show_labels(self, ax, **kws):
 
         import matplotlib.patheffects as path_effects
 
@@ -2138,20 +2142,23 @@ class SegmentedImage(SegmentationImage,     # base
                 txt = ax.text(x, y, str(lbl), **kws)
 
                 # add border around text to make it stand out (like the arrows)
-                txt.set_path_effects(
-                    [path_effects.Stroke(linewidth=1, foreground='black'),
-                     path_effects.Normal()])
+                txt.set_path_effects([
+                    path_effects.Stroke(linewidth=1, foreground='black'),
+                    path_effects.Normal()
+                ])
                 texts.append(txt)
 
         return texts
 
-    def display_term(self, show_labels=True, frame=True, origin=0):
+    draw_labels = show_labels
+
+    def show_terminal(self, show_labels=True, frame=True, origin=0):
         """
-        A lightweight visualization of the segmented image for display
-        on console.  This creates a string with colourised "pixels" using ANSI
-        escape sequences. Useful for visualising source cutouts or
-        small segmented images.  The string representation is printed
-        to stdout and returned by this function.
+        A lightweight visualization of the segmented image for display in the
+        console.  This creates a string with colourised "pixels" using ANSI
+        escape sequences. Useful for visualising source cutouts or small
+        segmented images.  The string representation is printed to stdout and
+        returned by this function.
 
 
         The string returned by this function, when printed, might look
@@ -2194,108 +2201,48 @@ class SegmentedImage(SegmentationImage,     # base
         -------
         str
         """
-
-        im = self.format_term(show_labels, frame, origin)
+        # return self.format_ansi(show_labels, frame, origin).render()
+        im = self.format_ansi(show_labels, frame, origin)
         print(im)
         return im
 
-    def format_term(self, show_labels=True, frame=True, origin=0, cmap=None):
-        import motley
-        from motley import codes
-
-        origin = int(origin)
-        assert origin in (0, 1)
-
-        # re-orient data
-        o = 1 if origin else -1
-        data = self.data[::o].ravel()
-
-        BORDER = '⎪'  # U+23aa Sm CURLY BRACKET EXTENSION ⎪  # '|'
-        nm = 2  # number of characters that represent a pixel
-        n = self.nlabels
-        nr, nc = self.shape
-
-        # mapping from indices to labels
-        forward_map = np.zeros(self.max_label + 1, int)
-        forward_map[self.labels] = np.arange(1, n + 1)
-
+    def get_cmap(self, cmap=None):
         # colour map
         if cmap is None:
-            cmap = self.make_cmap()
-            colours = [0] + list(self.labels)
-        else:
-            from matplotlib.pyplot import get_cmap
-            cmap = get_cmap(cmap)
-            colours = np.linspace(0, 1, self.nlabels + 1)
+            return self.make_cmap()
 
-        # get the 24 bit colours
-        # noinspection PyTypeChecker
-        colours = cmap(colours, bytes=True)[:, :3]
+        from matplotlib.pyplot import get_cmap
+        return get_cmap(cmap)
 
-        # create markers (using ANSI bg codes)
-        # markers = np.array(codes.from_list(bg=colours))
-        markers = np.char.add(codes.from_list(bg=colours), '  ')
-        # `markers` are just the ansi colour codes for each label with 2
-        # whitespace added to represent a pixel.
-
-        # row end markers.
-        if frame:
-            ul = codes.get('underline')
-            endings = ((f'{codes.END}{BORDER}\n{BORDER}',) * (nr - 2) +
-                       (f'{codes.END}{BORDER}\n{ul}{BORDER}',
-                        f'{codes.END}{ul}{BORDER}{codes.END}\n'))
-        else:
-            endings = (f'{codes.END}\n',) * nr
-
-        # newline positions / strings
-        marks = defaultdict(str)
-
-        # make line end markers.  New line begins with a coloured pixel.
-        nli = np.arange(nc, nr * nc + 1, nc)
-        marks.update(zip(nli, endings))
-
-        # positions where switch to different label / ANSI strings at said pos
-        swi, = np.where(np.diff(data, prepend=0).astype(bool))
-        # each new row should also start with new colour
-        swi = np.union1d(swi, np.arange(0, nr * nc, nc))
-        for i in swi:
-            marks[i] += markers[forward_map[data[i]]]
+    def format_ansi(self, show_labels=True, frame=True, origin=0, cmap=None):
+        
+        # colour map
+        im = AnsiImage(self.data, self.get_cmap(cmap), origin).format(frame)
 
         # get positions / str for labels
         if show_labels:
-            for lbl, pos in self._label_positions().items():
-                # TODO: label text colour
-                label = '%-2i' % lbl
-                if origin == 0:
-                    pos[:, 0] = nr - 1 - pos[:, 0]
+            "TODO"
+        #     for lbl, pos in self._label_positions().items():
+        #         # TODO: label text colour
+        #         label = '%-2i' % lbl
+        #         if origin == 0:
+        #             pos[:, 0] = nr - 1 - pos[:, 0]
 
-                for i in np.ravel_multi_index(
-                        np.round(pos).astype(int).T, self.shape):
-                    if i in marks:
-                        marks[i] = marks[i].replace('  ', label)
-                    else:
-                        marks[i] = markers[lbl].replace('  ', label)
+        #         for i in np.ravel_multi_index(
+        #                 np.round(pos).astype(int).T, self.shape):
+        #             if i in marks:
+        #                 marks[i] = marks[i].replace('  ', label)
+        #             else:
+        #                 marks[i] = markers[lbl].replace('  ', label)
 
-        # create string
-        i0 = 0
-        im = ''
-        if frame:
-            im = motley.underline(' ' * ((nc + 1) * nm)) + '\n' + BORDER
-
-        for i, mrk in sorted(marks.items(), key=lambda _: _[0]):
-            im += ' ' * ((i - i0 - 1) * nm) + mrk
-            i0 = i
-
-        im += codes.END
         return im
 
     def get_boundary(self, label, offset=-0.5):
         """
-
-        Fast boundary trace for segment `label`.  This algorithm is designed
-        to be general enough to handle disjoint segments with a single label
-        and therefore always returns a list even if the segment is monolithic.
-
+        Fast boundary trace for segment `label`.  This algorithm is designed to
+        be general enough to handle disjoint segments with a single label, or
+        segments with holes in them, and therefore always returns a list even if
+        the segment is monolithic.
 
         Parameters
         ----------
@@ -2303,15 +2250,15 @@ class SegmentedImage(SegmentationImage,     # base
             The segment label for which to get the boundary
         offset: float
             The offset that will be added to the points, by default -0.5, so
-            that the contours line up with imaged displayed with bottom left pixel center
+            that the contours line up with imaged displayed with bottom left
+            pixel center.
 
         Returns
         -------
         segments: list of arrays
-            line segments tracing each part of the segment
-
+            Line segments tracing each part of the segment.
         perimeter: array
-            length of the circumference of each part of the segment
+            Length of the circumference of each part of the segment.
         """
         self.check_label(label)
         s = self.slices[label]
@@ -2320,7 +2267,6 @@ class SegmentedImage(SegmentationImage,     # base
         count = 0
         segments = []
         perimeter = []
-        # noinspection PyUnresolvedReferences
         while b.any():
             pixels, boundary, p = trace_boundary(b)
             # get outline image, fill it, difference original, repeat.
@@ -2342,6 +2288,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def get_boundaries(self, labels=None):
         """Get traced outlines for many labels"""
+        # TODO systematically cache in traced
         return {label: self.get_boundary(label)
                 for label in self.resolve_labels(labels)}
 
@@ -2368,21 +2315,24 @@ class SegmentedImage(SegmentationImage,     # base
         from matplotlib.collections import LineCollection
 
         # if not 'colors' in kws:
-        cmap = self.make_cmap()
+        cmap = self.get_cmap(kws.pop('cmap', None))
 
         # note: use PathPatch if you want to be able to hatch the regions.
         #  at the moment you cannot hatch individual paths in PathCollection
         boundaries = self.get_boundaries(labels)
         contours, _ = zip(*boundaries.values())
 
-        # noinspection PyTypeChecker
-        kws.setdefault('colors', cmap(list(boundaries.keys())))
+        #
+        colors = np.fromiter(boundaries.keys(), int)
+        kws.setdefault('colors', cmap(colors / colors.max()))
         return LineCollection(list(mit.flatten(contours)), **kws)
 
-    def draw_contours(self, ax, labels=None, **kws):
+    def show_contours(self, ax, labels=None, **kws):
         lines = self.get_contours(labels, **kws)
         ax.add_collection(lines)
         return lines
+
+    draw_contours = show_contours
 
     @lazyproperty
     def perimeter(self):
@@ -2401,7 +2351,8 @@ class SegmentedImage(SegmentationImage,     # base
         -------
 
         """
-        segments, perimeter = zip(*self.traced.values())
+        # segments, perimeter
+        _, perimeter = zip(*self.traced.values())
         return list(perimeter)
 
     @lazyproperty
@@ -2413,10 +2364,12 @@ class SegmentedImage(SegmentationImage,     # base
     def circularize(self):
         x = (..., None, None)
         r = np.sqrt(self.areas / np.pi)[x]
-        d = np.square(np.indices(self.shape)[:, None] -
-                      self.com(self.data).T[x]).sum(0)
+        d = np.square(
+            np.indices(self.shape)[:, None] - self.com(self.data).T[x]
+        ).sum(0)
         return self.__class__(
-            np.sum((np.sqrt(d) < r) * np.arange(1, self.nlabels + 1)[x], 0))
+            np.sum((np.sqrt(d) < r) * np.arange(1, self.nlabels + 1)[x], 0)
+        )
 
 
 # class SegmentationGroups(SegmentedImage, LabelGroupsMixin):
