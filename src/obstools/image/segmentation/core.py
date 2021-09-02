@@ -483,11 +483,15 @@ class MaskedStatsMixin:
     # define supported statistics
     _supported = ['sum',
                   'mean', 'median',
-                  'minimum', 'minimum_position',
-                  'maximum', 'maximum_position',
-                  # 'extrema', # return signature is different, so don't support
+                  'minimum', 'maximum',
+                  # 'minimum_position',
+                  # 'maximum_position',
+                  # 'extrema',
+                  # return signature is different, not currently supported
                   'variance', 'standard_deviation',
                   'center_of_mass']
+
+    _result_dims = {'center_of_mass': (2,)}
 
     # define some convenient aliases for the ndimage functions
     _aliases = {'minimum': 'min',
@@ -515,14 +519,14 @@ class MaskedStatistic:
     _doc_template = \
         """
         %s pixel values in each segment ignoring any masked pixels.
-    
+
         Parameters
         ----------
         image:  array-like, or masked array
             Image for which to calculate statistic
         labels: array-like
             labels
-    
+
         Returns
         -------
         float or 1d array or masked array
@@ -548,21 +552,35 @@ class MaskedStatistic:
         labels = seg.resolve_labels(labels, allow_zero=True)
 
         # ensure return array or masked array and not list.
-        return np.asanyarray(self._run(image, seg, labels))
+        return self._run(image, seg, labels)
 
     def _run(self, data, seg, labels, njobs=-1, **kws):
-        worker = (self.worker, self.worker_ma)[np.ma.is_masked(data)]
+
+        isma = np.ma.is_masked(data)
+        worker = (self.worker, self.worker_ma)[isma]
+        # result shape
+        shape = (len(labels), *seg._result_dims.get(self.__name__, ()))
 
         if data.ndim == 2:
-            return worker(data, seg, labels)
+            result = np.empty(shape, data.dtype)
+            masked = np.zeros(shape, bool) if isma else None
+            worker(data, seg, labels, result, masked)
+            return result
+
+        # create memmap
+        shape = (len(data), *shape)
+        result = io.load_memmap(shape=shape)
+        masked = io.load_memmap(shape=shape, fill=False) if isma else None
 
         with Parallel(n_jobs=njobs, **kws) as parallel:
-            return parallel(delayed(worker)(im, seg, labels) for im in data)
+            parallel(delayed(worker)(im, seg, labels, result, masked, i)
+                     for i, im in enumerate(data))
+        return result
 
-    def worker(self, image, seg, labels):
-        return self.func(image, seg.data, labels)
+    def worker(self, image, seg, labels, output, _ignored_=None, index=...):
+        output[index] = self.func(image, seg.data, labels)
 
-    def worker_ma(self, image, seg, labels):
+    def worker_ma(self, image, seg, labels, output, output_mask, index=...):
         # ignore masked pixels
         seg_data = seg.data.copy()
         # original = seg_data[image.mask]
@@ -572,20 +590,20 @@ class MaskedStatistic:
         # labels for which we are computing the statistic.
 
         # compute
-        result = self.func(image, seg_data, labels)
+        output[index] = self.func(image, seg_data, labels)
 
         # now we have to check which labels may be completely masked in
         # image data, so we can mask those in output
-        mask = (ndimage.sum(~image.mask, seg_data, labels) == 0)
+        output_mask[index] = (ndimage.sum(~image.mask, seg_data, labels) == 0)
         # get output mask
         # for functions that return array-like results per segment (eg.
-        # com), we have to up-cast the mask
-        if mask.any():
-            result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
-        else:
-            mask = False
+        # center_of_mass), we have to up-cast the mask
+        # if mask.any():
+        #     result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
+        # else:
+        #     mask = False
 
-        return np.ma.MaskedArray(result, mask)
+        # return np.ma.MaskedArray(result, mask)
         # finally:
         #     # restore the original labels of the masked pixels
         #     seg.data[image.mask] = original
@@ -2146,7 +2164,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def get_boundary(self, label, offset=-0.5):
         """
-        Fast boundary trace for segment `label`.  This algorithm is designed to
+        Fast boundary trace for segment `label`. This algorithm is designed to
         be general enough to handle disjoint segments with a single label, or
         segments with holes in them, and therefore always returns a list even if
         the segment is monolithic.
