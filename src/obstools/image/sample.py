@@ -1,7 +1,9 @@
+"""
+Sampling and statistics of images from a stack.
+"""
 
 # std
 import numbers
-import functools as ftl
 
 # third-party
 import numpy as np
@@ -9,13 +11,17 @@ from astropy.utils import lazyproperty
 
 # local
 from recipes import caches
-from .. import cachePaths
+from recipes.logging import LoggingMixin
+
+# relative
+from .. import cachePaths, _hdu_hasher
 
 
 class BootstrapResample(LoggingMixin):
     """
     Sampling with replacement
     """
+
     def __init__(self, data, sample_size=None, subset=None, axis=0):
         """
         Draw a sample of `n` arrays randomly from the index interval `subset`
@@ -109,15 +115,6 @@ class BootstrapResample(LoggingMixin):
 #         BootstrapResample.__init__(self, None, sample_size, subset, axis)
 
 
-class SampleCache(caches.Cached):
-    def get_key(self, hdu, *args, **kws):
-        # Cache on the hdu filename
-        if hdu.file:
-            # not NULL --> file on drive
-            return super().get_key(str(hdu.file), *args, **kws)
-        return caches.Ignore(silent=True)
-
-
 class ImageSamplerMixin:
     """
     A mixin class that can draw sample images from the HDU data
@@ -151,7 +148,7 @@ class ImageSamplerMixin:
 
         return BootstrapResample(data)
 
-    @SampleCache(cachePaths.samples)
+    @caches.to_file(cachePaths.samples, typed={'self': _hdu_hasher})
     def get_sample_image(self, stat='median', min_depth=5):
         """
         Get sample image to a certain minimum simulated exposure depth by
