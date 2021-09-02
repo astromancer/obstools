@@ -79,7 +79,7 @@ class BootstrapResample(LoggingMixin):
             return sub
 
         # get frame indices (subspace sampled with replacement)
-        self.logger.debug('Selecting %i frames from amongst frames (%i->%i) '
+        self.logger.debug('Selecting {:d} frames from amongst frames ({:d}->{:d}) '
                           'for sample image.', n, *subset)
         ix = np.random.randint(0, len(sub), n)
         return self.data[ix]

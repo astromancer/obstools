@@ -1,7 +1,6 @@
 
 
 # std
-import logging
 import functools as ftl
 from collections import defaultdict
 
@@ -12,19 +11,15 @@ from photutils import detect_threshold, detect_sources
 
 # local
 import recipes.pprint as pp
+from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
 from recipes.string import sub, snake_case
-from recipes.logging import get_module_logger, LoggingMixin
 from motley.table import Table
 
 # relative
 from ..modelling import UnconvergedOptimization
+from .segmentation import groups, SegmentedImage
 
-
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
 
 # handler = logging.StreamHandler()
 # handler.setFormatter(logging.Formatter(style='{'))
@@ -119,6 +114,8 @@ class DetectionBase(LoggingMixin):
         obstools.image.segmentation.SegmentedImage
         """
 
+        # logger.info('{} {}', args, kws)
+
         # Initialize
         seg = SegmentedImage(self.fit_predict(image, mask, *args, **kws))
 
@@ -126,19 +123,15 @@ class DetectionBase(LoggingMixin):
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
-        self.report(seg)
+        self.report(image, seg)
         return seg
 
-    def report(self, seg):
-        if self.logger.isEnabledFor(logging.INFO):
-            self.logger.info(
-                'Detected %i sources covering %.2f%% of image.',
-                             seg.nlabels, 100 * sum(seg.areas) / np.prod(seg.shape))
+    def report(self, image, seg, show=5):
 
-
-# handler = logging.StreamHandler()
-# handler.setFormatter(logging.Formatter(style='{'))
-# logging.getLogger('detect').addHandler(handler)
+        self.logger.opt(lazy=True).info(
+            'Detected {:d} sources covering {:.2%} of image.',
+            lambda: seg.nlabels, lambda: sum(seg.fractional_areas)
+        )
 
 
 class GMM(DetectionBase):
@@ -215,7 +208,12 @@ class SigmaThreshold(DetectionBase):
 
         """
 
-        # logger.debug('Running detect with: %s', self)
+
+        self.logger.info('Running detect with: {:s}',
+                          str(dict(snr=snr,
+                                   npixels=npixels,
+                                   edge_cutoff=edge_cutoff,
+                                   deblend=deblend)))
 
         if mask is None:
             mask = False  # need this for logical operators below to work
@@ -241,7 +239,7 @@ class SigmaThreshold(DetectionBase):
         # check if anything detected
         no_sources = (seg is None)  # or (np.sum(seg) == 0)
         if no_sources:
-            logger.debug('No objects detected.')
+            self.logger.debug('No objects detected.')
             return np.zeros_like(image, bool)
 
         if deblend and not no_sources:
@@ -334,8 +332,8 @@ class ResultsAggregator(SourceAggregator, BackgroundFitter):
         seg = super().__call__(image, mask, *args, **kws)
 
         # log what was found
-        # if self.logger.getEffectiveLevel() == logging.INFO:
-        #     self.logger.info('Detected %i sources covering {:.2%} of image.',
+        # if logger.getEffectiveLevel() == logging.INFO:
+        #     logger.info('Detected {:d} sources covering {:.2%} of image.',
         #                      seg.nlabels, sum(seg.areas) / np.prod(image.shape))
 
         # aggregate info
@@ -362,12 +360,12 @@ class SourceDetection(ResultsAggregator):
         >>> class MyImage:
         ...     detect = SourceDetection('gmm')
         ... img = MyImage().detect
-        
+
         later to switch algorithms:
         >>> img.detect = 'sigma_threshold'
         # FIXME: This is not really intuitive img.detect.algorithm better
         """
-        
+
         # resolve strings
         if isinstance(algorithm, str):
             return type(obj).members[sub(algorithm.lower(), {' ': '', '_': ''})]
@@ -402,7 +400,7 @@ class SourceDetectionLoop(SourceDetection):
 
     def __next__(self):
         if self.count >= self.max_iter:
-            self.logger.debug('break: max_iter %i reached.', self.max_iter)
+            self.logger.debug('break: max_iter {:d} reached.', self.max_iter)
             raise StopIteration
 
         # detect new
@@ -414,12 +412,12 @@ class SourceDetectionLoop(SourceDetection):
             raise StopIteration
 
         # debug log!
-        self.logger.debug('Detection iteration %i: %i new detections: %s',
-                          self.count, new_segs.nlabels,
-                          pp.truncated(tuple(new_segs.labels)))
+        self.logger.debug('Detection iteration {:d}: {:d} new detections: {:s}',
+                     self.count, new_segs.nlabels,
+                     pp.collection(tuple(new_segs.labels)))
 
         if self.model and self.result is None:
-            logger.info('break: Model optimization unsuccessful. Returning.')
+            self.logger.info('break: Model optimization unsuccessful. Returning.')
             raise StopIteration
 
         return new_segs

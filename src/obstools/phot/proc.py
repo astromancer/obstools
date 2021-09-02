@@ -10,16 +10,16 @@ import astropy.units as u
 from scipy.optimize import minimize
 from photutils.aperture import (CircularAperture, CircularAnnulus,
                                 EllipticalAperture,
-                                EllipticalAnnulus
-                                )
+                                EllipticalAnnulus)
 
 # local
 from recipes import pprint
-from recipes.string import resolve_percentage
+from recipes.string import Percentage
 from recipes.logging import LoggingMixin, ProgressLogger
 
 # relative
 from ..modelling.utils import load_memmap
+
 
 OPT_SNR_THRESH = 10
 
@@ -332,7 +332,7 @@ class EllipseOptimizer(ApertureOptimizer):
             ap_sky.theta = theta
 
 
-class TaskExecutor:
+class TaskExecutor(LoggingMixin):
     """
     Decorator that catches and logs exceptions instead of actively raising.
 
@@ -376,10 +376,9 @@ class TaskExecutor:
         # resolve `max_fail`
         if max_fail is None:
             # default is 1% or 50, whichever is smaller
-            max_fail = resolve_percentage('1%', n)
-            max_fail = min(max_fail, 50)
+            max_fail = min(Percentage('1%')(n), 50)
         else:
-            max_fail = resolve_percentage(max_fail, n)
+            max_fail = Percentage(max_fail)(n)
         self.max_fail = max_fail
 
         # progress "bar"
@@ -398,12 +397,9 @@ class TaskExecutor:
         # log
         # if np.isfinite(max_fail):
         n = self.compute_size
-        msg = 'Exception threshold is %.2f%% (%i/%i)' % (
-            (self.max_fail / n) * 100, self.max_fail, n)
-        # else:
-        #     msg = 'All exceptions will be ignored'
-        logger = logging.getLogger(self.__class__.__name__)
-        logger.info(msg)
+
+        self.logger.info('Exception threshold is %.2f%% ({:d}/{:d})' % (
+            (self.max_fail / n) * 100, self.max_fail, n))
 
         return self.catch
 
@@ -440,42 +436,41 @@ class TaskExecutor:
         """
         # exceptions like moths to the flame
         abort = self.fail_counter.get_value() >= self.max_fail
-        if not abort:
-            try:
-                result = self.run(*args, **kws)
-            except Exception as err:
-                # logs full trace by default
-                i = args[0]
-                self.status[i] = self.FAIL
-                nfail = self.fail_counter.inc()
-                logger = logging.getLogger(self.name)
-                logger.exception('Processing failed at frame %i. (%i/%i)',
-                                 i, nfail, self.max_fail)
-
-                # check if we are beyond exception threshold
-                if nfail >= self.max_fail:
-                    logger.critical('Exception threshold reached!')
-                    # self.logger.critical('Exception threshold reached!')
-            else:
-                i = args[0]
-                self.status[i] = self.SUCCESS
-                return result  # finally clause executes before this returns
-
-            finally:
-                # log progress
-                counter = self.counter
-                if counter:
-                    n = counter.inc()
-                    if self.progLog:
-                        self.progLog.update(n)
-
-            # if there was a KeyboardInterrupt, it will be raised at this point
-        else:
+        if abort:
             # doing this here (instead of inside the except clause) avoids
             # duplication by chained exception traceback when logging
             raise AbortCompute(
-                    'Number of exceptions larger than threshold of %i'
-                    % self.max_fail)
+                'Number of exceptions greater than threshold of {self.max_fail}'
+            )
+
+        try:
+            result = self.run(*args, **kws)
+        except Exception as err:
+            # logs full trace by default
+            i = args[0]
+            self.status[i] = self.FAIL
+            nfail = self.fail_counter.inc()
+            self.logger.exception(
+                'Processing failed at frame {:d}. ({:d}/{:d})',
+                i, nfail, self.max_fail
+            )
+
+            # check if we are beyond exception threshold
+            if nfail >= self.max_fail:
+                logger.critical('Exception threshold reached!')
+                # self.logger.critical('Exception threshold reached!')
+        else:
+            i = args[0]
+            self.status[i] = self.SUCCESS
+            return result  # finally clause executes before this returns
+
+        finally:
+            # log progress
+            counter = self.counter
+            if counter:
+                n = counter.inc()
+                if self.progLog:
+                    self.progLog.update(n)
 
     def report(self):
         # not_done, = np.where(self.status == 0)
@@ -486,16 +481,16 @@ class TaskExecutor:
         # TODO: one multi-line message better when multiprocessing
 
         logger = logging.getLogger(self.name)
-        logger.info('Processed %i/%i frames. %i successful; %i failed',
+        logger.info('Processed {:d}/{:d} frames. {:d} successful; {:d} failed.',
                     n_done, self.compute_size, n_done - n_fail, n_fail)
         if len(failures):
-            logger.info('The following frames failed: %s', list(failures))
+            logger.info('The following frames failed: {:s}', list(failures))
         elif n_done > 0:
             logger.info('No failures in main compute!')
 
         if self.time:
             #  print timing info
-            logger.info('Timing results for %s: %.3f ± .3f s',
+            logger.info('Timing results for {:s}: {:.3f} ± {:.3f} s',
                         self.name, self.timings.mean(), self.timings.std())
 
         return failures
@@ -637,7 +632,7 @@ class FrameProcessor(LoggingMixin):
         # check valid coordinates
         if np.isnan(coords).any():
             self.logger.warning(
-                    'Invalid coords: frame %s. Skipping photometry.', i)
+                'Invalid coords: frame {:s}. Skipping photometry.', i)
             return
 
         # masks
@@ -673,10 +668,10 @@ class FrameProcessor(LoggingMixin):
 
                 # run optimization
                 r, opt, flag = self.optimize_apertures(
-                        i, p0, coords[ix],
-                        residu[i], masks, data[i],
-                        sky_mask, r_sky_min, sky_width, sky_buf,
-                        labels)
+                    i, p0, coords[ix],
+                    residu[i], masks, data[i],
+                    sky_mask, r_sky_min, sky_width, sky_buf,
+                    labels)
 
                 # print(labels)
                 # print(r, opt, flag)
@@ -732,8 +727,8 @@ class FrameProcessor(LoggingMixin):
 
             # save appars
             self._appars[i, g] = list(zip(
-                    (a, b, theta),
-                    (a_sky_in, a_sky_out, b_sky_out)))
+                (a, b, theta),
+                (a_sky_in, a_sky_out, b_sky_out)))
 
             # do photometry with optimized apertures
             self.do_phot(i, ix, data, residu, aps, masks, aps_sky, sky_mask)
@@ -746,7 +741,6 @@ class FrameProcessor(LoggingMixin):
 
     def optimize_apertures(self, i, p0, coo_xy, im, photmasks, im_sky, skymask,
                            r_sky_min, sky_width, sky_buf, labels):
-
         """
 
         Parameters
@@ -784,10 +778,10 @@ class FrameProcessor(LoggingMixin):
 
         snr = opt.snr(im, photmasks, im_sky, skymask)
         low_snr = snr < OPT_SNR_THRESH
-        self.logger.debug('SNR: %s', snr)
+        self.logger.debug('SNR: {:s}', snr)
         if low_snr.all():
             # skip opt
-            self.logger.debug('Skipping optimization: frame %s. low SNR for '
+            self.logger.debug('Skipping optimization: frame {:s}. low SNR for '
                               'stars %s', i, labels)
             return None, opt, -2
 
@@ -808,13 +802,15 @@ class FrameProcessor(LoggingMixin):
                          bounds=opt.bounds)
 
         except Exception as err:
-            self.logger.exception('Optimization error: frame %s, labels %s',
+            self.logger.exception('Optimization error: frame {:s}, labels {:s}',
                                   i, labels)
             return None, opt, -3
 
         if not r.success:
-            self.logger.warning('Optimization failed: frame %s, labels %s\n%s',
-                                i, labels, r.message)
+            self.logger.warning(
+                'Optimization failed: frame {:s}, labels {:s}\n{:s}',
+                i, labels, r.message
+                )
             flag = -1
         elif np.any(r.x == opt.bounds):
             self.logger.warning('Optimization converged on boundary:'
@@ -833,7 +829,7 @@ class FrameProcessor(LoggingMixin):
 
         # photometry for optimized apertures
         self._results[i, js] = np.transpose(flux_estimate(
-                aps, residue[i], masks, aps_sky, data[i], sky_mask))
+            aps, residue[i], masks, aps_sky, data[i], sky_mask))
 
         # residual sky image noise (read-, dark-, sky-  noise)
 
@@ -918,8 +914,8 @@ class FrameProcessor(LoggingMixin):
                 p = pars[ix][j]
                 pu = paru[ix][j]
                 if mdlr.nmodels > 1:
-                    self.logger.info('Best model: %s (Frame %i, Star %i)', mdl,
-                                     i, j)
+                    self.logger.info(
+                        'Best model: {:s} (Frame {:d}, Star {:d})', mdl, i, j)
 
             # TODO: if best_model is self.db.bg:
             #     "logging.warning('Best model is BG')"
@@ -1069,7 +1065,7 @@ class FrameProcessor(LoggingMixin):
 #                 self.logger.warning('%s (Frame %i, Star %i)', (msg, i, j))
 #
 #             if ix is not None:
-#                 self.logger.info('Best model: %s (Frame %i, Star %i)' % (mdl, i, j))
+#                 self.logger.info('Best model: {:s} (Frame {:d}, Star {:d})' % (mdl, i, j))
 #
 #             # TODO: if best_model is self.db.bg:
 #             #     "logging.warning('Best model is BG')"

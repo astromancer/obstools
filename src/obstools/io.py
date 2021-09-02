@@ -17,10 +17,7 @@ from recipes.logging import logging, get_module_logger
 from .utils import int2tup
 
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+from loguru import logger
 
 
 def load_memmap(loc=None, shape=None, dtype=None, fill=None, clobber=False):
@@ -47,7 +44,7 @@ def load_memmap(loc=None, shape=None, dtype=None, fill=None, clobber=False):
 
     # create folder if needed
     if not folder.exists():
-        logger.info('Creating folder: %r', str(folder))
+        logger.info('Creating folder: {!r:}', str(folder))
         folder.mkdir(parents=True)
 
     # update mode if existing file, else read
@@ -59,10 +56,10 @@ def load_memmap(loc=None, shape=None, dtype=None, fill=None, clobber=False):
     # create memmap
     shape = int2tup(shape)
     if new:
-        logger.info('Creating memmap of shape %s and dtype %r at %r.',
+        logger.info('Creating memmap of shape {:s} and dtype {!r:} at {!r:}.',
                     shape, dtype, filename)
     else:
-        logger.info('Loading memmap at %r.', filename)
+        logger.info('Loading memmap at {!r:}.', filename)
 
     # NOTE: using ` np.lib.format.open_memmap` here so that we get a small
     #  amount of header info for easily loading the array

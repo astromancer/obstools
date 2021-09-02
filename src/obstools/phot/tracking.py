@@ -4,35 +4,39 @@ Methods for tracking camera movements in astronomical time-series CCD photometry
 
 # std
 import logging
+import tempfile
 import functools as ftl
 import itertools as itt
 import multiprocessing as mp
-import tempfile
 from pathlib import Path
 
 # third-party
 import numpy as np
 import more_itertools as mit
+from loguru import logger
 from sklearn.cluster import MeanShift
 from scipy.spatial.distance import cdist
+from graphing.imagine import ImageDisplay
+from matplotlib.transforms import AffineDeltaTransform
 from astropy.utils import lazyproperty
 from astropy.stats import median_absolute_deviation as mad
 
 # local
-from obstools.image.registration import compute_centres_offsets, \
-    group_features, report_measurements  # register
 from recipes.dicts import AttrReadItem
-from recipes.logging import get_module_logger, LoggingMixin
+from recipes.logging import LoggingMixin
 from recipes.parallel.synced import SyncedCounter, SyncedArray
-from obstools.phot.utils import 
-from obstools.image.segmentation import SegmentedImage, SegmentsModelHelper, \
-    LabelGroupsMixin, merge_segmentations, select_rect_pad
-from obstools.image.detect import make_border_mask
-from obstools.io import load_memmap
-from graphing.imagine import ImageDisplay
-from matplotlib.transforms import AffineDeltaTransform
 
-from obstools.image.registration import ImageRegister
+# relative
+from ..io import load_memmap
+from ..image.detect import make_border_mask
+from ..image.registration import (compute_centres_offsets, group_features,
+                                  report_measurements,
+                                  ImageRegister)
+from ..image.segmentation import (SegmentedImage, SegmentsModelHelper,
+                                  LabelGroupsMixin,
+                                  merge_segmentations,
+                                  select_rect_pad)
+
 
 # from obstools.phot.utils import id_sources_dbscan, group_features
 
@@ -49,10 +53,6 @@ from obstools.image.registration import ImageRegister
 #  super resolution images
 #  lucky imaging ?
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
 
 TABLE_STYLE = dict(txt='bold', bg='g')
 
@@ -61,7 +61,7 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
     """Estimate the maximal positional drift for sources"""
 
     #
-    logger.info('Estimating maximal image drift for %i frames.', nframes)
+    logger.info('Estimating maximal image drift for {:d} frames.', nframes)
 
     # take `nframes` frames evenly spaced across data set
     step = len(cube) // nframes
@@ -364,7 +364,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # cls.best_for_tracking(image)
         obj = cls(found, sh, groups, use_labels, mask, edge_cutoffs)
         # log nice table with what's been found.
-        obj.logger.info('Found the following sources:\n%s\n', obj.pprint())
+        obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
 
         return obj, p0bg
 
@@ -573,7 +573,6 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             dither.
 
 
-
         Returns
         -------
 
@@ -589,14 +588,15 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         xy, = group_features(db, xy)
 
         from motley.table import Table
-        cls.logger.info('Identified the following sources:\n%s',
-                        Table.from_columns(xy.mean(0)[::-1],
-                                           np.sum(~xy[..., 0].mask, 0),
-                                           title='Detected sources',
-                                           title_props=TABLE_STYLE,
-                                           col_headers=list('xyn'),
-                                           col_head_props=TABLE_STYLE,
-                                           row_nrs=True, align='r'))
+        cls.logger.opt(lazy=True).info(
+            'Identified the following sources:\n{:s}',
+            lambda: Table.from_columns(xy.mean(0)[::-1],
+                                       np.sum(~xy[..., 0].mask, 0),
+                                       title='Detected sources',
+                                       title_props=TABLE_STYLE,
+                                       col_headers=list('xyn'),
+                                       col_head_props=TABLE_STYLE,
+                                       row_nrs=True, align='r'))
 
         #
         cls.logger.info('Measuring relative positions')
@@ -720,7 +720,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     ix = np.random.randint(i0, i0 + nfirst, ncomb)
     #     # create ref image for init
     #     image = np.median(cube[ix], 0)
-    #     cls.logger.info('Combined %i frames from amongst frames (%i->%i) for '
+    #     cls.logger.info('Combined {:d} frames from amongst frames ({:d}->{:d}) for '
     #                     'reference image.', ncomb, i0, i0 + nfirst)
     #
     #     # init the tracker
@@ -962,7 +962,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         #  vastly more efficient
         xy = self.measure_source_locations(image, mask, self.llc)
         self.measurements[index] = xy
-        
+
         # weights
         if self.snr_weighting or self.snr_cut:
             if (self._weights is None) or (count // self._update_weights_every):
@@ -987,7 +987,6 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             self.xy_offsets[index] = off
 
         self.logger.debug(f'offset: {off}')
-        
 
         self.llc += off.round().astype(int)
 
@@ -1017,8 +1016,6 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         return im
 
     # def animate(self, data):
-
-
 
     def measure_source_locations(self, image, mask=None, llc=(0, 0)):
         """
@@ -1401,7 +1398,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     #     weights = np.ones(len(self.use_labels))
     #     # flag outliers
     #     bad = self.is_bad(com)
-    #     self.logger.debug('bad: %s', np.where(bad)[0])
+    #     self.logger.debug('bad: {:s}', np.where(bad)[0])
     #     weights[bad] = 0
     #     return weights
 
@@ -1410,7 +1407,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
         im = self._pad(image, self.llc)
         weights = snr = self.seg.snr(im, self.use_labels)
-        # self.logger.debug('snr: %s', snr)
+        # self.logger.debug('snr: {:s}', snr)
 
         # ignore sources with low snr (their positions will still be tracked,
         # but not used to compute new positions)
@@ -1422,7 +1419,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             low_snr = snr < snr.max()  # else we end up with nans
 
         weights[low_snr] = 0
-        self.logger.debug('weights: %s', weights)
+        self.logger.debug('weights: {:s}', weights)
 
         if np.all(weights == 0):
             raise ValueError('Could not determine weights for centrality '
@@ -1505,7 +1502,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 
         ix = self.use_labels - 1
         inc = (vec - self.rvec[ix]) * weights
-        self.logger.debug('rvec increment:\n%s', str(inc))
+        self.logger.debug('rvec increment:\n{:s}', str(inc))
         self.rvec[ix] += inc
 
     # def get_shift(self, image):
@@ -1640,7 +1637,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
 #             return image
 #
 #     def set_frame(self, i, draw=True):
-#         self.logger.debug('set_frame: %s', i)
+#         self.logger.debug('set_frame: {:s}', i)
 #
 #         i = FitsCubeDisplay.set_frame(self, i, False)
 #         # needs_drawing = self._needs_drawing()

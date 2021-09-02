@@ -14,7 +14,6 @@ Image registration (point set registration) for astronomicall images.
 
 # std
 import re
-import logging
 import numbers
 import warnings
 import functools as ftl
@@ -27,6 +26,7 @@ import numpy as np
 import aplpy as apl
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
+from loguru import logger
 from joblib import Parallel, delayed
 from astropy import wcs
 from astropy.utils import lazyproperty
@@ -41,6 +41,7 @@ from scipy.interpolate import NearestNDInterpolator
 from scrawl.imagine import ImageDisplay
 from recipes.string import indent
 from recipes.functionals import echo0
+from recipes.logging import LoggingMixin
 from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
 
@@ -59,11 +60,6 @@ from ..utils import get_coordinates, get_dss, STScIServerError
 # from sklearn.cluster import MeanShift
 # from motley.profiling import profile
 
-
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
 
 #
 TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
@@ -881,7 +877,7 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
 #     assert n_ignore != n
 #     if n_ignore:
 #         logger.info(
-#                 'Ignoring %i/%i (%.1f%%) nan / masked values for position '
+#                 'Ignoring %i/%i ({:.1%}) nan / masked values for position '
 #                 'measurement', n_ignore, n, (n_ignore / n) * 100)
 #
 #     # mask nans.  masked
@@ -933,7 +929,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
         raise Exception('All points are masked!')
 
     if n_ignore:
-        logger.info('Ignoring %i/%i (%.1f%%) nan values for position '
+        logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values for position '
                     'measurement', n_ignore, n, (n_ignore / n) * 100)
 
     n_detections_per_star = np.zeros(n_stars, int)
@@ -952,7 +948,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
         )
 
     if np.any(~use_stars):
-        logger.info('Ignoring %i / %i stars with low (<=%.0f%%) detection '
+        logger.info('Ignoring {:d} / {:d} stars with low (<={:.0%}) detection '
                     'frequency for frame offset measurement.',
                     n_stars - len(i_use), n_stars, detect_freq_min * 100)
 
@@ -997,10 +993,11 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     outlier_indices = (idxg[idxf], idxu[idxs])
     xy[outlier_indices] = np.ma.masked
 
+    # pprint!
     if report:
-        # pprint!
+        #                                          counts
         report_measurements(xy, centres, σxy, δxy, None, detect_freq_min)
-        #                                        # counts
+
     return xy, centres, σxy, δxy, outlier_indices
 
 
@@ -1061,7 +1058,7 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         if n_out / n_points > 0.5:
             raise Exception('Too many outliers!!')
 
-        logger.info('Ignoring %i/%i (%.1f%%) values with |δr| > %.3f',
+        logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > %.3f',
                     n_out, n_points, (n_out / n_points) * 100, d_cut)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
@@ -1165,7 +1162,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     # s0 = xy.std((0, 1))
     # s1 = (xy - xy_offsets[:, None]).std((0, 1))
     # # Fractional variance change
-    # logger.info('Differencing change overall variance by %r',
+    # logger.info('Differencing change overall variance by {!r:}',
     #             np.array2string((s0 - s1) / s0, precision=3))
 
     # FIXME: percentage format in total wrong
@@ -1200,25 +1197,25 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     # tbl = np.ma.column_stack(columns)
     tbl = Table.from_columns(*columns,
-                                title='Measured star locations',
-                                title_props=TABLE_STYLE,
-                                units=['pixels', 'pixels', ''],
-                                col_head=col_headers,
-                                col_head_props=TABLE_STYLE,
-                                col_head_align='^',
-                                precision=3,
-                                align='r',
-                                row_nrs=True,
-                                totals=[-1],
-                                formatters=formatters,
-                                max_rows=25)
+                             title='Measured star locations',
+                             title_props=TABLE_STYLE,
+                             units=['pixels', 'pixels', ''],
+                             col_head=col_headers,
+                             col_head_props=TABLE_STYLE,
+                             col_head_align='^',
+                             precision=3,
+                             align='r',
+                             row_nrs=True,
+                             totals=[-1],
+                             formatters=formatters,
+                             max_rows=25)
 
     # fix formatting with percentage in total.
     # TODO Still need to think of a cleaner solution for this
     tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
     # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
 
-    logger.info('\n%s%s', tbl, extra)
+    logger.info('\n{:s}{:s}', tbl, extra)
 
     return tbl
 
@@ -1302,7 +1299,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #     assert 0 < n == len(fovs)
 
     #     # message
-    #     cls.logger.info('Aligning %i images on image %i.', n, primary)
+    #     logger.info('Aligning {:d} images on image {:d}.', n, primary)
 
     #     # initialize and fit
     #     return cls(images,
@@ -1493,7 +1490,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         del self.model
 
         # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
-        # self.logger.debug('sigma guess: %s' % self._sigma_guess)
+        # logger.debug('sigma guess: {:s}', self._sigma_guess)
 
         # update minimal source seperation
         # self._min_dist = min(self._min_dist, dist_flat(xy).min())
@@ -1517,7 +1514,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             Fitted transform parameters (Δx, Δy, θ); the xy offsets in pixels,
             rotation angle in radians.
         """
-        self.logger.info('fitting %s', type(obj))
+        self.logger.debug('fitting {:s}', type(obj))
 
         if obj is None:
             # (re)fit all images
@@ -1525,7 +1522,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # if isinstance(obj, ImageRegister):
         #     return self.fit_register(obj, p0, hop, refine, plot)
-        
+
         if isinstance(obj, abc.Collection) and not isinstance(obj, np.ndarray):
             return self.fit_sequence(obj, p0, hop, refine, plot)
 
@@ -1570,7 +1567,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # convert coordinates to pixel coordinates of reference image
         xy, params = reg.convert_to_pixels_of(self)
-        
+
         # use `fit_points` so we don't aggregate images just yet
         p = self.fit_points(xy, p0, hop, refine, plot)
 
@@ -1668,15 +1665,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return p
 
     def register(self, clf=None, plot=False):
-        # TODO: rename register / cluster
         # clustering + relative position measurement
         clf = clf or self.clustering
         self.cluster_points(clf)
         # make the cluster centres the target constellation
         self.xy = self.xyt_block.mean(0)
-
-        # relabel segmentation images for identified stars
-        # self.relabel_segs()
 
         if plot:
             #
@@ -1804,18 +1797,18 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # scaler = StandardScaler()
         # X = scaler.fit_transform(np.vstack(xy))
 
-        self.logger.info('Clustering %i position measurements to cross identify'
-                         ' sources using:\n\t%s', n, indent(str(clf)))
+        self.logger.info('Clustering {:d} position measurements to cross '
+                         'identify sources using:\n\t{:s}', n, indent(str(clf)))
         clf.fit(X)
         labels = clf.labels_
         # core_samples_mask = (clf.labels_ != -1)
         # core_sample_indices_, = np.where(core_samples_mask)
 
         # Number of clusters in labels, ignoring noise if present.
-        self.n_stars = n_stars = len(set(labels)) - (1 if -1 in labels else 0)
+        self.n_stars = n_stars = len(set(labels)) - int(-1 in labels)
         self.n_noise = n_noise = list(labels).count(-1)
         # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-        logger.info('Identified %i stars using %i/%i points (%i noise)',
+        logger.info('Identified {:d} stars using {:d}/{:d} points ({:d} noise)',
                     n_stars, n - n_noise, n, n_noise)
 
         # sanity check
@@ -1991,7 +1984,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #     else:
         #         params[i] += p
 
-        self.logger.info('Fitting successful %i / %i', i - len(failed), i)
+        logger.info('Fitting successful {:d} / {:d}', i - len(failed), i)
 
         # likelihood ratio test
         xyn = list(map(transform.affine, self.coms, params, self.rscale))
@@ -2012,7 +2005,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def lh_ratio(self, xy0, xy1):
         ratio = self.model.lh_ratio(xy0, xy1)
-        self.logger.info(
+        logger.info(
             'Likelihood ratio: %.5f\n\t' +
             ('Keeping same', 'Accepting new')[ratio > 1] +
             ' parameters.', ratio
@@ -2184,7 +2177,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
 
-        self.logger.debug('Grid search optimum: %s', p)
+        logger.debug('Grid search optimum: {:s}', p)
 
         if plot:
             im = self.model.gmm.plot(show_peak=False)
@@ -2242,7 +2235,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # add 0s for angle grid
         z = np.full((1,) + grid.shape[1:], rotation)
         grid = np.r_[grid, z]
-        self.logger.info(
+        logger.info(
             '\nDoing grid search on ' """
                 δx = [{0:.1f} : {1:.1f} : {4:.1f}];
                 δy = [{2:.1f} : {3:.1f} : {5:.1f}]
@@ -2255,7 +2248,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # r = gridsearch_mp(objective, grid, (self.xy, xy) + args, **kws)
         ix = (i, j) = np.unravel_index(r.argmin(), r.shape)
         pGs = grid[:, i, j]
-        self.logger.debug('Grid search optimum: %s', pGs)
+        logger.debug('Grid search optimum: {:s}', pGs)
         return grid, r, ix, pGs
 
     def fit_pixels(self, index):
@@ -2362,7 +2355,7 @@ class ImageRegisterDSS(ImageRegister):
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
                 break
             except STScIServerError:
-                self.logger.warning('Failed to retrieve image from server: '
+                logger.warning('Failed to retrieve image from server: '
                                     '%r', srv)
 
         # DSS data array

@@ -40,10 +40,7 @@ from .display import AnsiImage
 # TODO: detect_gmm():
 
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+from loguru import logger
 #
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
@@ -761,9 +758,10 @@ class SegmentedImage(SegmentationImage,     # base
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
-        if cls.logger.getEffectiveLevel() == logging.INFO:
-            cls.logger.info('Detected %i objects covering %i pixels.',
-                            seg.nlabels, seg.to_binary().sum())
+        cls.logger.opt(lazy=True).info(
+            'Detected {:d} objects covering {:d} pixels.',
+            seg.nlabels, lambda: seg.to_binary().sum()
+            )
 
         return seg
 
@@ -1752,7 +1750,7 @@ class SegmentedImage(SegmentationImage,     # base
             return self
 
         for count in range(dmax + 1):
-            self.logger.debug('round %i', count)
+            self.logger.debug('round {:d}', count)
 
             mim = self.mask_sources(image, labels)
             m = np.ma.median(mim)
@@ -1769,7 +1767,7 @@ class SegmentedImage(SegmentationImage,     # base
                 if dark.all():
                     labels = np.setdiff1d(labels, label)
                 else:
-                    logger.debug('label: %i: %i pixels added', label,
+                    logger.debug('label: {:d}: {:d} pixels added', label,
                                  sum(~dark))
                     bb[tuple(w[:, dark])] = False
                     self.data[s][bb] = label
@@ -2140,7 +2138,7 @@ class SegmentedImage(SegmentationImage,     # base
         return get_cmap(cmap)
 
     def format_ansi(self, show_labels=True, frame=True, origin=0, cmap=None):
-        
+
         # colour map
         im = AnsiImage(self.data, self.get_cmap(cmap), origin).format(frame)
 

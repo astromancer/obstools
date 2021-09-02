@@ -5,7 +5,6 @@ observation files.
 
 
 # std
-import re
 import glob
 import inspect
 import fnmatch as fnm
@@ -24,9 +23,10 @@ from astropy.io.fits.hdu.base import _BaseHDU
 # local
 import docsplice as doc
 from motley.table import AttrTable
-from recipes.oo import SelfAware, null
 from recipes import caches, io, bash
+from recipes.oo import SelfAware, null
 from recipes.logging import LoggingMixin
+from recipes.string import plural, strings
 from recipes.string.brackets import braces
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
@@ -51,6 +51,8 @@ from .image.calibration import ImageCalibratorMixin
 def is_property(v):
     return isinstance(v, property)
 
+
+# def now_hms
 
 class FilenameHelper:
     """
@@ -178,13 +180,12 @@ class HDUExtra(PrimaryHDU,
 
         if self.ndim == 2:
             from scrawl.imagine import ImageDisplay
-            
+
             im = ImageDisplay(self.data, **kws)
             # `section` fails with 2d data
 
         elif self.ndim == 3:
             from .image.display import FitsVideo
-            
             im = FitsVideo(self, **kws)
 
         else:
@@ -268,7 +269,6 @@ class GlobIndexing(IndexerMixin):
                                  'as filename(s) in the campaign')
 
         return super().__getitem__(key)
-
 
 #
 class CampaignType(SelfAware, ListOf):
@@ -393,11 +393,7 @@ class PhotCampaign(PPrintContainer,
 
         """
 
-        # cls.logger.info('Loading..')
-        # kws.setdefault('memmap', True)
-
-        from time import time
-        from recipes import pprint as ppr
+        # cls.logger.debug('Loading {:d} files', len(filenames))
 
         # sanitize filenames:  input filenames may contain None - remove these
         filenames = filter(None, filenames)
@@ -413,24 +409,26 @@ class PhotCampaign(PPrintContainer,
                 continue
 
             # load the HDU
-            cls.logger.debug('Loading %s: %s.', name, ppr.hms(time() % 86400))
+            cls.logger.debug('Loading {:s}: {:s}.', name)
 
             # catch all warnings
-            with wrn.catch_warnings(record=True) as w:
+            with wrn.catch_warnings(record=True) as warnings:
                 wrn.simplefilter('always')
 
                 # load file
                 hdu = loader(name, **kws)
 
                 # handle warnings
-                if w:
+                if warnings:
+                    get_msg = op.attrgetter('message')
                     cls.logger.warning(
-                        f'Loading file: {name!r} triggered the following '
-                        f'warning{"s"*(len(w) > 1)}:\n' +
-                        '\n'.join((str(warning.message) for warning in w)))
+                        'Loading file: {!r} triggered the following {}:\n{}',
+                        name, plural("warning", warnings),
+                        '\n'.join(strings(map(get_msg, warnings)))
+                    )
             hdus.append(hdu)
 
-        cls.logger.info('Loaded %i file%s.', i, 's' * bool(i))
+        cls.logger.info('Loaded {:d} {:s}.', i, plural('file', hdus))
         return cls(hdus)
 
     def __init__(self, hdus=None):

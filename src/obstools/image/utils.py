@@ -109,7 +109,7 @@ def rand_median(cube, ncomb, subset, nchoose=None):
     nfirst = min(nchoose, i1 - i0)
     ix = np.random.randint(i0, i0 + nfirst, ncomb)
     # create median image for init
-    logger.info('Combining %i frames from amongst frames (%i->%i) for '
+    logger.info('Combining {:d} frames from amongst frames ({:d}->{:d}) for '
                 'reference image.', ncomb, i0, i0 + nfirst)
     return np.median(cube[ix], 0)
 
@@ -225,6 +225,7 @@ def scale_combine(images, stat='mean'):
 
 def deep_sky(images, fovs, params, resolution=None, statistic='mean',
              masked=True):
+    # todo rename 
     from obstools.image.registration import roto_translate_yx
 
     data = []

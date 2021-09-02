@@ -12,10 +12,7 @@ from recipes.logging import get_module_logger
 from recipes.dicts import AttrReadItem, ListLike
 
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+from loguru import logger
 
 class auto_id:
     """Enable automatic group labeling"""
