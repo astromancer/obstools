@@ -1,6 +1,8 @@
 """
-Transformation helper functions for cartesian coordinate arrays
+Transformation helper functions for cartesian coordinate arrays.
 """
+
+# TODO: move up
 
 import numpy as np
 from recipes.transforms.rotation import rotation_matrix

@@ -45,10 +45,10 @@ from recipes.misc import duplicate_if_scalar
 from recipes.logging import LoggingMixin, get_module_logger, logging
 
 # relative
+from . import SkyImage, ImageContainer
 from .mosaic import MosaicPlotter
-from . import transforms as transform
 from .segmentation import SegmentedImage
-from .image import SkyImage, ImageContainer
+from .. import transforms as transform
 from ..modelling import Model
 from ..campaign import HDUExtra
 from ..stats import geometric_median

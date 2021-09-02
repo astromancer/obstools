@@ -15,7 +15,7 @@ from matplotlib.transforms import Affine2D
 from scrawl.imagine import ImageDisplay
 
 # relative
-from . import transforms
+from .. import transforms
 from .image import ImageContainer, SkyImage
 
 
