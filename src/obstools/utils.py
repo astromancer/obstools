@@ -4,6 +4,8 @@ import re
 import logging
 import numbers
 import urllib.request
+import operator as op
+import functools as ftl
 from io import BytesIO
 
 # third-party
@@ -31,6 +33,16 @@ logging.basicConfig()
 
 
 RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
+
+
+def prod(x):
+    """
+    Product of a list of numbers; ~40x faster vs np.prod for Python tuples.
+    """
+    if len(x) == 0:
+        return 1
+
+    return ftl.reduce(op.mul, x)
 
 
 def int2tup(v):
@@ -325,7 +337,7 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
              h=h, w=w,
              f='fits',
              c='none')
-        ).encode()
+    ).encode()
 
     # submit the form
     with urllib.request.urlopen(url, params) as html:
