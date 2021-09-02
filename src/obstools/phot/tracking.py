@@ -20,19 +20,14 @@ from astropy.stats import median_absolute_deviation as mad
 
 # local
 from obstools.image.registration import compute_centres_offsets, \
-    group_features, report_measurements  # register_constellation
+    group_features, report_measurements  # register
 from recipes.dicts import AttrReadItem
-from recipes.logging import LoggingMixin
-from recipes.logging import get_module_logger
-=======
-from recipes.dict import AttrReadItem
 from recipes.logging import get_module_logger, LoggingMixin
->>>>>>> dist-prep:src/obstools/phot/tracking/core.py
 from recipes.parallel.synced import SyncedCounter, SyncedArray
-from obstools.phot.utils import LabelGroupsMixin
-from obstools.image.segmentation import SegmentedImage, \
-    SegmentsModelHelper, merge_segmentations, select_rect_pad
-from obstools.image.segmentation.detect import make_border_mask
+from obstools.phot.utils import 
+from obstools.image.segmentation import SegmentedImage, SegmentsModelHelper, \
+    LabelGroupsMixin, merge_segmentations, select_rect_pad
+from obstools.image.detect import make_border_mask
 from obstools.io import load_memmap
 from graphing.imagine import ImageDisplay
 from matplotlib.transforms import AffineDeltaTransform
@@ -56,12 +51,8 @@ from obstools.image.registration import ImageRegister
 
 # module level logger
 logger = get_module_logger()
-<<<<<<< HEAD:src/obstools/phot/tracking.py
-=======
 logging.basicConfig()
 logger.setLevel(logging.INFO)
-
->>>>>>> dist-prep:src/obstools/phot/tracking/core.py
 
 TABLE_STYLE = dict(txt='bold', bg='g')
 
@@ -385,7 +376,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
                                         np.tile(hdu.get_fov(), (n, 1)),
                                         fit_rotation=False)
         clf = reg.get_clf(bin_seeding=True, min_bin_freq=3)
-        reg.register_constellation(clf, plot=True)
+        reg.register(clf, plot=True)
         # seg = reg.global_seg()
 
         llc = np.floor(reg.xy_offsets.min(0)).astype(int)
@@ -433,7 +424,7 @@ class SourceTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
             ftl.partial(detect_measure, **detect_kws), images))
 
         # register constellation of sources
-        centres, σ_xy, xy_offsets, outliers, xy = register_constellation(
+        centres, σ_xy, xy_offsets, outliers, xy = register(
             cls.clustering, coms, centre_distance_max, f_detect_measure,
             plot)
 
