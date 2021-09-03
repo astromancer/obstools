@@ -64,6 +64,9 @@ class ImageOrienter:
 
         self.orient = tuple(orient)
 
+    def __len__(self):
+        return self.shape[0]
+    
     def __call__(self, data):
         return data[self.orient]
 
@@ -115,7 +118,7 @@ class CalibrationImage:
 
 class ImageCalibrator(ImageOrienter):
     """
-    Do calibration arithmetic for CCD images on the fly
+    Do calibration arithmetic for CCD images on the fly!
     """
     # init the descriptors
     dark = CalibrationImage('dark')
