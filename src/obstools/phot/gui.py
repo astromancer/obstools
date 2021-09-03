@@ -521,7 +521,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         return mask
 
     def update(self, i, draw=True):
-        self.logger.debug('set_frame: %s', i)
+        self.logger.debug('set_frame: {:s}', i)
 
         # get image
         i, image = VideoDisplay.update(self, i)
@@ -1038,7 +1038,7 @@ class LegendGuiBase(ConnectionMixin):
 #                 self.logger.warning('%s (Frame %i, Star %i)', (msg, i, j))
 #
 #             if ix is not None:
-#                 self.logger.info('Best model: %s (Frame %i, Star %i)' % (mdl, i, j))
+#                 self.logger.info('Best model: {:s} (Frame {:d}, Star {:d})' % (mdl, i, j))
 #
 #             # TODO: if best_model is self.db.bg:
 #             #     "logging.warning('Best model is BG')"

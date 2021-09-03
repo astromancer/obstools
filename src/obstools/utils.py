@@ -1,7 +1,6 @@
 
 # std
 import re
-import logging
 import numbers
 import urllib.request
 import operator as op
@@ -10,6 +9,7 @@ from io import BytesIO
 
 # third-party
 import numpy as np
+from loguru import logger
 from astropy.io import fits
 from astropy.time import Time
 from astropy.coordinates.name_resolve import NameResolveError
@@ -18,18 +18,12 @@ from astropy.coordinates import (jparser, SkyCoord, EarthLocation,
 
 # local
 from recipes import caches
-from recipes.logging import get_module_logger
 
 # relative
 from . import cachePaths as cached
 
 
 # from motley.profiling.timers import timer
-
-
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
 
 
 RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
@@ -134,13 +128,14 @@ def get_coords_named(name):
         coo = resolver(name)
     except NameResolveError as err:  # AttributeError
         logger.warning(
-            'Coordinates for object %r could not be retrieved due to the '
-            'following exception: \n%s', name, str(err))
+            'Coordinates for object {!r:} could not be retrieved due to the '
+            'following exception: \n{:s}', name, str(err)
+            )
     else:
         if isinstance(coo, SkyCoord):
-            logger.info(
-                'The following ICRS J2000.0 coordinates were retrieved:\n'
-                + ra_dec_string(coo, precision=2, sep=' ', pad=1)
+            logger.opt(lazy=True).info(
+                'The following ICRS J2000.0 coordinates were retrieved:\n{:s}',
+                lambda: ra_dec_string(coo, precision=2, sep=' ', pad=1)
             )
         return coo
 
@@ -169,11 +164,11 @@ def resolver(name):
     try:        # EAFP
         return jparser.to_skycoord(name)
     except ValueError as err:
-        logger.debug('Could not parse coordinates from name %r.', name)
+        logger.debug('Could not parse coordinates from name {!r:}.', name)
 
     try:
         # Attempts a SIMBAD Sesame query with the given object name
-        logger.info('Querying SIMBAD database for %r.', name)
+        logger.info('Querying SIMBAD database for {!r:}.', name)
         return SkyCoord.from_name(name)
     except NameResolveError as err:
         # check if the name is bad - something like "FLAT" or "BIAS", we want
@@ -194,7 +189,8 @@ def convert_skycoords(ra, dec):
         try:
             return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
         except ValueError:
-            logger.warning('Could not interpret coordinates: %s; %s', ra, dec)
+            logger.warning(
+                'Could not interpret coordinates: {:s}; {:s}', ra, dec)
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):
@@ -214,9 +210,8 @@ def retrieve_coords_ra_dec(name, verbose=True, **fmt):
 def ra_dec_string(coords, **kws):
     kws_ = dict(precision=2, sep=' ', pad=1)
     kws_.update(**kws)
-    return 'α = %s; δ = %s' % (
-        coords.ra.to_string(unit='h', **kws_),
-        coords.dec.to_string(unit='deg', alwayssign=1, **kws_))
+    return (f'α = {coords.ra.to_string(unit="h", **kws_)}; '
+            f'δ = {coords.dec.to_string(unit="deg", alwayssign=1, **kws_)}')
 
 
 def get_skymapper_table(coords, bands, size=(10, 10)):
@@ -245,11 +240,12 @@ def get_skymapper_table(coords, bands, size=(10, 10)):
     data = np.array(data)
     t = Time(data[:, columns.index(b'mjd_obs')].astype(str), format='mjd')
 
-    logger.info('Found %i %s-band SkyMapper DR1 images for coordinates %s '
-                'spanning dates %s to %s',
-                len(data), bands,
-                ra_dec_string(coords, precision=2, sep=' ', pad=1),
-                t.min().iso.split()[0], t.max().iso.split()[0])
+    logger.info(
+        'Found {:d} {:s}-band SkyMapper DR1 images for coordinates {:s} '
+        'spanning dates {:s} to {:s}.',
+        len(data), bands,
+        ra_dec_string(coords, precision=2, sep=' ', pad=1),
+        t.min().iso.split()[0], t.max().iso.split()[0])
 
     return columns, data
 
@@ -349,8 +345,9 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
         raise STScIServerError(error[1])
 
     # log
-    logger.info("Retrieving %s'x %s' image for object at J%.1f coordinates "
-                "RA = %.3f; DEC = %.3f from %r", h, w, epoch, ra, dec, server)
+    logger.info("Retrieving {:.1f}' x {:.1f}' image for object at J{:.1f} "
+                "coordinates RA = {:.3f}; DEC = {:.3f} from {!r:}.",
+                h, w, epoch, ra, dec, server)
 
     # load into fits
     fitsData = BytesIO()

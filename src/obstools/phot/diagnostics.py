@@ -743,7 +743,7 @@ def plot_aperture_flux(fitspath, proc, tracker):
 
 
 def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
-    logger.info('plotting lc aps: %s', description)
+    logger.info('plotting lc aps: {:s}', description)
 
     # no more than 200 error bars so we don't clutter the plot
     error_every = flxStd.shape[1] // int(max_errorbars)

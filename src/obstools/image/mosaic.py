@@ -430,7 +430,7 @@ class MosaicPlotter(ImageContainer):
         except Exception as err:
             self.logger.exception(
                 f'Scroll failed: {len(self)=} {self._idx_active=}'
-                )
+            )
 
             self.image_label = None
             self.fig.canvas.draw()

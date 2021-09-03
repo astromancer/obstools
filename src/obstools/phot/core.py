@@ -17,10 +17,7 @@ from ..lc.ascii import write
 from ..campaign import PhotCampaign
 from .. import io
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+from loguru import logger
 
 
 def ragged(hdu, seg, top=5, dilate=0, filename=None):
@@ -79,6 +76,8 @@ class PhotInterface:
         labels = self.reg.attrs('seg.labels')[1:]
         nstars = max(map(max, labels)) - 1
         top = min(top, nstars)
+        
+        logger.info('Light curves for {:d} sources will be extracted.', top)
 
         target = 1
         cmp = list(ftl.reduce(set.intersection, map(set, labels)) - {target})

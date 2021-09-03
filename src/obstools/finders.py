@@ -5,13 +5,10 @@ Make finder charts from source name or coordinates.
 # third-party
 import aplpy
 import numpy as np
+from loguru import logger
 
-from obstools.utils import get_dss, get_coordinates, STScIServerError
-from recipes.logging import logging, get_module_logger
-
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+# relative
+from .utils import get_dss, get_coordinates, STScIServerError
 
 
 SERVERS = {'b': ['poss2ukstu_blue', 'poss1_blue'],
@@ -67,7 +64,7 @@ def make_finder(obj_name, coords=None, size=(10, 10), filters='bri'):
             hdu = get_dss(server, ra, dec, size=size)
             break
         except STScIServerError as err:
-            logger.debug('DSS image retrieval failed with:\n%s\n', err)
+            logger.debug('DSS image retrieval failed with:\n{:s}\n', err)
     else:
         raise Exception('No DSS image could be retrieved.')
 

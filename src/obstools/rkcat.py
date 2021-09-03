@@ -41,10 +41,7 @@ from recipes.logging import get_module_logger
 # TODO: read in meta data with column descriptions
 # TODO: host as public catalogue that users can contribute to!?
 
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+from loguru import logger
 
 # flags
 # LIMIT_FLAGS = '<>'
@@ -219,7 +216,7 @@ def read_ascii(filename, mask_missing=False):
     if mask_missing:
         data = np.ma.MaskedArray(data, (data == ''))
 
-    logger.info('Data for %i objects successfully read.', (j + 1))
+    logger.info('Data for {:d} objects successfully read.', (j + 1))
     return data, col_headers
 
 
@@ -318,7 +315,7 @@ class RKCat:
         #
         if logger.getEffectiveLevel() >= logging.INFO:
             n_cleaned = np.sum(pre != '') + np.sum(post != '')
-            logger.info('Flags stripped from %i data entries in %i columns',
+            logger.info('Flags stripped from {:d} data entries in {:d} columns',
                         n_cleaned, len(names))
 
     def restore_flags(self, names):

@@ -59,7 +59,9 @@ class lmMixin():
 
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
-        self.logger.debug('Guessed: (%s)' % ', '.join(map(decimal_repr, p0)))
+        self.logger.opt(lazy=True).debug(
+            'Guessed: ({:s})', lambda: ', '.join(map(decimal_repr, p0))
+            )
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
 

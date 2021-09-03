@@ -19,8 +19,7 @@ from scrawl.imagine import VideoDisplay
 
 # relative
 from ..utils import load_memmap
-from ...phot.utils import LabelGroupsMixin
-from ...image.segmentation import SegmentsModelHelper
+from ...image.segmentation import SegmentsModelHelper, LabelGroupsMixin
 from .. import Model, CompoundModel, FixedGrid
 
 
@@ -595,7 +594,7 @@ class PSFModeller(SegmentedImageModel):
 #
 #         # folder = Path(folder)
 #         # if not folder.exists():
-#         #     self.logger.info('Creating folder: %s', str(folder))
+#         #     self.logger.info('Creating folder: {:s}', str(folder))
 #         #     folder.mkdir(parents=True)
 #         #
 #         # self.loc = str(folder)
