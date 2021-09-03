@@ -1634,10 +1634,13 @@ class SegmentedImage(SegmentationImage,     # base
             # compute sum
             sum_ = sub.sum()
             if sum_ == 0:
-                warnings.warn(f'Function `com_bg` encountered zero-valued '
-                              f'image segment at label {lbl}.')
+                # For a zero sum image segment, the center of mass is equivalent
+                # to that of a constant segment.
+                # warnings.warn(f'Function `com_bg` encountered zero-valued '
+                #               f'image segment at label {lbl}.')
                 # can skip next
-                com[i] = np.nan
+                # com[i] = np.nan
+                com[i] = grd.sum(axes_sum) / sub.size
             else:
                 # compute centre of mass
                 com[i] = (sub * grd).sum(axes_sum) / sum_

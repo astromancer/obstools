@@ -40,20 +40,20 @@ from scipy.interpolate import NearestNDInterpolator
 # local
 from scrawl.imagine import ImageDisplay
 from recipes.string import indent
+from recipes.lists import split_like
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.misc import duplicate_if_scalar
-from recipes.logging import LoggingMixin, get_module_logger, logging
 
 # relative
-from . import SkyImage, ImageContainer
-from .mosaic import MosaicPlotter
-from .segmentation import SegmentedImage
 from .. import transforms as transform
 from ..modelling import Model
 from ..campaign import HDUExtra
 from ..stats import geometric_median
 from ..utils import get_coordinates, get_dss, STScIServerError
+from .mosaic import MosaicPlotter
+from .segmentation import SegmentedImage
+from .image import SkyImage, ImageContainer
 
 
 # from motley.profiling.timers import timer
@@ -1598,7 +1598,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         return self.fit_image(
-            SkyImage.from_hdu(hdu, sample_stat, depth, **find_kws),
+            SkyImage.from_hdu(hdu, sample_stat, depth, 
+                              **{**self.find_kws, **find_kws}),
             p0, None, hop, refine, plot
         )
 
@@ -1688,7 +1689,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             raise Exception('Unregistered!')
 
         # group_features(self.labels, self.labels)[0]
-        return np.split(self.labels, np.cumsum(list(map(len, self.coms))))[:-1]
+        return split_like(self.labels, self.coms)
 
     def remap_labels(self, target, flux_sort=True):
         """
@@ -1704,8 +1705,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # science frames
         detected = ~counts[1:].mask
         nb, = np.where(detected.any(0))
-        old = [target, *np.setdiff1d(nb, target)]
-        old += [*np.setdiff1d(np.where(detected.all(0)), nb)]
+        old = [target,
+               *np.setdiff1d(nb, target),
+               *np.setdiff1d(np.where(detected.all(0)), nb)]
 
         if flux_sort:
             # measure relative brightness (scale by one of the frames, to account for
@@ -1716,9 +1718,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
             old += bright2faint
         return np.argsort(old)  # these are the new labels!
 
-    def relabel_segs(self, flux_sort=True):
+    def relabel_segments(self, target=None, flux_sort=True):
         # desired new cluster labels
-        new_labels = self.remap_labels(flux_sort)
+        new_labels = self.remap_labels(target, flux_sort)
 
         # relabel all segmentedImages for cross image consistency
         for cluster_labels, image in zip(self.labels_per_image, self):
@@ -1813,7 +1815,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # sanity check
         n_stars_most = max(map(len, self.coms))
-        if n_stars_most < 2 * self.n_stars:
+        if n_stars > n_stars_most * 1.5:
             warnings.warn(f"Looks like we're overfitting clusters. Image with "
                           f"most sources has {n_stars_most}, while clustering "
                           f"produced {n_stars} clusters. Reduce bandwidth.")
@@ -2356,14 +2358,14 @@ class ImageRegisterDSS(ImageRegister):
                 break
             except STScIServerError:
                 logger.warning('Failed to retrieve image from server: '
-                                    '%r', srv)
+                               '%r', srv)
 
         # DSS data array
         data = self.hdu[0].data.astype(float)
         find_kws.setdefault('deblend', True)
         ImageRegister.__init__(self, **find_kws)
         self(data, fov=fov)
-
+        
         # TODO: print some header info for DSS image - date!
         # DATE-OBS
         # TELESCOP
@@ -2377,8 +2379,9 @@ class ImageRegisterDSS(ImageRegister):
         self.target_coords_world = coords
         self.target_coords_pixels = np.divide(self.image.shape, 2) + 0.5
 
-    def remap_labels(self, flux_sort=True):
-        target, = self.clustering.predict([self.target_coords_pixels])
+    def remap_labels(self, target=None, flux_sort=True):
+        if target is None:
+            target, = self.clustering.predict([self.target_coords_pixels])
         return super().remap_labels(target, flux_sort)
 
     def mosaic(self, axes=None, names=(), **kws):
@@ -2416,6 +2419,10 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
+    def register(self, clf=None, plot=False):
+        super().register(clf, plot)
+        self.relabel_segments()
+
     def build_wcs(self, run):
         assert len(run) == len(self) - 1
         for hdu, p, scale in zip(run, self.params[1:], self.scales[1:]):
@@ -2444,8 +2451,7 @@ class ImageRegisterDSS(ImageRegister):
         # transform target coordinates in DSS image to target in SHOC image
         # convert to pixel llc coordinates then to arcmin
         # target coordinates DSS [pixel]
-        xyDSS = (np.array([hdr['crpix1'], hdr['crpix2']]
-                          ) - 0.5) / self.pixel_scale
+        xyDSS = np.subtract([hdr['crpix1'], hdr['crpix2']], 0.5) / self.scale
         # target coordinates SHOC [pixel]
         xySHOC = (rotation_matrix(-theta) @ (xyDSS - xyoff)) / scale
         # target coordinates celestial [degrees]
@@ -2453,7 +2459,7 @@ class ImageRegisterDSS(ImageRegister):
 
         # coordinate increment
         # flip = np.array(hdu.flip_state[::-1], bool)
-        cdelt = scale / 60.  # image scale in degrees
+        # cdelt = scale / 60.  # image scale in degrees
         # cdelt[flip] = -cdelt[flip]
 
         # see:
@@ -2463,7 +2469,7 @@ class ImageRegisterDSS(ImageRegister):
         # array location of the reference point in pixels
         w.wcs.crpix = xySHOC
         # coordinate increment at reference point
-        w.wcs.cdelt = cdelt
+        w.wcs.cdelt = scale / 60.  # image scale in degrees
         # target coordinate in degrees reference point
         xtrg = self.target_coords_world
         w.wcs.crval = xtrg.ra.value, xtrg.dec.value
