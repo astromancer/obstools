@@ -15,7 +15,7 @@ def test(hdu):
 
     #
     seg = self.seg.select_subset(-llc[::-1], image.shape)
-    lines = seg.show_overlay(im.ax, color='g')
+    lines = seg.draw_contours(im.ax, color='g')
 
 
     image = hdu.oriented[0]

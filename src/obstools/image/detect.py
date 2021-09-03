@@ -97,7 +97,7 @@ class DetectionBase(LoggingMixin):
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
-    def __call__(self, image, mask=False,  dilate=0, *args, **kws):
+    def __call__(self, image, mask=False, dilate=0, /, *args, **kws):
         """
         Image object detection that returns a SegmentedImage instance
 
@@ -426,16 +426,14 @@ class SourceDetectionLoop(SourceDetection):
 
         if not self.info:
             return 'No detections!'
-
-        # log what you found
-        seq_repr = ftl.partial(pp.truncated, max_items=3)
-
         # report detections here
         col_headers = list(self.info.keys())
         info_list = list(self.info.values())
-        tbl = np.column_stack([np.array(info_list, 'O'),
-                               list(map(len, self.seg.groups)),
-                               list(map(seq_repr, self.seg.groups))])
+        tbl = np.column_stack([
+            np.array(info_list, 'O'),
+            list(map(len, self.seg.groups)),
+            list(map(ftl.partial(pp.collection, max_items=3), self.seg.groups))
+        ])
 
         title = 'Object detections'
         if self.model:

@@ -164,7 +164,7 @@ class PropertyManager(dict):
     # in the translator dict map to the corresponding keyword upon
     # initialisation. This is purely for user convenience. eg. short-hand
     # notation when initialising
-    translator.add_vocab(dict(coords='offsets',
+    translator.add_mapping(dict(coords='offsets',
                               ls='linestyle',
                               lw='linewidth',
                               w='width',  # TODO: a, b, theta, θ
@@ -187,8 +187,9 @@ class PropertyManager(dict):
             angles=np.atleast_1d, )
 
     # Add equivalence mapping that maps *colour -> *color
-    converter.add_mapping(
-            lambda key: ''.join(re.search('(colo)u?(r)', key).groups()))
+    converter.add_func(
+            lambda key: ''.join(re.search('(colo)u?(r)', key).groups())
+            )
 
     # @expose.args( pre='%'*100, post = '\\'*100 )
     def __init__(self, defaults=None, **kws):

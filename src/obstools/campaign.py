@@ -25,9 +25,9 @@ import docsplice as doc
 from motley.table import AttrTable
 from recipes import caches, io, bash
 from recipes.oo import SelfAware, null
-from recipes.logging import LoggingMixin
 from recipes.string import plural, strings
 from recipes.string.brackets import braces
+from recipes.logging import LoggingMixin
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.grouping import Groups, AttrGrouper

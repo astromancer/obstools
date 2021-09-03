@@ -9,10 +9,6 @@ import itertools as itt
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
-from matplotlib.transforms import Affine2D
-
-# local
-from scrawl.imagine import ImageDisplay
 
 # relative
 from .. import transforms
@@ -172,7 +168,7 @@ class MosaicPlotter(ImageContainer):
         # choose alpha based on number of images
         n = len(self)
         if alpha is None:
-            alpha = max(min(1 / n, 0.5), 0.2)
+            alpha = max(min(1 / n, 0.5), 0.025)
 
         # loop images and plot
         cmaps = mit.padded([cmap_ref], cmap)

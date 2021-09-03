@@ -45,7 +45,7 @@ def _add_vert(pixel, left, char, color):
     idx = int(left or -1)
     parts = split(text, idx)
     text = ''.join(parts[idx])
-    fg = motley.codes._get_params(color)
+    fg = motley.codes.get_code_str(color)
     return ''.join((csi, fg, bg, fin, *(text, char)[::-idx], end))
 
 

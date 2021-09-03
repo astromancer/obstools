@@ -6,7 +6,7 @@ Write light curves to plain text in utf-8
 import re
 import textwrap
 from pathlib import Path
-from collections import OrderedDict as odict, Callable
+from collections import OrderedDict as odict
 
 # third-party
 import numpy as np
@@ -50,7 +50,7 @@ def format_list(data, fmt='%g', width=8, sep=','):
 
 
 def underline_ascii(text):
-    return '\n'.join([text.title(), '-' * len(text)])
+    return '\n'.join([text, '-' * len(text)])
 
 
 def header_info_block(name, info):
@@ -59,13 +59,13 @@ def header_info_block(name, info):
         s += underline_ascii(name)
         s += '\n'
 
-    s += pformat(info, rhs=get_name, brackets='', sep='')
+    s += pformat(info, name='', rhs=get_name, brackets='', sep='')
     s += '\n'
     return s
 
 
 def get_name(o):
-    if isinstance(o, Callable):
+    if callable(o):
         return o.__name__
     return str(o)
 
@@ -219,7 +219,7 @@ def make_header(obj_name, shape_info, has_oflag, meta={}):
     lines = ['# ' + header_info_block(title, shape_info)]
 
     # column descriptions
-    lines.append(header_info_block('columns', col_info))
+    lines.append(header_info_block('Columns', col_info))
 
     # header blocks for additional meta data
     for sec_name, info in meta.items():
@@ -282,7 +282,7 @@ def make_table(t, flx, std, mask=None):
 
 
 def write(filename, t, counts, std, mask=None, meta={},
-                obj_name='<unknown>'):
+          obj_name='<unknown>'):
     if np.ma.is_masked(counts):
         mask = counts.mask
 

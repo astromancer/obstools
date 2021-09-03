@@ -190,7 +190,8 @@ def convert_skycoords(ra, dec):
             return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
         except ValueError:
             logger.warning(
-                'Could not interpret coordinates: {:s}; {:s}', ra, dec)
+                'Could not interpret coordinates: {:s}; {:s}', ra, dec
+                )
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):
@@ -240,12 +241,11 @@ def get_skymapper_table(coords, bands, size=(10, 10)):
     data = np.array(data)
     t = Time(data[:, columns.index(b'mjd_obs')].astype(str), format='mjd')
 
-    logger.info(
-        'Found {:d} {:s}-band SkyMapper DR1 images for coordinates {:s} '
-        'spanning dates {:s} to {:s}.',
-        len(data), bands,
-        ra_dec_string(coords, precision=2, sep=' ', pad=1),
-        t.min().iso.split()[0], t.max().iso.split()[0])
+    logger.info('Found {:d} {:s}-band SkyMapper DR1 images for coordinates {:s}'
+                ' spanning dates {:s} to {:s}.',
+                len(data), bands,
+                ra_dec_string(coords, precision=2, sep=' ', pad=1),
+                t.min().iso.split()[0], t.max().iso.split()[0])
 
     return columns, data
 

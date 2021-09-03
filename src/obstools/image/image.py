@@ -250,7 +250,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         """
 
         from .sample import ImageSamplerMixin
-        
+
         if not isinstance(hdu, ImageSamplerMixin):
             raise TypeError(
                 f'Received object {hdu} of type: {type(hdu)}. '
@@ -262,13 +262,15 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
         # self.filename
 
+        # logger.info(str(kws))
+
         # use `hdu.detect` so we cache the detections on the hdu filename
         seg = hdu.detect(sample_stat, depth, **kws)
         # pull the sample image (computed in the line above) from the cache
         image = hdu.get_sample_image(sample_stat, depth)
-        
+
         # TODO: if wcs is defined, use that as default
-        
+
         return cls(image, hdu.fov, angle=hdu.pa, segmentation=seg)
 
     @classmethod
