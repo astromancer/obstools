@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 # local
 from recipes.logging import LoggingMixin
 
+# local
+from recipes.logging import LoggingMixin
+
 # relative
 from .. import transforms
 from .image import ImageContainer, SkyImage
@@ -47,7 +50,7 @@ def ulc(p, fov):
 #     return ulc[:, 0].min(), ulc[:, 1].max()  # xy
 
 
-class MosaicPlotter(ImageContainer):
+class MosaicPlotter(ImageContainer, LoggingMixin):
     """
     Plot the results from image registration run. This class is designed to work
     with small images that typically span a tens of arcminutes or so and hence
@@ -289,7 +292,7 @@ class MosaicPlotter(ImageContainer):
                      \  /    |
                       \/     v
                              ↕ arrow_head_distance
-                      ✷  
+                      ✷
 
 
         Parameters

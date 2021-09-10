@@ -398,8 +398,8 @@ class TaskExecutor(LoggingMixin):
         # if np.isfinite(max_fail):
         n = self.compute_size
 
-        self.logger.info('Exception threshold is %.2f%% ({:d}/{:d})' % (
-            (self.max_fail / n) * 100, self.max_fail, n))
+        self.logger.info('Exception threshold is {:.2%} ({:d}/{:d})' % (
+            (self.max_fail / n), self.max_fail, n))
 
         return self.catch
 
