@@ -409,7 +409,7 @@ class PhotCampaign(PPrintContainer,
                 continue
 
             # load the HDU
-            cls.logger.debug('Loading {:s}: {:s}.', name)
+            cls.logger.debug('Loading {:s}.', name)
 
             # catch all warnings
             with wrn.catch_warnings(record=True) as warnings:

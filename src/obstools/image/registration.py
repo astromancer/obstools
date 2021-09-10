@@ -1058,8 +1058,8 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         if n_out / n_points > 0.5:
             raise Exception('Too many outliers!!')
 
-        logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > %.3f',
-                    n_out, n_points, (n_out / n_points) * 100, d_cut)
+        logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
+                    n_out, n_points, (n_out / n_points), d_cut)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
