@@ -86,7 +86,7 @@ class Image(SelfAware):
     def __array__(self):
         return self.data
 
-    def plot(self, ax=None, frame=True, set_lims=True, **kws):
+    def show(self, ax=None, frame=True, set_lims=True, **kws):
         #  ,
         """
         Display the image in the axes
@@ -197,9 +197,9 @@ class TransformedImage(Image):
     def transform(self):
         return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.offset)
 
-    def plot(self, ax=None, frame=True, set_lims=True, **kws):
+    def show(self, ax=None, frame=True, set_lims=True, **kws):
 
-        art = super().plot(ax, frame, set_lims, **kws)
+        art = super().show(ax, frame, set_lims, **kws)
         ax = art.image.axes
 
         # Rotate + offset the image by setting the transform
@@ -315,6 +315,10 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels
         self.counts = None  # : np.ndarray: pixel sums for segmentation
 
+    # @lazyproperty
+    # def xy(self):
+    #     self.detect()
+    
     @property
     def fov(self):
         """Field of view"""
@@ -339,14 +343,15 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         # return xy coordinates in pixels
         return self.seg, self.xy
 
-    def plot(self, ax=None, frame=True, positions=False, regions=False,
+    def show(self, ax=None, frame=True, positions=False, regions=False,
              labels=False, set_lims=True, **kws):
         #  ,
         """
         Display the image in the axes, applying the affine transformation for
         parameters `p`
         """
-        art = super().plot(ax, frame, set_lims, **kws)
+        art = super().show(ax, frame, set_lims, **kws)
+        ax = art.image.axes
 
         # add xy position markers (centre of mass)
         if positions:
@@ -373,6 +378,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             )
         return art
 
+    plot = show
+    
     def label_image(self, ax, name='', **kws):
         return ax.text(*self.corners[-1], name,
                        rotation=np.degrees(self.angle),
