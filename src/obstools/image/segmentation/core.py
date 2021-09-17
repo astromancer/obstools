@@ -26,7 +26,8 @@ from recipes.logging import LoggingMixin
 
 # relative
 from ... import io
-from ..utils import shift_combine, prod
+from ...utils import prod
+from ..utils import shift_combine
 from .display import AnsiImage
 from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id
@@ -759,7 +760,7 @@ class SegmentedImage(SegmentationImage,     # base
         cls.logger.opt(lazy=True).info(
             'Detected {:d} objects covering {:d} pixels.',
             seg.nlabels, lambda: seg.to_binary().sum()
-            )
+        )
 
         return seg
 

@@ -534,7 +534,7 @@ class PhotCampaign(PPrintContainer,
 
             reg.recentre()
 
-        reg.order = sum((indices[o] for o in order), [])
+        reg.order = np.hstack([indices[o] for o in order])
         # reg.data, _ = cosort(reg.order, reg.data)
         return reg
 
