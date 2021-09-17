@@ -6,9 +6,7 @@ Extensions for segmentation images
 # std
 import types
 import inspect
-import logging
 import numbers
-import warnings
 import itertools as itt
 from collections import abc, namedtuple, defaultdict
 
@@ -16,6 +14,7 @@ from collections import abc, namedtuple, defaultdict
 import numpy as np
 import more_itertools as mit
 from scipy import ndimage
+from loguru import logger
 from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
@@ -23,14 +22,14 @@ from photutils.segmentation import SegmentationImage
 # local
 from pyxides.vectorize import vdict
 from recipes.dicts import pformat
-from recipes.logging import LoggingMixin, get_module_logger
+from recipes.logging import LoggingMixin
 
 # relative
 from ... import io
-from ..utils import shift_combine
+from ..utils import shift_combine, prod
+from .display import AnsiImage
 from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id
-from .display import AnsiImage
 
 
 # from .detect import sigma_threshold
@@ -40,7 +39,6 @@ from .display import AnsiImage
 # TODO: detect_gmm():
 
 
-from loguru import logger
 #
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
@@ -1072,6 +1070,10 @@ class SegmentedImage(SegmentationImage,     # base
     def mask0(self):  # todo use `masked_background` now in photutils
         return self.data == 0
 
+    @lazyproperty
+    def fractional_areas(self):
+        return self.areas / prod(self.shape)
+    
     # @lazyproperty
     # def areas(self):
     #     areas = np.bincount(self.data.ravel())
@@ -1590,7 +1592,7 @@ class SegmentedImage(SegmentationImage,     # base
         image
         labels
         mask
-        background_estimator
+        background_estimator # stat
         grid
 
         Returns
@@ -1598,6 +1600,9 @@ class SegmentedImage(SegmentationImage,     # base
 
         """
 
+        # TODO: clarify the conditions under which this function improves upon 
+        # CoM...
+        
         if self.shape != image.shape:
             raise ValueError('Invalid image shape %s for segmentation of '
                              'shape %s' % (image.shape, self.shape))

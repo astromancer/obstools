@@ -111,7 +111,7 @@ class Image(SelfAware):
             if isinstance(frame, dict):
                 frame_kws.update(frame)
 
-            self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape,
+            self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
                                                **frame_kws)
             ax.add_patch(frame)
 
@@ -256,8 +256,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
                 f'Received object {hdu} of type: {type(hdu)}. '
                 'Can only initialize from HDUs that inherit from '
                 f'`{qualname(ImageSamplerMixin)}`. Alternatively use the '
-                '`from_image` constructor (which also runs source detection), '
-                'or initialize the class directly with an image array .'
+                '`from_image` constructor, which runs source detection '
+                'on an image array.'
             )
 
         # self.filename

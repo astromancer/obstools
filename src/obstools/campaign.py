@@ -25,9 +25,9 @@ import docsplice as doc
 from motley.table import AttrTable
 from recipes import caches, io, bash
 from recipes.oo import SelfAware, null
+from recipes.logging import LoggingMixin
 from recipes.string import plural, strings
 from recipes.string.brackets import braces
-from recipes.logging import LoggingMixin
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.grouping import Groups, AttrGrouper
@@ -202,7 +202,7 @@ class HDUExtra(PrimaryHDU,
 class GlobIndexing(IndexerMixin):
     """
     Mixin that allows retrieving items from the campaign by indexing with
-    filename(s) or glob expressions
+    filename(s) or glob expressions.
 
     Examples
     --------
@@ -271,6 +271,8 @@ class GlobIndexing(IndexerMixin):
         return super().__getitem__(key)
 
 #
+
+
 class CampaignType(SelfAware, ListOf):
     """metaclass to avoid conflicts"""
 
@@ -409,7 +411,7 @@ class PhotCampaign(PPrintContainer,
                 continue
 
             # load the HDU
-            cls.logger.debug('Loading {:s}: {:s}.', name)
+            cls.logger.debug('Loading {!s}.', name)
 
             # catch all warnings
             with wrn.catch_warnings(record=True) as warnings:
@@ -501,8 +503,7 @@ class PhotCampaign(PPrintContainer,
 
         """
         # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope',  # 'date', # 'camera',
-                                        return_index=True)
+        groups, indices = self.group_by('telescope', return_index=True)
 
         # start with the group having the most observations.  This will help
         # later when we need to align the different groups with each other
@@ -514,8 +515,7 @@ class PhotCampaign(PPrintContainer,
 
         # For each telescope, align images wrt each other
         for i in order:
-            run = groups[keys[i]]
-            registers[i] = run._coalign(
+            registers[i] = groups[keys[i]]._coalign(
                 sample_stat, depth, plot=plot, **find_kws)
 
         # match coordinates of registers against each other
@@ -525,8 +525,8 @@ class PhotCampaign(PPrintContainer,
             reg.register()
 
         # refine alignment
-        refine = 5
-        for _ in range(refine):
+        # refine = 5
+        for _ in range(5):
             # likelihood ratio for gmm model before and and after refine
             _, lhr = reg.refine()
             if lhr < 1.01:
@@ -534,28 +534,35 @@ class PhotCampaign(PPrintContainer,
 
             reg.recentre()
 
+        reg.order = sum((indices[o] for o in order), [])
+        # reg.data, _ = cosort(reg.order, reg.data)
         return reg
 
     def _coalign(self, sample_stat='median', depth=10, primary=None,
                  plot=False, **find_kws):
-
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
         from .image.registration import ImageRegister
 
-        reg = ImageRegister(**find_kws)
         # If no reference image indicated by user-specified `primary`, choose
         # image with highest resolution if any, otherwise, just take the first.
-        primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
-        first = self[primary or 0]
+        # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
+
+        reg = ImageRegister.from_hdus(self, sample_stat, depth, primary,
+                                      **find_kws)
+        reg.fit()
+
+        # first = self[primary or 0]
         # First fit detects sources and measures their CoM to establish a point
         # cloud for the coherent point drift model
-        kws = dict(sample_stat=sample_stat, depth=depth, refine=False)
-        reg(first, **kws)
+        # kws = dict(sample_stat=sample_stat, depth=depth, refine=False)
+        # reg(first, **kws)
         # Other images are fit concurrently
-        rest = self[np.delete(np.arange(len(self)), primary)]
-        reg(rest, **kws)
+        # order = [primary, *np.delete(np.arange(len(self)), primary)]
+        # rest = self[order]
+        # reg(rest, **kws)
+        # reg.order = order
 
         #
         if plot:
@@ -573,7 +580,7 @@ class PhotCampaign(PPrintContainer,
 
     @doc.splice(coalign, 'Parameters')
     def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
-                       sample_stat='median', depth=10, primary=0,
+                       sample_stat='median', depth=10, primary=None,
                        plot=False, **find_kws):
         """
         Align all the image stacks in this campaign with a survey image centred
@@ -614,16 +621,18 @@ class PhotCampaign(PPrintContainer,
             raise NotImplementedError('Only support for DSS image lookup atm.')
 
         # coalign images with each other
-        reg = self.coalign(sample_stat, depth, plot, **find_kws)
+        reg = self.coalign(sample_stat, depth, plot,
+                           primary=primary, **find_kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
         if fov is None:
             fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
 
         #
-        dss = ImageRegisterDSS(self[primary].coords, fov, **find_kws)
+        dss = ImageRegisterDSS(self[reg.primary].coords, fov, **find_kws)
         dss.fit_register(reg, refine=False)
         dss.register()
+        dss.order = reg.order
 
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
