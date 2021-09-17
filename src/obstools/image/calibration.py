@@ -1,3 +1,6 @@
+"""
+Helpers for performing image calibration.
+"""
 
 
 # std
@@ -17,6 +20,15 @@ class keep:
 
 
 class IndexHelper:
+    """
+    Get `slice`s or tuples of slices by indexing this object.
+
+    Examples
+    --------
+    >>> IndexHelper()[..., :, 1::2]
+    (Ellipsis, slice(None, None, None), slice(1, None, 2))
+    """
+
     def __getitem__(self, key):
         return key
 
@@ -52,6 +64,9 @@ class ImageOrienter:
         assert hdu.ndim >= 2
         self.hdu = hdu
 
+        # set item getter for dimensionality
+        self.getitem = (self._getitem3d, self._getitem2d)[hdu.ndim == 2]
+
         # set some array-like attributes
         self.ndim = self.hdu.ndim
         self.shape = self.hdu.shape
@@ -70,13 +85,16 @@ class ImageOrienter:
     def __call__(self, data):
         return data[self.orient]
 
-    def __getitem__(self, item):
-        if self.hdu.ndim == 2:
-            # `section` fails with 2d data
-            return self.hdu.data[self.orient][item]
+    def __getitem__(self, key):
+        return self.getitem(key)
 
+    def _getitem2d(self, key):
+        # `section` fails with 2d data
+        return self.hdu.data[self.orient][key]
+
+    def _getitem3d(self, key):
         # reading section for performance
-        return self.hdu.section[item][self.orient]
+        return self.hdu.section[key][self.orient]
 
     def __array__(self):
         return self.hdu.data[self.orient]
@@ -90,30 +108,42 @@ class CalibrationImage:
     def __init__(self, name):
         self.name = f'_{name}'
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance, kls):
         if instance is None:
-            return self
+            return self  # lookup from class
         return getattr(instance, self.name)
 
     def __set__(self, instance, value):
         if value is keep:
             return
 
-        if isinstance(value, ImageCalibratorMixin):
-            # ensure consistent orientation between image - and calibration data
-            # note getting array here!!
-            assert len(value.shape) == 2, 'Calibration image must be 2d'
-            value = value.calibrated  # [instance.hdu.oriented.orient]
-        elif isinstance(value, PrimaryHDU):
-            value = value.data
-
-        if value is not None:
-            value = np.asanyarray(value)
-
-        setattr(instance, self.name, value)
+        # Sub-framing
+        sub = getattr(instance.hdu, 'subrect', ...)
+        # set array as ImageCalibrator instance attribute '_dark' or '_flat'
+        setattr(instance, self.name, get_array(value)[sub])
 
     def __delete__(self, instance):
         setattr(instance, self.name, None)
+
+
+def get_array(hdu):
+    if hdu is None:
+        return
+
+    if isinstance(hdu, ImageCalibratorMixin):
+        # The image is an HDU object
+        # ensure consistent orientation between image - and calibration data
+        # NOTE: The flat fields will get debiased here. An array is returned
+        img = hdu.calibrated  # [instance.hdu.oriented.orient]
+    elif isinstance(img, PrimaryHDU):
+        img = img.data
+
+    img = np.asanyarray(img)
+    if img.ndim != 2:
+        raise ValueError(f'Calibration image must be 2d, not '
+                         f'{img.ndim}d.')
+
+    return img
 
 
 class ImageCalibrator(ImageOrienter):
@@ -128,7 +158,8 @@ class ImageCalibrator(ImageOrienter):
 
         xy = []
         if hasattr(hdu, 'oriented'):
-            xy = [o == _s[::-1] for o in hdu.oriented.orient[:0:-1]]
+            xy = [(o == _s[::-1]) for o in hdu.oriented.orient[:0:-1]]
+
         super().__init__(hdu, '', *xy)
 
         self._dark = self._flat = None
@@ -172,16 +203,16 @@ class ImageCalibrator(ImageOrienter):
 
 class ImageCalibratorMixin:
     """
-    A calibration mixin for HDUs
+    A calibration mixin for HDUs.
     """
     @lazyproperty
     def oriented(self):
-        # manage on-the-fly image orientation
+        """Manage on-the-fly image orientation."""
         return ImageOrienter(self)
 
     @lazyproperty
     def calibrated(self):
-        # manage on-the-fly calibration for large files
+        """Manage on-the-fly calibration for large files."""
         return ImageCalibrator(self)
 
     def set_calibrators(self, dark=keep, flat=keep):
