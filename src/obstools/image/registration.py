@@ -44,6 +44,7 @@ from recipes.lists import split_like
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.misc import duplicate_if_scalar
+import recipes.pprint as pp
 
 # relative
 from .. import transforms as transform
@@ -930,7 +931,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
 
     if n_ignore:
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values for position '
-                    'measurement', n_ignore, n, (n_ignore / n) * 100)
+                    'measurement', n_ignore, n, n_ignore / n)
 
     n_detections_per_star = np.zeros(n_stars, int)
     w = np.where(~bad)[1]
@@ -950,7 +951,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     if np.any(~use_stars):
         logger.info('Ignoring {:d} / {:d} stars with low (<={:.0%}) detection '
                     'frequency for frame offset measurement.',
-                    n_stars - len(i_use), n_stars, detect_freq_min * 100)
+                    n_stars - len(i_use), n_stars, detect_freq_min)
 
     # NOTE: we actually want to know where the cluster centres would be
     #  without a specific point to measure delta better
@@ -1040,7 +1041,8 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         cxr = xy - centres - xy_offsets
 
         # flag outliers
-        with warnings.catch_warnings():  # catch RuntimeWarning for masked
+        with warnings.catch_warnings():
+            # catch RuntimeWarning for masked elements
             warnings.filterwarnings('ignore')
             d = np.sqrt((cxr * cxr).sum(-1))
 
@@ -1059,7 +1061,7 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
             raise Exception('Too many outliers!!')
 
         logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > %.3f',
-                    n_out, n_points, (n_out / n_points) * 100, d_cut)
+                    n_out, n_points, n_out / n_points, d_cut)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
@@ -1247,13 +1249,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
     """
 
     # TODO: say something about the matching algorithm and that it's lightning
-    #  fast for nearly_aligned images
+    #  fast for nearly_aligned images with few sources
 
     find_kws = dict(snr=3.,
                     npixels=5,
                     edge_cutoff=2,
                     deblend=False)
     """default source finding keywords"""
+
+    refining = True
+    """Refine fitting by running gradient descent after basin-hopping search."""
 
     # Expansion factor for grid search
     _search_area_stretch = 1.25
@@ -1264,17 +1269,19 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: switch for units to arcminutes or whatever ??
     # TODO: uncertainty on center of mass from pixel noise!!!
 
-    # @classmethod
-    # def from_campaign(cls, run, sample_stat='median', depth=10, primary=None,
-    #                   plot=False, fit_angle=True, **find_kws):
-    #     # get sample images etc
-    #     # `from_hdu` is used since the sample image and source detection results
-    #     # are cached (persistantly), so this should be fast on repeated calls.
-    #     images = [SkyImage.from_hdu(hdu, sample_stat, depth, **find_kws)
-    #               for hdu in run]
+    @classmethod
+    def from_hdus(cls, run, sample_stat='median', depth=10, primary=None,
+                  fit_angle=True, **find_kws):
+        # get sample images etc
+        # `from_hdu` is used since the sample image and source detection results
+        # are cached (persistantly), so this should be fast on repeated calls.
+        images = []
+        for i, hdu in enumerate(run):
+            im = SkyImage.from_hdu(hdu, sample_stat, depth,
+                                   **{**cls.find_kws, **find_kws})
+            images.append(im)
 
-    #     return cls._from_images(images, primary=None,
-    #                             plot=False, fit_angle=True, **find_kws)
+        return cls(images, primary=primary, fit_angle=fit_angle, **find_kws)
 
     # @classmethod                # p0 -----------
     # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=False,
@@ -1339,18 +1346,24 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # NOTE passing a reference index `primary` is only meaningful if the
         #  class is initialized with a set of images
         self._idx = 0
-        if len(images) and (primary is None):
-            # align on highest res image if not specified
-            primary, *_ = self.scales.argmin(0)
-            self.primary = int(primary)
+        self.count = 0
+        if primary is None:
+            if (len(images) == 0):
+                primary = 0
+            else:
+                # align on image with highest source density if not specified
+                source_density = self.scales.mean(1) * self.attrs('seg.nlabels')
+                primary = source_density.argmax(0)
 
+        self.fit_angle = bool(fit_angle)
+        self._xy = None
+        self.primary = int(primary)
         self.target_coords_pixels = None
         self.sigmas = None
-        self._xy = None
+        # self._xy = None
         # keep track of minimal separation between sources
         # self._min_dist = np.inf
 
-        self.fit_angle = bool(fit_angle)
         # self.grids = TransformedImageGrids(self)
         # self._sigma_guess = self.guess_sigma(self.xy)
 
@@ -1359,9 +1372,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self._colour_sequence_cache = ()
 
     def __repr__(self):
-        return (f'{super().__repr__()}; ' +
-                ('unregistered' if self.labels is None
-                 else f'{self.labels.max()} sources'))
+        return (f'{super().__repr__()}; '
+                + ('unregistered' if self.labels is None else
+                   f'{self.labels.max()} sources'))
+
+    @property
+    def dof(self):
+        return 2 + self.fit_angle
 
     @property
     def image(self):
@@ -1395,17 +1412,27 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if idx > n:
             raise ValueError(f'Invalid index ({n}) for `primary` reference '
-                             f'frame.')
+                             f'image.')
+
+        if self._idx == idx:
+            return
 
         self._idx = idx
+        del self.order
+
+        if self._xy is None:
+            return
+
         params = self.params
         rscale = self.rscale[idx]
-
         self.xy = (self.xy - params[idx, :2]) / rscale
         params[:, :2] /= rscale
         params -= params[idx]
 
-        self._idx = idx
+    @lazyproperty
+    def order(self):
+        pri = self.primary
+        return np.r_[pri, np.delete(np.arange(len(self)), pri)]
 
     @property
     def xy(self):
@@ -1475,15 +1502,18 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return model
 
     def __call__(self, obj, *args, **kws):
+        if (obj is None) and (count == 0):
+            obj = self.data
+
         result = self.fit(obj, *args, **kws)
-        if obj is None:
+
+        if (obj is None):
             # refit => don't aggregate
             return
 
         # aggregate
-        aggregate = (self.extend if isinstance(result, abc.Collection)
-                     else self.append)
-        aggregate(result)
+        collect = (self.append, self.extend)[isinstance(result, abc.Collection)]
+        collect(result)
         # print(result)
 
         # reset model.
@@ -1495,7 +1525,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # update minimal source seperation
         # self._min_dist = min(self._min_dist, dist_flat(xy).min())
 
-    def fit(self, obj=None, p0=None, hop=True, refine=True, plot=False, **kws):
+    def fit(self, obj=None, p0=None, hop=True, refine=None, plot=False,
+            **kws):
         """
         Flexible fitting method that dispatches fitting method based on the
         type of `obj`, and aggregates results. If this is the first time
@@ -1514,26 +1545,37 @@ class ImageRegister(ImageContainer, LoggingMixin):
             Fitted transform parameters (Δx, Δy, θ); the xy offsets in pixels,
             rotation angle in radians.
         """
-        self.logger.debug('fitting {:s}', type(obj))
-
-        if obj is None:
+        
+        if (obj is None) and (self.count == 0):
+            # obj = self.data
             # (re)fit all images
-            obj, p0, hop, refine = self, self.params, False, True
+            obj = self[self.order]
+            p0 = self.params[self.order]
+            hop = (self._xy is None)
+            refine = not hop
+        
+        #
+        refine = refine or self.refining
+        fitters = {ImageRegister:           self.fit_register,
+                   (np.ndarray, SkyImage):  self.fit_image,
+                   abc.Collection:          self.fit_sequence,
+                   HDUExtra:                self.fit_hdu}
+        for types, fit in fitters.items():
+            if isinstance(obj, types):
+                break
+        else:
+            raise TypeError(f'Cannot fit object of type {type(obj)}.')
 
-        # if isinstance(obj, ImageRegister):
-        #     return self.fit_register(obj, p0, hop, refine, plot)
+        self.logger.opt(lazy=True).debug(
+            'Fitting: {!s}', 
+             lambda: pp.caller(fit, (type(obj), p0, hop, refine, plot), kws)
+             )
+        result = fit(obj, p0, hop, refine, plot, **kws)
+        self.count += 1
+        return result
 
-        if isinstance(obj, abc.Collection) and not isinstance(obj, np.ndarray):
-            return self.fit_sequence(obj, p0, hop, refine, plot)
-
-        if isinstance(obj, HDUExtra):
-            return self.fit_hdu(obj, p0, hop, refine, plot, **kws)
-
-        fov = kws.pop('fov', None)
-        return self.fit_image(obj, p0, fov, hop, refine, plot, **kws)
-
-    def fit_sequence(self, items, p0=None, hop=True, refine=True, plot=False,
-                     njobs=1, **kws):
+    def fit_sequence(self, items, p0=None, hop=True, refine=True, 
+                     plot=False, njobs=1, **kws):
         #
         assert len(items)
 
@@ -1541,7 +1583,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             p0 = ()
         else:
             p0 = np.array(p0)
-            assert p0.shape == (len(items), self.model.dof)
+            assert p0.shape == (len(items), self.dof)
 
         # run fitting concurrently
         # with Parallel(n_jobs=njobs) as parallel:
@@ -1560,7 +1602,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # self.register()
         return images
 
-    def fit_register(self, reg, p0=None, hop=True, refine=True, plot=False):
+    def fit_register(self, reg, p0=None, hop=True, refine=True, plot=False,
+                     **kws):
         """
         cross match with another `ImageRegister` and aggregate points
         """
@@ -1572,8 +1615,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         p = self.fit_points(xy, p0, hop, refine, plot)
 
         # finally aggregate the results from the new register
+        reg.params = params + p
         self.extend(reg.data)
-        self.params = [(0, 0, 0), *(params + p)]
 
         # convert back to original coords
         # reg.convert_to_pixels_of(reg)
@@ -1598,13 +1641,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         return self.fit_image(
-            SkyImage.from_hdu(hdu, sample_stat, depth, 
+            SkyImage.from_hdu(hdu, sample_stat, depth,
                               **{**self.find_kws, **find_kws}),
             p0, None, hop, refine, plot
         )
 
-    def fit_image(self, image, p0=None, fov=None, hop=True, refine=True,
-                  plot=False, **find_kws):
+    def fit_image(self, image, p0=None, hop=True, refine=True,
+                  plot=False, fov=None, **find_kws):
         """
         If p0 is None:
             Search heuristic for image offset and rotation.
@@ -1634,7 +1677,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # source detection
             image.detect(**{**self.find_kws, **find_kws})
 
-        if self:
+        if self.count:
             # get xy in units of `primary` image pixels
             xy = image.xy * image.scale / self.pixel_scale
             image.params = self.fit_points(xy, p0, hop, refine, plot)
@@ -1645,7 +1688,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def fit_points(self, xy, p0=None, hop=True, refine=True, plot=False):
 
         if p0 is None:
-            p0 = np.zeros(self.model.dof)
+            p0 = np.zeros(self.dof)
 
         if hop:
             # get shift (translation) via brute force search through point to
@@ -1659,9 +1702,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
             p = p0 + [*dxy, 0]
 
         if not hop or refine:
+            self.logger.debug('Refining fit via gradient descent.')
             # do mle via gradient decent
             self.model.fit_angle = self.fit_angle
-            p = self.model.fit(xy, p0)
+            p = self.model.fit(xy, p0=p0)
 
         return p
 
@@ -1694,7 +1738,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def remap_labels(self, target, flux_sort=True):
         """
         Re-order the *cluster* labels so that our target is 0, the rest follow
-        in descending order of brightness first listing those that occur within 
+        in descending order of brightness first listing those that occur within
         our science images, then those in the survey image.
         """
 
@@ -1985,8 +2029,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #         failed.append(i)
         #     else:
         #         params[i] += p
-
-        logger.info('Fitting successful {:d} / {:d}', i - len(failed), i)
+        logger.log(('SUCCESS', 'INFO')[bool(failed)],
+                   'Fitting successful {:d} / {:d}', i - len(failed), i)
 
         # likelihood ratio test
         xyn = list(map(transform.affine, self.coms, params, self.rscale))
@@ -2007,11 +2051,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def lh_ratio(self, xy0, xy1):
         ratio = self.model.lh_ratio(xy0, xy1)
-        logger.info(
-            'Likelihood ratio: %.5f\n\t' +
-            ('Keeping same', 'Accepting new')[ratio > 1] +
-            ' parameters.', ratio
-        )
+        logger.info('Likelihood ratio: {:.5f}\n\t'
+                    + ('Keeping same', 'Accepting new')[ratio > 1]
+                    + ' parameters.', ratio)
         return ratio
 
     def reset(self):
@@ -2158,8 +2200,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # Ignore extremal points in grid search.  These represent single
         # point matches at the edges of the frame which are almost certainly
         # not the best match
-        extrema = np.ravel([trials.argmin(0), trials.argmax(0)])
-        trials = np.delete(trials, extrema, 0)
+        # extrema = np.ravel([trials.argmin(0), trials.argmax(0)])
+        # trials = np.delete(trials, extrema, 0)
 
         # This animates the search!
         # line, = im.ax.plot((), (), 'rx')
@@ -2179,7 +2221,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
 
-        logger.debug('Grid search optimum: {:s}', p)
+        logger.debug('Grid search optimum: {!s}', p)
 
         if plot:
             im = self.model.gmm.plot(show_peak=False)
@@ -2365,7 +2407,7 @@ class ImageRegisterDSS(ImageRegister):
         find_kws.setdefault('deblend', True)
         ImageRegister.__init__(self, **find_kws)
         self(data, fov=fov)
-        
+
         # TODO: print some header info for DSS image - date!
         # DATE-OBS
         # TELESCOP

@@ -10,6 +10,9 @@ import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
 
+# local
+from recipes.logging import LoggingMixin
+
 # relative
 from .. import transforms
 from .image import ImageContainer, SkyImage
