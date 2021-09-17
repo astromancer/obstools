@@ -357,7 +357,8 @@ class Model(OptionallyNamed, LoggingMixin):
         #  least-squares
 
         # FIXME: more general metric here?
-        nl = data.size * LN2PI_2 + 0.5 * self.wrss(p, data, *args, stddev=stddev)
+        nl = data.size * LN2PI_2 + 0.5 * self.wrss(
+            p, data, *args, stddev=stddev)
         if stddev is not None:
             nl += np.log(stddev).sum()
 
@@ -580,22 +581,22 @@ class Model(OptionallyNamed, LoggingMixin):
         if success:
             unchanged = np.allclose(p, p0)
             if unchanged:
-                # TODO: maybe also warn if any close ?
                 self.logger.warning('"Converged" parameter vector is '
-                                    'identical to initial guess: %s', p0)
+                                    'identical to initial guess: {}', p0)
                 msg = ''
             else:
                 self.logger.debug('Successful fit {:s}', self.name)
-                # TODO: optionally print fit statistics. npars, niters, gof,
+                # TODO: self.logger.verbose() npars, niters, gof,
                 #  ndata, etc
                 return p
 
         # generate message for convergence failure
         from recipes import pprint
-        
-        objective_repr = pprint.method(loss, show_defining_class=True)
+
+        # objective_repr =
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
-                    f'{objective_repr!r} failed to converge: {msg}')
+                    f'{pprint.method(loss, show_defining_class=True)!r} '
+                    f'failed to converge: {msg}')
 
         # bork if needed
         if self.raise_on_failure:
