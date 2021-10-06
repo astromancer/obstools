@@ -109,3 +109,48 @@ class AnsiImage(motley.image.AnsiImage):
             pixels = motley.image.framed(self.pixels, not self._top_row_added)
 
         return motley.image.stack(pixels)
+
+
+def thumbnails(image, seg, top, image_cmap='cmr.voltage_r', contour_color='r',
+               title_fmt='{{label:d|B_}: ^{width}}'):
+    """
+    Cutout image thumbnails displayed as a grid in terminal
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Image array with sources to display.
+    seg : obstools.image.segmentation.SegmentedImage
+        The segmented image of detected sources
+    top : int
+        Number of brightest sources to display images for.
+    image_cmap : str, optional
+        Colour map, by default 'cmr.voltage_r'.
+    contour_color : str, optional
+        Colour for the overlaid contour, by default 'r'.
+    title_fmt : str, optional
+        Format string for the image titles, by default
+        '{{label:d|Bu}: ^{width}}'. This will produce centre justified lables in
+        bold, underlined text above each image.
+
+    """
+    #    contour_cmap='hot'):
+    # contours_cmap = seg.get_cmap(contour_cmap)
+    #line_colours  = cmap(np.linspace(0, 1, top))
+
+    labels = seg.labels[:top]
+    sizes = seg.slices.sizes(labels)
+    biggest = sizes.max(0)
+    slices = seg.slices.grow(labels, (biggest - sizes) / 2, seg.shape)
+
+    images = []
+    for i, lbl in enumerate(seg.labels[:top]):
+        sec = slices[i]
+        title = f'{lbl: ^{2 * biggest[1]}}'
+        title = motley.format(title_fmt, label=lbl, width=2 * biggest[1])
+        img = AnsiImage(image[sec], image_cmap)
+        img.overlay(seg.data[sec], contour_color)
+        # contours_cmap(i / top)[:-1]
+        images.append('\n'.join((title, str(img))))
+
+    return motley.hstack(images, 2)

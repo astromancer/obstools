@@ -17,11 +17,19 @@ from recipes.iter import split_slices
 from .. import io
 from ..lc.ascii import write
 from ..campaign import PhotCampaign
+from ..image.segmentation import display
 
 
 def ragged(hdu, seg, top=5, dilate=0, filename=None):
     # ragged aperture photometry (no tracking!!)
     seg = seg.dilate(dilate, copy=True)
+
+    logger.opt(lazy=True).info(
+        'Source images and ragged aperture regions for photometry:\n{}\n{}',
+        lambda: hdu.file.name,
+        lambda: display.thumbnails(hdu.get_sample_image(), seg, top)
+    )
+
     return seg.flux(hdu.calibrated, seg.labels[:top])
 
 
