@@ -16,6 +16,7 @@ Image registration (point set registration) for astronomicall images.
 import re
 import numbers
 import warnings
+import operator as op
 import functools as ftl
 import itertools as itt
 import multiprocessing as mp
@@ -24,6 +25,7 @@ from collections import abc
 # third-party
 import numpy as np
 import aplpy as apl
+import cmasher as cmr
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from loguru import logger
@@ -38,13 +40,13 @@ from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
 
 # local
-from scrawl.imagine import ImageDisplay
+import recipes.pprint as pp
 from recipes.string import indent
 from recipes.lists import split_like
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.misc import duplicate_if_scalar
-import recipes.pprint as pp
+from scrawl.imagine import ImageDisplay
 
 # relative
 from .. import transforms as transform
@@ -1545,7 +1547,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             Fitted transform parameters (Δx, Δy, θ); the xy offsets in pixels,
             rotation angle in radians.
         """
-        
+
         if (obj is None) and (self.count == 0):
             # obj = self.data
             # (re)fit all images
@@ -1553,7 +1555,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             p0 = self.params[self.order]
             hop = (self._xy is None)
             refine = not hop
-        
+
         #
         refine = refine or self.refining
         fitters = {ImageRegister:           self.fit_register,
@@ -1567,14 +1569,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
             raise TypeError(f'Cannot fit object of type {type(obj)}.')
 
         self.logger.opt(lazy=True).debug(
-            'Fitting: {!s}', 
-             lambda: pp.caller(fit, (type(obj), p0, hop, refine, plot), kws)
-             )
+            'Fitting: {!s}',
+            lambda: pp.caller(fit, (type(obj), p0, hop, refine, plot), kws)
+        )
         result = fit(obj, p0, hop, refine, plot, **kws)
         self.count += 1
         return result
 
-    def fit_sequence(self, items, p0=None, hop=True, refine=True, 
+    def fit_sequence(self, items, p0=None, hop=True, refine=True,
                      plot=False, njobs=1, **kws):
         #
         assert len(items)
@@ -2355,6 +2357,35 @@ class ImageRegister(ImageContainer, LoggingMixin):
                              xy_offset=off)
 
         return mos
+
+    def plot_detections(self, dilate=2,
+                        image=dict(cmap=cmr.voltage_r),
+                        contour=dict(cmap='hot', lw=1.5),
+                        label=dict(color='w', size='xx-small'),
+                        tabbed=True):
+
+        reorder = op.itemgetter(*(self.order + 1))
+        segments = reorder(self.detections)
+        images = reorder(self.images)
+
+        # overlay ragged apertures
+        figures = []
+        for im, seg in zip(images, segments):
+            seg = seg.dilate(dilate, copy=True)
+            img = ImageDisplay(im, **image)
+            seg.show_contours(img.ax, **contour)
+            seg.show_labels(img.ax, **label)
+            figures.append(img.figure)
+            #img.save(loc / f'{hdu.file.stem}-ragged.png')
+
+        if tabbed:
+            from scrawl.multitab import MplMultiTab
+            
+            ui = MplMultiTab(figures=figures)
+            ui.show()
+            return ui
+
+        return figures
 
 
 class ImageRegisterDSS(ImageRegister):

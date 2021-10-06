@@ -23,6 +23,8 @@ from photutils.segmentation import SegmentationImage
 from pyxides.vectorize import vdict
 from recipes.dicts import pformat
 from recipes.logging import LoggingMixin
+from recipes.functionals import echo
+from recipes.misc import duplicate_if_scalar
 
 # relative
 from ... import io
@@ -199,11 +201,8 @@ def inside_segment(coords, sub, grid):
 
     mask = (sub == 0)
     if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
-        inside = False
-    else:
-        inside = not mask[b[0], b[1]]
-
-    return inside
+        return False
+    return not mask[b[0], b[1]]
 
 
 def get_masking_flags(arrays, masked):
@@ -260,10 +259,11 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     slice_ = (Ellipsis,) + tuple(slice_)
     cut = array[slice_]
 
-    if mask is None or mask is False:
+    if (mask is None) or (mask is False):
         return cut
 
     if compress:
+        # pylint: disable=invalid-unary-operand-type
         return cut[..., ~mask]
 
     ma = np.ma.MaskedArray(cut, copy=True)
@@ -335,6 +335,9 @@ class SliceDict(vdict):
     urc = upper_right_corners
     ulc = upper_left_corners
 
+    def sizes(self, labels=...):
+        return np.subtract(self.urc(labels), self.llc(labels))
+
     # def extents(self, labels=None):
     #     """xy sizes"""
     #     slices = self[labels]
@@ -345,14 +348,21 @@ class SliceDict(vdict):
     #                         for s, sz in zip(sl, self.seg.shape)]
     #     return sizes
 
-    def grow(self, labels, inc=1):
+    def grow(self, labels, increment=1, clip=False):
         """
-        Increase the size of each slice in all directions by an increment.
+        Increase the size of each slice in either / both  directions by an
+        increment.
         """
+        # FIXME: carry image size in slice 0 so we can default clip=True
+        
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), inc)  # .clip(None, self.seg.shape)
-        llc = np.add(self.llc(labels), -inc).clip(0)
+        urc = np.add(self.urc(labels), increment).astype(int)
+        llc = np.add(self.llc(labels), -increment).astype(int)
+        if clip:
+            urc = urc.clip(None, duplicate_if_scalar(clip))
+            llc = llc.clip(0)
+            
         return [tuple(slice(*i) for i in _)
                 for _ in zip(*np.swapaxes([llc, urc], -1, 0))]
 
@@ -964,7 +974,7 @@ class SegmentedImage(SegmentationImage,     # base
     @lazyproperty
     def heights(self):
         return self.slices.heights
-
+    
     @lazyproperty
     def max_label(self):
         if self.labels.size:
@@ -1074,7 +1084,7 @@ class SegmentedImage(SegmentationImage,     # base
     @lazyproperty
     def fractional_areas(self):
         return self.areas / prod(self.shape)
-    
+
     # @lazyproperty
     # def areas(self):
     #     areas = np.bincount(self.data.ravel())
@@ -1601,9 +1611,9 @@ class SegmentedImage(SegmentationImage,     # base
 
         """
 
-        # TODO: clarify the conditions under which this function improves upon 
+        # TODO: clarify the conditions under which this function improves upon
         # CoM...
-        
+
         if self.shape != image.shape:
             raise ValueError('Invalid image shape %s for segmentation of '
                              'shape %s' % (image.shape, self.shape))
@@ -2138,6 +2148,9 @@ class SegmentedImage(SegmentationImage,     # base
         print(im)
         return im
 
+    # alias
+    show_console = show_terminal
+
     def get_cmap(self, cmap=None):
         # colour map
         if cmap is None:
@@ -2228,7 +2241,10 @@ class SegmentedImage(SegmentationImage,     # base
     def traced(self):
         return self.get_boundaries()
 
+    # TODO: SegmentedImageContours ??
+
     # @lazyproperty
+
     def get_contours(self, labels=None, **kws):
         """
         Get the collection of lines that trace the circumference of the
@@ -2264,6 +2280,7 @@ class SegmentedImage(SegmentationImage,     # base
         ax.add_collection(lines)
         return lines
 
+    # alias
     draw_contours = show_contours
 
     @lazyproperty
