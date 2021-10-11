@@ -236,7 +236,7 @@ class GlobIndexing(IndexerMixin):
             key = str(key)
 
             is_glob = glob.has_magic(key)
-            special = bool(braces.match(key, False, must_close=True))
+            special = bool(braces.match(key, must_close=True))
 
             # handle filename
             if not (is_glob | special):
@@ -357,7 +357,7 @@ class PhotCampaign(PPrintContainer,
                 # files either special pattern or directory
                 files = str(files)
 
-                if all(map(files.__contains__, '{}')):
+                if braces.match(files):
                     files = bash.brace_expand(files)
                 else:
                     try:
