@@ -411,7 +411,7 @@ class PhotCampaign(PPrintContainer,
                 continue
 
             # load the HDU
-            cls.logger.debug('Loading {:s}.', name)
+            cls.logger.debug('Loading {!r}.', str(name))
 
             # catch all warnings
             with wrn.catch_warnings(record=True) as warnings:
@@ -430,7 +430,7 @@ class PhotCampaign(PPrintContainer,
                     )
             hdus.append(hdu)
 
-        cls.logger.info('Loaded {:d} {:s}.', i, plural('file', hdus))
+        cls.logger.success('Loaded {:d} {:s}.', i, plural('file', hdus))
         return cls(hdus)
 
     def __init__(self, hdus=None):

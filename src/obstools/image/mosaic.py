@@ -13,9 +13,6 @@ import matplotlib.pyplot as plt
 # local
 from recipes.logging import LoggingMixin
 
-# local
-from recipes.logging import LoggingMixin
-
 # relative
 from .. import transforms
 from .image import ImageContainer, SkyImage

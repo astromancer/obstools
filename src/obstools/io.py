@@ -3,21 +3,15 @@ Input / output helpers
 """
 
 # std
-import logging
 import tempfile
 from pathlib import Path
 
 # third-party
 import numpy as np
-
-# local
-from recipes.logging import logging, get_module_logger
+from loguru import logger
 
 # relative
 from .utils import int2tup
-
-
-from loguru import logger
 
 
 def load_memmap(loc=None, shape=None, dtype=None, fill=None, clobber=False):

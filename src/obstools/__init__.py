@@ -6,6 +6,11 @@ from pathlib import Path
 from recipes.caches import Reject
 from recipes.dicts import AttrReadItem
 
+from loguru import logger
+
+#
+logger.disable('obstools')
+
 
 def _hdu_hasher(hdu):
     # Cache on the hdu filename. hdu.file is NULL --> unsaved file, ignore

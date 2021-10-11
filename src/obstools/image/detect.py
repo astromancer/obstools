@@ -21,32 +21,6 @@ from ..modelling import UnconvergedOptimization
 from .segmentation import groups, SegmentedImage
 
 
-# handler = logging.StreamHandler()
-# handler.setFormatter(logging.Formatter(style='{'))
-# logger.addHandler(handler)
-
-# logging.config.dictConfig({
-#     'version' : 1,
-#     'formatters': {
-#         'braced': {
-#             'class': 'logging.Formatter',
-#             'style': '{'
-#         }
-#     },
-#     'handlers': {
-#         'console': {
-#             'class': 'logging.StreamHandler',
-#             'formatter': 'braced',
-#             'level': 'INFO',
-#         }
-#     },
-#     'loggers': {
-#             'detect': {
-#                 'handlers' : ['console']
-#             }
-#         },
-# })
-
 
 def make_border_mask(data, edge_cutoffs):
     if isinstance(edge_cutoffs, int):

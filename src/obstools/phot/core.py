@@ -9,6 +9,7 @@ import numpy as np
 from loguru import logger
 
 # local
+from motley.textbox import textbox
 from recipes import op
 from recipes.lists import split_like
 from recipes.iter import split_slices
@@ -25,11 +26,12 @@ def ragged(hdu, seg, top=5, dilate=0, filename=None):
     seg = seg.dilate(dilate, copy=True)
 
     logger.opt(lazy=True).info(
-        'Source images and ragged aperture regions for photometry:\n{}\n{}',
-        lambda: hdu.file.name,
-        lambda: display.thumbnails(hdu.get_sample_image(), seg, top)
+        'Source images and ragged aperture regions for photometry:\n{}',
+        lambda: textbox(display.source_thumbnails_terminal(
+            hdu.get_sample_image(), seg, top, title=hdu.file.name
+        ))
     )
-
+    #
     return seg.flux(hdu.calibrated, seg.labels[:top])
 
 
@@ -92,6 +94,9 @@ class PhotInterface:
         target_label = 1
         cmp = ftl.reduce(set.intersection, map(set, labels)) - {target_label}
         cmp = np.array(list(cmp)) - 1
+        # logger.info('Light curves for {:d} sources will be extracted.', top)
+        logger.info('Light curves for {:d} / {:d} detected sources with labels '
+                    '{} will be extracted.', top, nstars, tuple(cmp))
 
         times = np.empty(n)
         # path = self.path / f'{basename}.dat'
