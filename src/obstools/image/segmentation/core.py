@@ -20,17 +20,17 @@ from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
 
 # local
+from motley.image import AnsiImage
 from pyxides.vectorize import vdict
 from recipes.dicts import pformat
-from recipes.logging import LoggingMixin
 from recipes.functionals import echo
+from recipes.logging import LoggingMixin
 from recipes.misc import duplicate_if_scalar
 
 # relative
 from ... import io
 from ...utils import prod
 from ..utils import shift_combine
-from .display import AnsiImage
 from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id
 

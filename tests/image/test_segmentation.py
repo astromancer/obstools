@@ -65,6 +65,8 @@ def seg(sim_image):
 
 # @pytest.mark.skip
 # @pytest.mark.incremental
+
+
 class TestSegmentation:
     def test_detect(self):
         seg = SegmentedImage.detect(sim_image)
@@ -74,6 +76,8 @@ class TestSegmentation:
         # do some test with s
 
 # @pytest.mark.skip
+
+
 def test_self_awareness():
     seg = SegmentedImage(np.zeros(10, 10))
     seg2 = SegmentedImage(seg)
@@ -150,7 +154,6 @@ def test_trace_contours():
     # TODO: test tracing for segments with multiple seperate sections.
 
 
-
 @pytest.mark.parametrize('stat', MaskedStatsMixin._supported)
 def test_stats(seg, sim_data, stat):
     # check that stats works for label zero as well as for images containing
@@ -179,23 +182,3 @@ def test_stats(seg, sim_data, stat):
     # make sure segmentation data has not been changed
     assert np.all(sd == seg.data)
 
-
-def test_display():
-    from obstools.image.segmentation.display import AnsiImage
-    from scipy.stats import multivariate_normal
-
-    # 2D Gaussian
-    mu = (0, 0)
-    covm = np.array([[ 7.5,  2.6],
-                     [ 0.3,  7.5]])
-    rv = multivariate_normal(mu, covm)
-    Y, X = np.mgrid[-3:3:10j, -3:3:10j]
-    grid = np.array([X, Y])
-    Zg = rv.pdf(grid.transpose(1,2,0)).T
-    ai = AnsiImage(Zg)
-    #ai.render(frame=True)
-
-    ai.overlay(Zg > 0.01, 'red')
-
-    #ai.pixels = overlay(Zg > 0.01, ai.pixels[::-1])[::-1].astype(str)
-    ai.render(frame=True)
