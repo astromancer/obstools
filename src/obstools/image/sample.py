@@ -3,7 +3,7 @@ Sampling and statistics of images from a stack.
 """
 
 # std
-import numbers
+from collections.abc import Collection
 
 # third-party
 import numpy as np
@@ -22,16 +22,16 @@ class BootstrapResample(LoggingMixin):
     Sampling with replacement
     """
 
-    def __init__(self, data, sample_size=None, subset=None, axis=0):
+    def __init__(self, data, sample_size=None, subset=..., axis=0):
         """
         Draw a sample of `n` arrays randomly from the index interval `subset`
-        along the given axis
+        along the given axis.
 
         Parameters
         ----------
         data
         sample_size: int
-            Size of the sample to use in creating sample image
+            Size of the sample to use in creating sample image.
         subset: int or tuple
             sample_interval
         axis
@@ -43,17 +43,17 @@ class BootstrapResample(LoggingMixin):
         self.sample_size = sample_size
         self.subset = subset
 
-    def draw(self, n=None, subset=None):
+    def draw(self, n=None, subset=...):
         """
         Select a sample of `n` arrays randomly from the interval `subset`
-        along the axis
+        along the axis.
 
         Parameters
         ----------
-        n
-        subset:
+        n : int
+        subset : int or tuple of int or Ellipsis or None
             note if indices of subset are beyond array size along axis 0,
-            the entire array will be used
+            the entire array will be used.
 
         Returns
         -------
@@ -64,40 +64,41 @@ class BootstrapResample(LoggingMixin):
             raise ValueError('Please give sample size (or initialize this '
                              'class with a sample size)')
         # m = len(self.data)
-        if subset is None:
-            subset = (0, None)
-        elif isinstance(subset, numbers.Integral):
-            subset = (0, subset)  # treat like a slice
+
+        # make a slice
+        if isinstance(subset, Collection):
+            subset = slice(*subset)
+        elif subset is not ...:
+            subset = slice(subset)
 
         # get subset array
-        sub = self.data[slice(*subset)]
+        sub = self.data[subset]
         if sub.size == 0:
             raise ValueError('Cannot draw sample from an empty subset of the '
-                             'data')
+                             f'data: {subset}.')
 
         if (n is ...) or (len(sub) <= n):
             return sub
 
         # get frame indices (subspace sampled with replacement)
-        self.logger.debug('Selecting {:d} frames from amongst frames ({:d}->{:d}) '
-                          'for sample image.', n, *subset)
-        ix = np.random.randint(0, len(sub), n)
-        return self.data[ix]
+        self.logger.debug('Selecting {:d} frames from amongst frames '
+                          '({:d}->{:d}) for sample image.', n, *subset)
+        return self.data[np.random.randint(0, len(sub), n)]
 
-    def max(self, n=None, subset=None):
+    def max(self, n=None, subset=...):
         return self.draw(n, subset).max(self.axis)
 
-    def mean(self, n=None, subset=None):
+    def mean(self, n=None, subset=...):
         return self.draw(n, subset).mean(self.axis)
 
-    def std(self, n=None, subset=None):
+    def std(self, n=None, subset=...):
         return self.draw(n, subset).std(self.axis)
 
-    def median(self, n=None, subset=None):
+    def median(self, n=None, subset=...):
         return np.ma.median(self.draw(n, subset), self.axis)
 
 # class ImageSampler(BootstrapResample):
-#     def __init__(self, stat='median', sample_size=None, subset=None, axis=0):
+#     def __init__(self, stat='median', sample_size=None, subset=..., axis=0):
 #         #
 #         BootstrapResample.__init__(self, None, sample_size, subset, axis)
 #
@@ -110,21 +111,21 @@ class BootstrapResample(LoggingMixin):
 #
 #
 # class ImageSamplerHDU(ImageSampler):
-#     def __init__(self, sample_size=None, subset=None, axis=0):
+#     def __init__(self, sample_size=None, subset=..., axis=0):
 #         # delay data
 #         BootstrapResample.__init__(self, None, sample_size, subset, axis)
 
 
 class ImageSamplerMixin:
     """
-    A mixin class that can draw sample images from the HDU data
+    A mixin class that can draw sample images from the HDU data.
     """
 
     @lazyproperty  # lazyproperty ??
     def sampler(self):
         """
         Use this property to get calibrated sample images and image statistics
-        from the stack
+        from the stack.
 
         >>> stack.sampler.median(10, 100)
 
@@ -152,32 +153,33 @@ class ImageSamplerMixin:
     # default. We enable this cache in the pipeline to reduce unnecessary repeat
     # computation
     @cached(cachePaths.samples, typed={'self': _hdu_hasher}, enabled=False)
+    def get_sample_image(self, stat='median', min_depth=5, subset=...):
         """
         Get sample image to a certain minimum simulated exposure depth by
         averaging data.
-
 
         Parameters
         ----------
         stat : str, optional
             The statistic to use when computing the sample image, by default
-            'median'
+            'median'.
         min_depth : int, optional
-            Minimum simulated exposure depth in seconds, by default 5
+            Minimum simulated exposure depth in seconds, by default 5.
 
         Returns
         -------
         np.ndarray
-            An image of the requested statistic across a sample of images drawn 
-            from the stack.
+            An image of the requested statistic across a sample of images drawn
+            from the stack. 
         """
         # FIXME: get this to work for SALTICAM
 
         n = int(np.ceil(min_depth // self.timing.exp)) or 1
 
-        self.logger.info(f'Computing {stat} of {n} images (exposure depth of '
-                         f'{float(min_depth):.1f} seconds) for sample image '
-                         f'from {self.file.name!r}.')
+        self.logger.info('Computing {stat} of {n} images (exposure depth of '
+                         '{min_depth:.1g} seconds) for sample image from '
+                         '{name!r} for the data interval {subset}.',
+                         **locals(), name=self.file.name)
 
         sampler = getattr(self.sampler, stat)
-        return sampler(n, n)
+        return sampler(n, subset)
