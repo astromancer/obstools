@@ -8,7 +8,7 @@ import types
 import inspect
 import numbers
 import itertools as itt
-from collections import abc, namedtuple, defaultdict
+from collections import abc, defaultdict, namedtuple
 
 # third-party
 import numpy as np
@@ -59,6 +59,15 @@ def image_sub(background_estimator):
         return image - background_estimator(image)
 
     return sub
+
+
+def _unpack_with_label(label, unpack, itr):
+    return label, unpack(itr)
+
+
+def _unpack_without_label(_, unpack, itr):
+    return unpack(itr)
+
 
 # def autoreload_isinstance_hack(obj, kls):
 #     for parent in obj.__class__.mro():
@@ -236,7 +245,8 @@ def get_masking_flags(arrays, masked):
 
 def _2d_slicer(array, slice_, mask=None, compress=False):
     """
-    Slice `np.ndarray` object along last 2 dimensions
+    Slice `np.ndarray` object along last 2 dimensions. If array is None, simply
+    return None.
 
     Parameters
     ----------
@@ -250,23 +260,20 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     array or None
     """
 
-    # print('!!!!!!!', array.shape, slice_, mask)
-
     if array is None:
         return None  # propagate `None`s
 
     # slice along last two dimensions
-    slice_ = (Ellipsis,) + tuple(slice_)
-    cut = array[slice_]
+    cutout = array[tuple((..., *slice_))]
 
-    if (mask is None) or (mask is False):
-        return cut
+    if mask in (None, False):  # (mask is None) or (mask is False): #
+        return cutout
 
     if compress:
         # pylint: disable=invalid-unary-operand-type
-        return cut[..., ~mask]
+        return cutout[..., ~mask]
 
-    ma = np.ma.MaskedArray(cut, copy=True)
+    ma = np.ma.MaskedArray(cutout, copy=True)
     ma[..., mask] = np.ma.masked
     return ma
 
@@ -354,7 +361,7 @@ class SliceDict(vdict):
         increment.
         """
         # FIXME: carry image size in slice 0 so we can default clip=True
-        
+
         # z = np.array([slices.llc(labels), slices.urc(labels)])
         # z + np.array([-1, 1], ndmin=3).T
         urc = np.add(self.urc(labels), increment).astype(int)
@@ -362,7 +369,7 @@ class SliceDict(vdict):
         if clip:
             urc = urc.clip(None, duplicate_if_scalar(clip))
             llc = llc.clip(0)
-            
+
         return [tuple(slice(*i) for i in _)
                 for _ in zip(*np.swapaxes([llc, urc], -1, 0))]
 
@@ -974,7 +981,7 @@ class SegmentedImage(SegmentationImage,     # base
     @lazyproperty
     def heights(self):
         return self.slices.heights
-    
+
     @lazyproperty
     def max_label(self):
         if self.labels.size:
@@ -1298,7 +1305,7 @@ class SegmentedImage(SegmentationImage,     # base
         yield from self.coslice(image, labels=labels, flatten=True)
 
     def coslice(self, *arrays, labels=None, masked=False, flatten=False,
-                enum=False):
+                labelled=False):
         """
         Yields labelled sub-regions of multiple arrays sequentially as tuple of
         (optionally masked) arrays.
@@ -1329,24 +1336,25 @@ class SegmentedImage(SegmentationImage,     # base
             already been calculated.
             Note that both `mask` and `flatten` cannot be simultaneously True
              and will raise a ValueError
-        enum:
+        labelled:
             enumerate with `label` value
 
 
         Yields
         ------
-        (tuple of) (masked) array(s)
+        np.ndarray or tuple
+            (tuple of) ((possibly label) and (masked) array(s))
         """
 
         n = len(arrays)
         # checks
         if n == 0:
-            raise ValueError('Need at least one array to slice')
+            raise ValueError('Need at least one array to slice.')
 
         for i, a in enumerate(arrays):
             if (a is not None) and np.ndim(a) < 2:
                 raise ValueError('All arguments should be (nd)images or `None`.'
-                                 ' Array %i is %id.' % (i, np.ndim(a)))
+                                 f' Array {i} is {np.ndim(a)}D.')
 
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
@@ -1356,24 +1364,21 @@ class SegmentedImage(SegmentationImage,     # base
 
         # function that yields the result. neat little trick avoid unit tuples
         unpack = (next if n == 1 else tuple)
-        if enum:
-            def yields(lbl, gen):
-                return lbl, unpack(gen)
-        else:
-            def yields(lbl, gen):
-                return unpack(gen)
+        yielder = (_unpack_without_label, _unpack_with_label)[bool(labelled)]
 
         # flag which determined arrays in the sequence are to mask
         if flatten:
             flags[:] = True
 
-        for lbl, slice_ in self.enum_slices(labels):
-            # note this propagates the `None`s in `arrays` tuple
-            cuts_gen = (_2d_slicer(a, slice_,
-                                   self.masks[lbl] if flg else None,
-                                   flatten)
-                        for a, flg in zip(arrays, flags))
-            yield yields(lbl, cuts_gen)
+        for label, section in self.enum_slices(labels):
+            # NOTE this propagates values that are `None` in `arrays` tuple
+            cuts = (
+                _2d_slicer(a, section,
+                           self.masks[label] if flag else None,
+                           flatten)
+                for a, flag in zip(arrays, flags)
+            )
+            yield yielder(label, unpack, cuts)
 
     # Image methods
     # --------------------------------------------------------------------------
@@ -1419,20 +1424,22 @@ class SegmentedImage(SegmentationImage,     # base
         #  zero-filling the masked pixels since it will artificially skew the
         #  results. There is no significant performance difference between
         #  the 2 code paths, I checked.
+
+        if not np.ma.is_masked(image):
+            return self.data
+
         if masked_pixels_label is None:
             masked_pixels_label = self.max_label + 1
         masked_pixels_label = int(masked_pixels_label)
 
-        if np.ma.is_masked(image):
-            # ignore masked pixels
-            seg_data = self.data.copy()
-            seg_data[image.mask] = masked_pixels_label
-            # this label will not be used for statistic computation
-            return seg_data
-        else:
-            return self.data
+        # ignore masked pixels
+        seg_data = self.data.copy()
+        seg_data[image.mask] = masked_pixels_label
+        # this label will not be used for statistic computation
+        return seg_data
 
-    def thumbnails(self, image=None, labels=None, masked=False):
+    def thumbnails(self, image=None, labels=None, masked=False,
+                   same_size=False):
         """
         Thumbnail cutout images based on segmentation
 
@@ -1448,7 +1455,16 @@ class SegmentedImage(SegmentationImage,     # base
 
         data = self.data if image is None else image
         self._check_input_data(data)
-        return list(self.coslice(data, labels=labels, masked=masked))
+        if not same_size:
+            return list(self.coslice(data, labels=labels, masked=masked))
+
+        sizes = self.slices.sizes(labels)
+        biggest = sizes.max(0)
+        slices = self.slices.grow(labels, (biggest - sizes) / 2, self.shape)
+        if masked:
+            mask = self.to_binary()
+            return [np.ma.MaskedArray(image[_], mask[_]) for _ in slices]
+        return [image[_] for _ in slices]
 
     def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):
         """
@@ -1633,7 +1649,7 @@ class SegmentedImage(SegmentationImage,     # base
         com = np.empty((len(labels), image.ndim))
         # u  = np.empty((len(labels), image.ndim))  # uncertainty
         for lbl, (seg, sub, msk, grd) in self.coslice(
-                self.data, image, mask, grid, labels=labels, enum=True):
+                self.data, image, mask, grid, labels=labels, labelled=True):
             #
             i = next(counter)
 
@@ -1966,7 +1982,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         grid = np.indices(self.shape)
         for i, (lbl, (sub, g)) in enumerate(
-                self.coslice(self.data, grid, labels=labels, enum=True)):
+                self.coslice(self.data, grid, labels=labels, labelled=True)):
             # print(i, lbl, )
             keep[i] = inside_segment(coords[i], sub, g)
             if not keep[i]:
@@ -2367,7 +2383,7 @@ class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
 
     def get_coord_grids(self, labels):
         return dict(self.coslice(self.grid, labels=self.resolve_labels(labels),
-                                 flatten=True, enum=True))
+                                 flatten=True, labelled=True))
 
     # def get_coord_grids(self, labels=None):
     #     grids = {}
