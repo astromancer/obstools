@@ -17,7 +17,7 @@ from astropy.coordinates import (jparser, SkyCoord, EarthLocation,
                                  UnknownSiteException)
 
 # local
-from recipes import caches
+from recipes import caching
 
 # relative
 from . import cachePaths as cached
@@ -48,7 +48,7 @@ def int2tup(v):
     #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
 
-@caches.to_file(cached.site)
+@caching.to_file(cached.site)
 def get_site(name):
     """resolve site name and cache the result"""
     if isinstance(name, EarthLocation):
@@ -140,7 +140,7 @@ def get_coords_named(name):
         return coo
 
 
-@caches.to_file(cached.coo)
+@caching.to_file(cached.coo)
 def resolver(name):
     """
     Get the target coordinates from object name if known.  This function is
@@ -269,7 +269,7 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
     return hdus
 
 
-@caches.to_file(cached.sky)  # memoize for performance
+@caching.to_file(cached.sky)  # memoize for performance
 def _get_skymapper(url):
     # get raw image data
     logger.debug(f'Reading data from {url=}')
@@ -283,7 +283,7 @@ def _get_skymapper(url):
 
 
 # @timer
-@caches.to_file(cached.dss, typed={'size': tuple})  # memoize for performance
+@caching.to_file(cached.dss, typed={'size': tuple})  # memoize for performance
 def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     """
     Grab a image from STScI server and load as HDUList.

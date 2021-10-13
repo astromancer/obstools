@@ -10,11 +10,11 @@ import numpy as np
 from astropy.utils import lazyproperty
 
 # local
-from recipes import caches
+from recipes.caching import Cached as cached
 from recipes.logging import LoggingMixin
 
 # relative
-from .. import cachePaths, _hdu_hasher
+from .. import _hdu_hasher, cachePaths
 
 
 class BootstrapResample(LoggingMixin):
@@ -148,8 +148,10 @@ class ImageSamplerMixin:
 
         return BootstrapResample(data)
 
-    @caches.to_file(cachePaths.samples, typed={'self': _hdu_hasher})
-    def get_sample_image(self, stat='median', min_depth=5):
+    # since this function deals with random statistics, caching is disabled by
+    # default. We enable this cache in the pipeline to reduce unnecessary repeat
+    # computation
+    @cached(cachePaths.samples, typed={'self': _hdu_hasher}, enabled=False)
         """
         Get sample image to a certain minimum simulated exposure depth by
         averaging data.

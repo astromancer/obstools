@@ -13,7 +13,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 from pyxides import ListOf
 from pyxides.getitem import IndexerMixin
-from pyxides.vectorize import Vectorized, AttrVectorizer
+from pyxides.vectorize import Vectorized, AttrVector
 
 # local
 from scrawl.imagine import ImageDisplay
@@ -439,16 +439,16 @@ class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorized):
         return f'{self.__class__.__name__}: {n} image{"s" * bool(n)}'
 
     # properties: vectorized attribute getters on `SkyImage`
-    images = AttrVectorizer('data')
-    shapes = AttrVectorizer('data.shape', convert=np.array)
-    detections = AttrVectorizer('seg')
-    coms = AttrVectorizer('xy')
-    fovs = AttrVectorizer('fov', convert=np.array)
-    scales = AttrVectorizer('scale', convert=np.array)
-    params = AttrVectorizer('params', convert=np.array)
-    xy_offsets = AttrVectorizer('offset', convert=np.array)
-    angles = AttrVectorizer('angles', convert=np.array)
-    corners = AttrVectorizer('corners', convert=np.array)
+    images = AttrVector('data')
+    shapes = AttrVector('data.shape', convert=np.array)
+    detections = AttrVector('seg')
+    coms = AttrVector('xy')
+    fovs = AttrVector('fov', convert=np.array)
+    scales = AttrVector('scale', convert=np.array)
+    params = AttrVector('params', convert=np.array)
+    xy_offsets = AttrVector('offset', convert=np.array)
+    angles = AttrVector('angles', convert=np.array)
+    corners = AttrVector('corners', convert=np.array)
 
     # @property
     # def params(self):

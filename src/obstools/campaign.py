@@ -23,19 +23,19 @@ from astropy.io.fits.hdu.base import _BaseHDU
 # local
 import docsplice as doc
 from motley.table import AttrTable
-from recipes import caches, io, bash
+from recipes import bash, caching, io
 from recipes.oo import SelfAware, null
 from recipes.logging import LoggingMixin
 from recipes.string import plural, strings
 from recipes.string.brackets import braces
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
-from pyxides.grouping import Groups, AttrGrouper
-from pyxides.vectorize import Vectorized, AttrVectorizer
-from pyxides.pprint import PrettyPrinter, PPrintContainer
+from pyxides.grouping import AttrGrouper, Groups
+from pyxides.vectorize import AttrVector, Vectorized
+from pyxides.pprint import PPrintContainer, PrettyPrinter
 
 # relative
-from . import cachePaths, _hdu_hasher
+from . import _hdu_hasher, cachePaths
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
@@ -88,7 +88,7 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         kls = campaign._allowed_types[0]._FilenameHelperClass
         for name, _ in inspect.getmembers(kls, is_property):
             # print('creating property', name)
-            setattr(cls, f'{name}s', AttrVectorizer(name))
+            setattr(cls, f'{name}s', AttrVector(name))
         return obj
 
     def __init__(self, campaign):
@@ -113,7 +113,7 @@ class HDUExtra(PrimaryHDU,
 
     #detect = SourceDetection('sigma_threshold')
 
-    @caches.to_file(cachePaths.detection, typed={'self': _hdu_hasher})
+    @caching.to_file(cachePaths.detection, typed={'self': _hdu_hasher})
     def detect(self,  stat='median', depth=5, snr=3, **kws):
         """
         Cached source detection for HDUs
@@ -454,7 +454,7 @@ class PhotCampaign(PPrintContainer,
         return FileList(self)
 
     def pformat(self, attrs=None, **kws):
-        return self.tabulate(self, attrs, **kws)
+        return self.tabulate(attrs, **kws)
 
     def pprint(self, attrs=None, **kws):
         print(self.pformat(attrs, **kws))

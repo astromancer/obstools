@@ -3,7 +3,7 @@
 from pathlib import Path
 
 # local
-from recipes.caches import Reject
+from recipes.caching import Reject
 from recipes.dicts import AttrReadItem
 
 from loguru import logger
