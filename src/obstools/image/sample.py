@@ -12,6 +12,7 @@ from astropy.utils import lazyproperty
 # local
 from recipes.caching import Cached as cached
 from recipes.logging import LoggingMixin
+from recipes.misc import duplicate_if_scalar
 
 # relative
 from .. import _hdu_hasher, cachePaths
@@ -19,7 +20,7 @@ from .. import _hdu_hasher, cachePaths
 
 class BootstrapResample(LoggingMixin):
     """
-    Sampling with replacement
+    Sampling with replacement.
     """
 
     def __init__(self, data, sample_size=None, subset=..., axis=0):
@@ -51,39 +52,54 @@ class BootstrapResample(LoggingMixin):
         Parameters
         ----------
         n : int
+            number of samples to draw.
         subset : int or tuple of int or Ellipsis or None
-            note if indices of subset are beyond array size along axis 0,
-            the entire array will be used.
+            Index interval from which to draw data samples. This parameter is
+            interpreted in the fashion that python interprets slices. Indices 
+            beyond array size along `axis`, thus imply that the entire array 
+            will be available to draw from.
 
         Returns
         -------
-
+        np.ndarray
         """
 
         if (n is None) and (self.sample_size is None):
             raise ValueError('Please give sample size (or initialize this '
-                             'class with a sample size)')
-        # m = len(self.data)
+                             'class with a sample size).')
+
+        size = len(self.data)
+        if subset is ...:
+            subset = size
 
         # make a slice
-        if isinstance(subset, Collection):
-            subset = slice(*subset)
-        elif subset is not ...:
-            subset = slice(subset)
-
-        # get subset array
-        sub = self.data[subset]
-        if sub.size == 0:
+        subset = slice(*duplicate_if_scalar(subset, 1, raises=False))
+        *interval, _ = subset.indices(size)
+        i, j = interval
+        isize = j - i
+        if i == j:
             raise ValueError('Cannot draw sample from an empty subset of the '
-                             f'data: {subset}.')
+                             f'data: {interval}.')
 
-        if (n is ...) or (len(sub) <= n):
-            return sub
+        if isize < n:
+            self.logger.warning(
+                'Number of frames ({}) in the selected subset of the array is '
+                'less than requested sample size of {}. Since we are sampling '
+                'with replacement, there will be repeat elements in the drawn '
+                'sample. This may skew the computed statistic.', isize, n
+            )
+        
+        # NB!! Don't slice here if we are sampling from entire file.
+        if size == isize == n:
+            self.logger.debug('Sample size equals data size. Returning entire '
+                              'array without sampling.')
+            return self.data
 
+        self.logger.debug('Selecting {:d} elements from interval ({:d}, {:d}) '
+                          'for sample.', n, *interval)
+                          
         # get frame indices (subspace sampled with replacement)
-        self.logger.debug('Selecting {:d} frames from amongst frames '
-                          '({:d}->{:d}) for sample image.', n, *subset)
-        return self.data[np.random.randint(0, len(sub), n)]
+        return self.data[np.random.randint(i, j, n)]
 
     def max(self, n=None, subset=...):
         return self.draw(n, subset).max(self.axis)
@@ -145,7 +161,7 @@ class ImageSamplerMixin:
 
         if self.ndim == 2:
             # insert axis in front
-            data = self.data[None]
+            data = data[None]
 
         return BootstrapResample(data)
 
@@ -177,7 +193,7 @@ class ImageSamplerMixin:
         n = int(np.ceil(min_depth // self.timing.exp)) or 1
 
         self.logger.info('Computing {stat} of {n} images (exposure depth of '
-                         '{min_depth:.1g} seconds) for sample image from '
+                         '{min_depth:.1f} seconds) for sample image from '
                          '{name!r} for the data interval {subset}.',
                          **locals(), name=self.file.name)
 
