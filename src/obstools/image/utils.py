@@ -39,11 +39,7 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
                frame=False, align='^',
                col_borders='', cell_whitespace=0)
     tt.colourise(m, fg=cols)
-    # ts = tt.add_colourbar(str(tt), ('fit|', 'scale|', 'loc|'))
-
-    # join tables
-    tbl = Table([[str(cootbl), str(tt)]], frame=False, col_borders='')
-    return tbl
+    return Table([[str(cootbl), str(tt)]], frame=False, col_borders='')
 
 
 def table_cdist(sdist, window, _print=False):

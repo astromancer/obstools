@@ -41,7 +41,7 @@ def make_border_mask(data, edge_cutoffs):
     if len(edge_cutoffs) == 4:
         return _make_border_mask(data, *edge_cutoffs)
 
-    raise ValueError('Invalid edge_cutoffs %s' % edge_cutoffs)
+    raise ValueError(f'Invalid edge_cutoffs {edge_cutoffs}')
 
 
 def detect(image, mask=False, background=None, snr=3., npixels=7,
@@ -95,7 +95,7 @@ def detect(image, mask=False, background=None, snr=3., npixels=7,
         logger.debug('No objects detected')
         return np.zeros_like(image, bool)
 
-    if deblend and not no_sources:
+    if deblend:
         from photutils import deblend_sources
         seg = deblend_sources(image, seg, npixels)
 

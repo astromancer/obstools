@@ -35,10 +35,7 @@ RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
 
 def int2tup(v):
     """wrap integer in a tuple"""
-    if isinstance(v, numbers.Integral):
-        return v,
-    else:
-        return tuple(v)
+    return (v, ) if isinstance(v, numbers.Integral) else tuple(v)
     # else:
     #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
@@ -183,8 +180,7 @@ def convert_skycoords(ra, dec):
         try:
             return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
         except ValueError:
-            logger.warning(
-                'Could not interpret coordinates: %s; %s' % (ra, dec))
+            logger.warning(f'Could not interpret coordinates: {ra}; {dec}')
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):
@@ -204,9 +200,7 @@ def retrieve_coords_ra_dec(name, verbose=True, **fmt):
 def ra_dec_string(coords, **kws):
     kws_ = dict(precision=2, sep=' ', pad=1)
     kws_.update(**kws)
-    return 'α = %s; δ = %s' % (
-        coords.ra.to_string(unit='h', **kws_),
-        coords.dec.to_string(unit='deg', alwayssign=1, **kws_))
+    return f"α = {coords.ra.to_string(unit='h', **kws_)}; δ = {coords.dec.to_string(unit='deg', alwayssign=1, **kws_)}"
 
 
 def get_skymapper_table(coords, bands, size=(10, 10)):
@@ -259,8 +253,7 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
 
     # retrieve data possibly from cache
     logger.info('Retrieving images...')
-    hdus = [_get_skymapper(url) for url in urls]
-    return hdus
+    return [_get_skymapper(url) for url in urls]
 
 
 @caches.to_file(skyCachePath)  # memoize for performance
@@ -309,9 +302,11 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
                      'poss2ukstu_ir',
                      'quickv'
                      )  # TODO: module scope ?
-    if not server in known_servers:
-        raise ValueError('Unknown server: %s.  Please select from: %s'
-                         % (server, str(known_servers)))
+    if server not in known_servers:
+        raise ValueError(
+            f'Unknown server: {server}.  Please select from: {known_servers}'
+        )
+
 
     # resolve size
     h, w = size  # FIXME: if number
@@ -332,9 +327,7 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
     with urllib.request.urlopen(url, params) as html:
         raw = html.read()
 
-    # parse error message
-    error = RGX_DSS_ERROR.search(raw)
-    if error:
+    if error := RGX_DSS_ERROR.search(raw):
         raise STScIServerError(error[1])
 
     # log

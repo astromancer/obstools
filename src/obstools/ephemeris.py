@@ -153,12 +153,11 @@ def rephase(phase, offset, *data):
     phase %= 1
     if data is None:
         return phase
-    else:
-        data = np.array(cosort(phase, *data))
+    data = np.array(cosort(phase, *data))
 
-        phase = data[0]
-        data = data[1:]
-        return phase, data
+    phase = data[0]
+    data = data[1:]
+    return phase, data
 
 
 def phase_splitter(ph, *data, **kws):

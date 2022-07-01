@@ -163,8 +163,7 @@ class PSF(Model):
     def fit(self, data, grid, std=None, **kws):
         """guess p0 and fit"""
         p0 = self.p0guess(data)
-        result = leastsq(self.objective, p0, args=(data, grid, std), **kws)
-        return result
+        return leastsq(self.objective, p0, args=(data, grid, std), **kws)
 
     def param_hint(self, data, grid=None, std=None):
         """Return a guess of the fitting parameters based on the data"""
@@ -211,14 +210,7 @@ class PSF(Model):
 
     def wrs(self, p, data, grid, std=None):
         """weighted squared residuals"""
-        if std is None:
-            return self.rs(p, data, grid)
-        w = self.rs(p, data, grid) / std
-        # if np.isnan(w).any():
-        #     from IPython import embed
-        #     embed()
-        #     raise SystemExit
-        return w
+        return self.rs(p, data, grid) if std is None else self.rs(p, data, grid) / std
 
     def fwrs(self, p, data, grid, std=None):
         """weighted squared residuals flattened"""
@@ -230,7 +222,7 @@ class PSF(Model):
 
     def validate(self, p, *args):
         """validate parameter values.  To be overwritten by sub-class"""
-        return all([vf(p) for vf in self.validations])
+        return all(vf(p) for vf in self.validations)
 
     def add_validation(self, func):
         if not isinstance(func, Callable):
@@ -410,8 +402,7 @@ class GaussianPSF(CircularGaussianPSF):
         ratio = min(sigx, sigy) / max(sigx, sigy)
         ellipticity = np.sqrt(1 - ratio ** 2)
         fwhm = self.get_fwhm(p)
-        par_alt = sigx, sigy, cov, theta, ellipticity, fwhm
-        return par_alt
+        return sigx, sigy, cov, theta, ellipticity, fwhm
 
     def integrate(self, p):
         """
@@ -467,16 +458,17 @@ class GaussianPSF(CircularGaussianPSF):
         ellipticity = np.sqrt(1 - ratio ** 2)
         coo = x + offset[0], y + offset[1]
 
-        pdict = {'coo': coo,
-                 'flux': counts,
-                 'peak': z + d,
-                 'sky_mean': d,
-                 'fwhm': fwhm,
-                 'sigma_xy': (sigx, sigy),
-                 'theta': np.degrees(theta),
-                 'ratio': ratio,
-                 'ellipticity': ellipticity}
-        return pdict
+        return {
+            'coo': coo,
+            'flux': counts,
+            'peak': z + d,
+            'sky_mean': d,
+            'fwhm': fwhm,
+            'sigma_xy': (sigx, sigy),
+            'theta': np.degrees(theta),
+            'ratio': ratio,
+            'ellipticity': ellipticity,
+        }
 
     def coeff(self, covariance_matrix):
         """
@@ -513,9 +505,7 @@ class GaussianPSF(CircularGaussianPSF):
 
     def precision_matrix(self, p):
         _, _, _, a, b, c, _ = p
-        P = np.array([[a, -b],
-                      [-b, c]]) * 2
-        return P
+        return np.array([[a, -b], [-b, c]]) * 2
 
     def get_sigma_xy(self, p):
         covm = self.covariance_matrix(p)
@@ -670,9 +660,9 @@ class DiscretizedGaussian():  # GaussianPSF??
         w = pf * (erf(f * td0) - erf(f * td1))
         return amp * np.prod(w, axis=0)
 
-    def _eig2cov(w0, w1, theta):
+    def _eig2cov(self, w1, theta):
         M = _rot_mat(float(theta))
-        w0 * M[:, 0] + w1 * M[:, 1]
+        self * M[:, 0] + w1 * M[:, 1]
 
     def residuals(self, p, data, grid):
         return np.square(data - self(p, grid))
@@ -709,9 +699,7 @@ class DiscretizedGaussian():  # GaussianPSF??
         varx, vary = var
         cov2 = cov * cov
 
-        m0 = np.sqrt(np.square(vary * vary - e0) / cov2 + 1)
-        return m0
-        m1 = np.sqrt(1 - m0 * m0)
+        return np.sqrt(np.square(vary * vary - e0) / cov2 + 1)
 
     def eigenvecs2(self, var, cor, eigvals):
         """eigenvectorss of precision matrix from variance, correlation, eigenvalues"""
@@ -720,9 +708,7 @@ class DiscretizedGaussian():  # GaussianPSF??
         varx, vary = var
         cov2 = cov * cov
 
-        m0 = np.sqrt(np.square(vary * vary - e0) / cov2 + 1)
-        return m0
-        m1 = np.sqrt(1 - m0 * m0)
+        return np.sqrt(np.square(vary * vary - e0) / cov2 + 1)
 
     def rss(self, p, data, grid):
         return np.square(self(p, grid) - data)
@@ -782,7 +768,7 @@ class StarFit(object):
         self._print = _print
 
     # @profile()
-    def __call__(self, grid, data):  # TODO: make grid optional...
+    def __call__(self, grid, data):    # TODO: make grid optional...
         """Fits the PSF model to the data on the grid given the input coordinates xy0"""
         psf = self.psf
 
@@ -813,7 +799,7 @@ class StarFit(object):
             return
         else:
             if self._print:
-                print('\nSuccessfully fit {} function to stellar profile.'.format(psf.F.__name__))
+                print(f'\nSuccessfully fit {psf.F.__name__} function to stellar profile.')
             if self.caching:
                 # update cache with these parameters
                 i = self.call_count % self.max_cache_size  # wrap!

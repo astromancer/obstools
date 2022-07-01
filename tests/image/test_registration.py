@@ -33,7 +33,7 @@ def make_id(name, n):
 
 
 # dynamically generate some simple fixtures for combinatorial tests
-for name, params in dict(
+for name in dict(
         xy=[((5, 10), (5, 6), (8, 2))],
         sigmas=[1,
                 (1, 0.5),
@@ -45,7 +45,7 @@ for name, params in dict(
         amplitudes=[10,
                     (1, 2, 3)
                     ]
-).items():
+):
     exec(textwrap.dedent(
         f"""
         @pytest.fixture(params=params, ids=make_id(name, len(params)))

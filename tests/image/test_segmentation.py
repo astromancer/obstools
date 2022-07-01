@@ -127,10 +127,8 @@ def test_add_segments():
 def test_trace_contours():
     from scipy import ndimage
 
-    tests = []
     d = ndimage.distance_transform_edt(np.ones((15, 15)))
-    tests.append(d > 5)
-
+    tests = [d > 5]
     z = np.square(np.indices((15, 15)) - 7.5).sum(0) < 7.5
     z[9, 4] = 1
     tests.append(z)
@@ -139,7 +137,7 @@ def test_trace_contours():
     z[3:5, 2] = 1
     tests.append(z)
 
-    for i, t in enumerate(tests):
+    for t in tests:
         boundary = trace_boundary(t)
 
         seg = SegmentedImage(t)

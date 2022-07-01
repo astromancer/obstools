@@ -63,7 +63,7 @@ class ProgressLogger(ProgressBar, LoggingMixin):
     def progress(self, state, info=None):
         if self.needs_update(state):
             bar = self.get_bar(state)
-            self.logger.info('Progress: %s' % bar)
+            self.logger.info(f'Progress: {bar}')
 
 
 # class ProgressPrinter(ProgressBar):

@@ -15,9 +15,7 @@ class CalibrationImage:
         self.name = f'_{name}'
 
     def __get__(self, instance, owner):
-        if instance is None:
-            return self
-        return getattr(instance, self.name)
+        return self if instance is None else getattr(instance, self.name)
 
     def __set__(self, instance, value):
         if value is keep:

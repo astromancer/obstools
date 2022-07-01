@@ -198,17 +198,16 @@ def select_rect_pad(segm, image, start, shape):
 def inside_segment(coords, sub, grid):
     b = []
     ogrid = grid[0, :, 0], grid[1, 0, :]
-    for j, (g, f) in enumerate(zip(ogrid, coords)):
+    for g, f in zip(ogrid, coords):
         bi = np.digitize(f, g - 0.5)
         b.append(bi)
 
     mask = (sub == 0)
-    if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
-        inside = False
-    else:
-        inside = not mask[b[0], b[1]]
-
-    return inside
+    return (
+        False
+        if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any()
+        else not mask[b[0], b[1]]
+    )
 
 
 def get_masking_flags(arrays, masked):
@@ -466,9 +465,10 @@ class Sliced(vdict):
         # z + np.array([-1, 1], ndmin=3).T
         urc = np.add(self.urc(labels), inc)  # .clip(None, self.seg.shape)
         llc = np.add(self.llc(labels), -inc).clip(0)
-        slices = [tuple(slice(*i) for i in yxix)
-                  for yxix in zip(*np.swapaxes([llc, urc], -1, 0))]
-        return slices
+        return [
+            tuple(slice(*i) for i in yxix)
+            for yxix in zip(*np.swapaxes([llc, urc], -1, 0))
+        ]
 
     # def around_centroids(self, image, size, labels=None):
     #     com = self.seg.centroid(image, labels)
@@ -609,9 +609,7 @@ class MaskedStatsMixin(object):
         for stat in cls._supported:
             method = MaskedStatistic(getattr(ndimage, stat))
             setattr(cls, stat, method)
-            # also add aliases for convenience
-            alias = cls._aliases.get(stat)
-            if alias:
+            if alias := cls._aliases.get(stat):
                 setattr(cls, alias, method)
 
 
@@ -641,12 +639,7 @@ class MaskedStatistic(object):
 
     def __get__(self, seg, objtype=None):
 
-        if seg is None:  # called from class
-            return self
-
-        # bind this class to the seg instance from whence the lookup came.
-        # Essentially this binds the first argument `seg` in `__call__` below
-        return types.MethodType(self, seg)
+        return self if seg is None else types.MethodType(self, seg)
 
     def __call__(self, seg, image, labels=None):
         # handling of masked pixels for all statistical methods done here
@@ -1072,7 +1065,7 @@ class SegmentedImage(SegmentationImage,  # base
         which is very nice.
         """
         s = {0: (slice(None),) * self.data.ndim}
-        s.update(zip(self.labels, SegmentationImage.slices.fget(self)))
+        s |= zip(self.labels, SegmentationImage.slices.fget(self))
         return Sliced(s)
 
     def sliced(self, label):
@@ -1113,11 +1106,7 @@ class SegmentedImage(SegmentationImage,  # base
 
     @lazyproperty
     def max_label(self):
-        if len(self.labels):
-            return super().max_label
-        else:
-            # otherwise `np.max` borks with empty sequence
-            return 0
+        return super().max_label if len(self.labels) else 0
 
     def make_cmap(self, background_color='#000000', random_state=random_state):
         # this function fails for all zero data since `make_random_cmap`
@@ -1209,7 +1198,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         invalid = np.setdiff1d(labels, valid)
         if len(invalid):
-            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
+            raise ValueError(f'Invalid label(s): {tuple(invalid)}')
 
         return labels
 
@@ -1555,14 +1544,13 @@ class SegmentedImage(SegmentationImage,  # base
             masked_pixels_label = self.max_label + 1
         masked_pixels_label = int(masked_pixels_label)
 
-        if np.ma.is_masked(image):
-            # ignore masked pixels
-            seg_data = self.data.copy()
-            seg_data[image.mask] = masked_pixels_label
-            # this label will not be used for statistic computation
-            return seg_data
-        else:
+        if not np.ma.is_masked(image):
             return self.data
+        # ignore masked pixels
+        seg_data = self.data.copy()
+        seg_data[image.mask] = masked_pixels_label
+        # this label will not be used for statistic computation
+        return seg_data
 
     def thumbnails(self, image=None, labels=None, masked=False):
         """
@@ -1858,8 +1846,7 @@ class SegmentedImage(SegmentationImage,  # base
         masks = self.to_binary(labels, expand=True)
 
         if structure is None:
-            d = {4: 1, 8: 2}.get(connectivity)
-            if d:
+            if d := {4: 1, 8: 2}.get(connectivity):
                 structure = ndimage.generate_binary_structure(2, d)
             else:
                 raise ValueError('Invalid connectivity={0}.  '
@@ -1881,9 +1868,8 @@ class SegmentedImage(SegmentationImage,  # base
 
         if copy:
             return self.__class__(data)
-        else:
-            self.data = data
-            return self
+        self.data = data
+        return self
 
     def auto_dilate(self, image, labels=None, dmax=5, sigma=3):
         #
@@ -2268,7 +2254,7 @@ class SegmentedImage(SegmentationImage,  # base
         from motley import codes
 
         origin = int(origin)
-        assert origin in (0, 1)
+        assert origin in {0, 1}
 
         # re-orient data
         o = 1 if origin else -1
@@ -2342,10 +2328,7 @@ class SegmentedImage(SegmentationImage,  # base
 
         # create string
         i0 = 0
-        im = ''
-        if frame:
-            im = motley.underline(' ' * ((nc + 1) * nm)) + '\n' + BORDER
-
+        im = motley.underline(' ' * ((nc + 1) * nm)) + '\n' + BORDER if frame else ''
         for i, mrk in sorted(marks.items(), key=lambda _: _[0]):
             im += ' ' * ((i - i0 - 1) * nm) + mrk
             i0 = i

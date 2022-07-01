@@ -87,7 +87,7 @@ def plot_transformed_image(ax, image, fov=None, p=(0, 0, 0), frame=True,
 
         frame_kws = dict(fc='none', lw=0.5, ec='0.5', alpha=kws.get('alpha'))
         if isinstance(frame, dict):
-            frame_kws.update(frame)
+            frame_kws |= frame
 
         ax.add_patch(
             Rectangle(xy - half_pixel_size, *fov[::-1], np.degrees(theta),
@@ -256,7 +256,7 @@ class MosaicPlotter(ImageContainer):
 
         #
         # if not isinstance(image, SkyImage):
-        if not image.__class__.__name__ == 'SkyImage':
+        if image.__class__.__name__ != 'SkyImage':
             image = SkyImage(image, fov)
 
         #
@@ -373,7 +373,7 @@ class MosaicPlotter(ImageContainer):
     def label_image(self, name='', p=(0, 0, 0), fov=(0, 0), **kws):
         # default args for init
         _kws = {}
-        _kws.update(self.label_props)
+        _kws |= self.label_props
         _kws.update(kws)
         return self.ax.text(*ulc(p, fov), name,
                             rotation=np.degrees(p[-1]),

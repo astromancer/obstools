@@ -24,10 +24,7 @@ def echo(*_):
 
 
 def get_shape(data):
-    if isinstance(data, Parameters):
-        return data.npar
-    else:
-        return np.shape(data)
+    return data.npar if isinstance(data, Parameters) else np.shape(data)
 
 
 def _walk_dtype_size(obj):
@@ -116,7 +113,7 @@ class _RecurseHelper(object):
 
         # print('allow types', allow_types)
         if not isinstance(obj, allow_types):
-            raise TypeError('%s type objects are not supported' % type(obj))
+            raise TypeError(f'{type(obj)} type objects are not supported')
 
     @staticmethod
     def asscalar(key, val):
@@ -160,17 +157,14 @@ class _RecurseHelper(object):
                                           container_out)
                 if flat:
                     yield from gen
+                elif with_keys:
+                    yield key, container_out(gen)  # map(
                 else:
-                    if with_keys:
-                        yield key, container_out(gen)  # map(
-                    else:
-                        yield container_out(gen)
+                    yield container_out(gen)
+            elif with_keys:
+                yield call(key, item)
             else:
-                # switch caller here to call(item) if with_keys is False
-                if with_keys:
-                    yield call(key, item)
-                else:
-                    yield call(item)
+                yield call(item)
 
 
 # default helper singleton
@@ -223,12 +217,11 @@ class Parameters(np.recarray):
         if data is not None:
             if isinstance(data, dict):
                 return cls.__new__(cls, None, base_dtype, **data)
-            else:
-                # use case: Parameters([1, 2, 3, 4, 5])
-                # use the `numpy.rec.array` to allow for construction from a
-                # wide variety of compatible objects
-                obj = np.rec.array(data)
-                return obj.view(cls)  # view as Parameters object
+            # use case: Parameters([1, 2, 3, 4, 5])
+            # use the `numpy.rec.array` to allow for construction from a
+            # wide variety of compatible objects
+            obj = np.rec.array(data)
+            return obj.view(cls)  # view as Parameters object
 
         # first we have to construct the dtype by walking the (possibly nested)
         # kws that define the data structure.
@@ -299,9 +292,9 @@ class Parameters(np.recarray):
             s = pformat_dict(self.to_dict())
             indent = ' ' * (len(cls_name) + 1)
             s = s.replace('\n', '\n' + indent)
-            return '%s(%s)' % (cls_name, s)
+            return f'{cls_name}({s})'
         else:
-            return '%s(%s)' % (cls_name, super().__str__())
+            return f'{cls_name}({super().__str__()})'
 
     def __repr__(self):
         return self.__str__()
@@ -321,10 +314,7 @@ class Parameters(np.recarray):
         dict
 
         """
-        dict_ = dict
-        if attr:
-            dict_ = AttrReadItem
-
+        dict_ = AttrReadItem if attr else dict
         # _par_help.asscalar  #
         return dict_(_par_help.walk(self, echo, flat, container_out=dict_))
 
@@ -431,7 +421,7 @@ class Prior(rv_frozen):  # DistRepr
     # `scipy.stats._distn_infrastructure.rv_frozen`
 
     def __repr__(self):
-        return self.dist.name.title() + 'Prior' + str(self.args)
+        return f'{self.dist.name.title()}Prior{str(self.args)}'
 
     def __str__(self):
         # here look at `dist` attribute to determine symbol

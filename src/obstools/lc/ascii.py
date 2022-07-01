@@ -36,15 +36,14 @@ MULTILINE_CURLY_BRACKET = textwrap.dedent(
 
 
 def parse_format_spec(fmt):
-    mo = FORMATSPEC_SRE.match(fmt)
-    if mo:
+    if mo := FORMATSPEC_SRE.match(fmt):
         return mo.groups()  # width, precision, dtype =
     else:
         raise ValueError('Nope!')
 
 
 def format_list(data, fmt='%g', width=8, sep=','):
-    lfmt = '%-{}s'.format(width) * len(data)
+    lfmt = f'%-{width}s' * len(data)
     s = lfmt % tuple(np.char.mod(fmt + sep, data))
     return s[::-1].replace(',', ' ', 1)[::-1].join('[]')
 
@@ -65,9 +64,7 @@ def header_info_block(name, info):
 
 
 def get_name(o):
-    if isinstance(o, Callable):
-        return o.__name__
-    return str(o)
+    return o.__name__ if isinstance(o, Callable) else str(o)
 
 
 def check_column_widths(names, formats):
@@ -128,10 +125,7 @@ def hstack_string(a, b, whitespace=1):
     bl = b.splitlines()
     w = max(map(len, al)) + whitespace
 
-    return ''.join(
-        '{: <{}s}{}\n'.format(aa, w, bb)
-        for i, (aa, bb) in enumerate(zip(al, bl))
-    )
+    return ''.join('{: <{}s}{}\n'.format(aa, w, bb) for aa, bb in zip(al, bl))
 
 
 def get_column_info(nstars, has_oflag):
@@ -180,9 +174,9 @@ def get_column_info(nstars, has_oflag):
         formats.extend(col_fmt_per_star)
 
     # prepend comment str in such a way as to not screw up alignment with data
-    units = ['[%s]' % u for u in units]
-    units[0] = '# ' + units[0]
-    names[0] = '# ' + names[0]
+    units = [f'[{u}]' for u in units]
+    units[0] = f'# {units[0]}'
+    names[0] = f'# {names[0]}'
 
     return names, units, formats, col_info
 
@@ -213,17 +207,18 @@ def make_header(obj_name, shape_info, has_oflag, meta={}):
     col_widths, col_fmt_head, col_fmt_data = make_column_format(names, formats)
 
     # make header
-    title = 'Light Curve for %s' % obj_name
+    title = f'Light Curve for {obj_name}'
 
     # table shape info
-    lines = ['# ' + header_info_block(title, shape_info)]
+    lines = [f'# {header_info_block(title, shape_info)}']
 
     # column descriptions
     lines.append(header_info_block('columns', col_info))
 
     # header blocks for additional meta data
-    for sec_name, info in meta.items():
-        lines.append(header_info_block(sec_name, info))
+    lines.extend(
+        header_info_block(sec_name, info) for sec_name, info in meta.items()
+    )
 
     # header as commented string
     # prepend comment character

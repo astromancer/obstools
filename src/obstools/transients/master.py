@@ -165,8 +165,7 @@ def get_coords(name):
     try:
         return jparser.to_ra_dec_float(name)
     except ValueError as err:
-        match = RGX_BAD_JCOO.search(name)
-        if match:
+        if match := RGX_BAD_JCOO.search(name):
             prefix, hms, dms = np.split(
                 RGX_BAD_JCOO.search(name).groups(), [1, 6])
             warnings.warn(f'Bad value for arcseconds in name: {name!r}')
@@ -179,15 +178,12 @@ def get_coords(name):
 
 
 def get_mag(m):
-    mo = RGX_NR.match(m)
-    if mo:
-        return float(m)
-    return -1
+    return float(m) if (mo := RGX_NR.match(m)) else -1
 
 
 def write_ascii(filename, data):
     col_names = list(data.dtype.fields.keys())
-    col_names[0] = '# ' + col_names[0]
+    col_names[0] = f'# {col_names[0]}'
     data = np.vstack([col_names, data]).astype('U')
 
     fmt = list(map('%-{}s'.format, np.char.str_len(data).max(0)))
@@ -207,10 +203,7 @@ def get_date(date):
                                    'Mrt': 'Mar',
                                    'Nar': 'Mar',
                                    'Avg': 'Aug'})
-    mfmt = '%b'
-    if len(month) > 3:
-        mfmt = '%B'
-
+    mfmt = '%B' if len(month) > 3 else '%b'
     s = f'{yr} {month}'
     cur = day.strip('X')
     for mult in (24, 60, 60):

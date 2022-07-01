@@ -96,8 +96,7 @@ def binary_contours(b):
     Z = g(X[:-1], Y[:-1])
 
     gen = QuadContourGenerator(X[:-1], Y[:-1], Z, None, False, 0)
-    c = gen.create_contour(0)
-    return c
+    return gen.create_contour(0)
 
 
 class Ellipse(_Ellipse):
@@ -158,7 +157,7 @@ class ApertureVizGui0(VideoDisplayA):
             props = propList[i]
             props.setdefault('animated', self.use_blit)
 
-            for j in range(self.n_groups):
+            for _ in range(self.n_groups):
                 # color = next(self.)
                 # props.update(ec=color)
                 aps = kls[i](**props)
@@ -218,10 +217,7 @@ class ApertureVizBase(VideoDisplayA):
             draw_list.append(self.marks)
 
         appars = self.appars[i]
-        skypars = None
-        if self.skypars is not None:
-            skypars = self.skypars[i]
-
+        skypars = self.skypars[i] if self.skypars is not None else None
         art = self.update_apertures(i, coo.T, appars, skypars)
         draw_list.append(art)
 
@@ -299,10 +295,7 @@ class ApertureVizGui(VideoDisplayA):
             draw_list.append(self.marks)
 
         appars = self.appars[i]
-        skypars = None
-        if self.skypars is not None:
-            skypars = self.skypars[i]
-
+        skypars = self.skypars[i] if self.skypars is not None else None
         art = self.update_apertures(i, coo.T, appars, skypars)
         draw_list.append(art)
 
@@ -388,13 +381,11 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         self.connect()
 
     def _slider_move(self, x, y):
-        draw_list = []
-        # art = self.markers + self.aps + (self.windows, )
-        for mrk in flatten((self.markers, self.aps, self.windows)):
-            if mrk.get_visible():
-                draw_list.append(mrk)
-
-        return draw_list
+        return [
+            mrk
+            for mrk in flatten((self.markers, self.aps, self.windows))
+            if mrk.get_visible()
+        ]
 
     # def toggle_windows(self, label):
 
@@ -411,12 +402,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
 
         # create axes if required
         if ax is None:
-            if autoscale_figure:
-                # automatically determine the figure size based on the data
-                figsize = self.guess_figsize(self.data)
-            else:
-                figsize = None
-
+            figsize = self.guess_figsize(self.data) if autoscale_figure else None
             fig = plt.figure(figsize=figsize)
 
             self._gs = gs = GridSpec(2, 5,
@@ -427,14 +413,14 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
 
             ax = fig.add_subplot(gs[0, :])
 
-            # axes = self.init_axes(fig)
+                # axes = self.init_axes(fig)
         # else:
         # axes = namedtuple('AxesContainer', ('image',))(ax)
 
         self.divider = make_axes_locatable(ax)
         # ax = axes.image
         # set the axes title if given
-        if not title is None:
+        if title is not None:
             ax.set_title(title)
 
         # setup coordinate display
@@ -579,10 +565,8 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
 
         # contour tracking regions
         if self.outlines is not None:
-            segments = []
             off = trk.offset[::-1]
-            for seg in self.outlineData:
-                segments.append(seg + off)
+            segments = [seg + off for seg in self.outlineData]
             self.outlines.set_segments(segments)
 
             # if self.use_blit:
@@ -750,10 +734,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
             im = data[e[1, 0]:e[1, 1], e[0, 0]:e[0, 1]]
 
             contours = binary_contours(im)
-            for c in contours:
-                outlines.append(c + e[:, 0] - 0.5)
-
-
+            outlines.extend(c + e[:, 0] - 0.5 for c in contours)
         col = LineCollection(outlines, **kws)
         self.ax.add_collection(col)
 
