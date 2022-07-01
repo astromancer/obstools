@@ -224,10 +224,7 @@ def std_ccd(counts, npix, counts_bg, npixbg):
 
 
 def opt_factory(p):
-    if len(p) == 1:
-        cls = CircleOptimizer
-    else:
-        cls = EllipseOptimizer
+    cls = CircleOptimizer if len(p) == 1 else EllipseOptimizer
     # initialize
     return cls()
 
@@ -440,42 +437,37 @@ class TaskExecutor(object):
         """
         # exceptions like moths to the flame
         abort = self.fail_counter.get_value() >= self.max_fail
-        if not abort:
-            try:
-                result = self.run(*args, **kws)
-            except Exception as err:
-                # logs full trace by default
-                i = args[0]
-                self.status[i] = self.FAIL
-                nfail = self.fail_counter.inc()
-                logger = logging.getLogger(self.name)
-                logger.exception('Processing failed at frame %i. (%i/%i)',
-                                 i, nfail, self.max_fail)
-
-                # check if we are beyond exception threshold
-                if nfail >= self.max_fail:
-                    logger.critical('Exception threshold reached!')
-                    # self.logger.critical('Exception threshold reached!')
-            else:
-                i = args[0]
-                self.status[i] = self.SUCCESS
-                return result  # finally clause executes before this returns
-
-            finally:
-                # log progress
-                counter = self.counter
-                if counter:
-                    n = counter.inc()
-                    if self.progLog:
-                        self.progLog.update(n)
-
-            # if there was a KeyboardInterrupt, it will be raised at this point
-        else:
+        if abort:
             # doing this here (instead of inside the except clause) avoids
             # duplication by chained exception traceback when logging
             raise AbortCompute(
                     'Number of exceptions larger than threshold of %i'
                     % self.max_fail)
+        try:
+            result = self.run(*args, **kws)
+        except Exception as err:
+            # logs full trace by default
+            i = args[0]
+            self.status[i] = self.FAIL
+            nfail = self.fail_counter.inc()
+            logger = logging.getLogger(self.name)
+            logger.exception('Processing failed at frame %i. (%i/%i)',
+                             i, nfail, self.max_fail)
+
+            # check if we are beyond exception threshold
+            if nfail >= self.max_fail:
+                logger.critical('Exception threshold reached!')
+                # self.logger.critical('Exception threshold reached!')
+        else:
+            i = args[0]
+            self.status[i] = self.SUCCESS
+            return result  # finally clause executes before this returns
+
+        finally:
+            if counter := self.counter:
+                n = counter.inc()
+                if self.progLog:
+                    self.progLog.update(n)
 
     def report(self):
         # not_done, = np.where(self.status == 0)
@@ -691,44 +683,35 @@ class FrameProcessor(LoggingMixin):
                     p = r.x
 
             if flag != 1:  # there was an error or no convergence
-                if prevr is not None and prevr.success:
-                    # use bright star appars for faint stars (if available) if
-                    # optimization failed for this group
-                    p = prevr.x
-                else:
-                    # no convergence for this opt or previous. fall back to p0
-                    p = p0
-
+                p = prevr.x if prevr is not None and prevr.success else p0
                 # update to fallback values
                 opt.update(coords[ix], *p, sky_width, sky_buf, r_sky_min)
 
                 skip_opt = True
-                # if fit didn't converge for bright stars, it won't for the
-                # fainter ones. save some time by skipping opt
+                        # if fit didn't converge for bright stars, it won't for the
+                        # fainter ones. save some time by skipping opt
 
             # get apertures
             aps, aps_sky = opt
 
-            if flag is not None:  # ie. optimization was at least attempted
-                # save appars
-                if len(p) == 1:  # circle
-                    a, = b, = p
-                    theta = 0
-                    a_sky_in = opt.ap_sky.r_in
-                    a_sky_out = b_sky_out = opt.ap_sky.r_out
-
-                else:  # ellipse
-                    a, b, theta = p
-                    a_sky_in = opt.ap_sky.a_in
-                    a_sky_out = opt.ap_sky.a_out
-                    b_sky_out = opt.ap_sky.b_out
-
-            else:
+            if flag is None:
                 # no optimization attempted
                 # use the radii, angle of the previous group for photometry on
                 # remaining groups
                 aps.positions = coords[ix]
                 aps_sky.positions = coords[ix]
+
+            elif len(p) == 1:  # circle
+                a, = b, = p
+                theta = 0
+                a_sky_in = opt.ap_sky.r_in
+                a_sky_out = b_sky_out = opt.ap_sky.r_out
+
+            else:  # ellipse
+                a, b, theta = p
+                a_sky_in = opt.ap_sky.a_in
+                a_sky_out = opt.ap_sky.a_out
+                b_sky_out = opt.ap_sky.b_out
 
             # save appars
             self._appars[i, g] = list(zip(

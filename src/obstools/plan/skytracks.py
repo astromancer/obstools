@@ -207,9 +207,7 @@ def sidereal_transform(t, longitude):
 
 
 def short_name(name):
-    if jparser.search(name):
-        return jparser.shorten(name)
-    return name
+    return jparser.shorten(name) if jparser.search(name) else name
 
 
 def set_visible(artists, state=True):
@@ -474,7 +472,7 @@ class CelestialTrack:
 
         # decide whether to add one label or two per segment
         labels = []
-        for i, (i0, i1) in enumerate(zip(first, last)):
+        for i0, i1 in zip(first, last):
             # determine the slope and length of curve segments at all points
             #  within axes
             x, yy = t[i0:i1 + 1], y[i0:i1 + 1]
@@ -706,10 +704,7 @@ class SeczFormatter(TransFormatter):
 
     def __call__(self, x, pos=None):
         # ignore negative numbers (below horizon)
-        if (x < 0):
-            return ''
-
-        return TransFormatter.__call__(self, x, pos)
+        return '' if (x < 0) else TransFormatter.__call__(self, x, pos)
 
 
 class Clock(LoggingMixin):

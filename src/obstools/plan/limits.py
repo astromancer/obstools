@@ -175,10 +175,7 @@ class TelescopeLimits:
     def get_visible_ha(self, dec, where='both', which='hard'):
 
         if where == 'both':
-            lims = []
-            for where_ in _EW:
-                lims.append(self.get_visible_ha(dec, where_, which))
-            return lims
+            return [self.get_visible_ha(dec, where_, which) for where_ in _EW]
 
         where, which = _checks(where, which)
         pp = self.interpolators[where][which]
@@ -189,11 +186,7 @@ class TelescopeLimits:
         if ax is None:
             fig, ax = plt.subplots()
 
-        if which == 'both':
-            which = _HS
-        else:
-            which = _check(which, _HS)
-
+        which = _HS if which == 'both' else _check(which, _HS)
         data = {}
         for key in which:
             east, west = LIMITS[key][self.tel].values()

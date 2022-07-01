@@ -41,15 +41,14 @@ def refractive_index(h_gp):
     delta = 2.93e-4
     rho = atmosphere(h_gp)
 
-    n = 1. + delta * (rho / RHO0)
-    return n
+    return 1. + delta * (rho / RHO0)
 
 
 class Atmopshere(object):
     pass
 
 
-def atmosphere(H_gp):  # class StandardAtmosphere
+def atmosphere(H_gp):    # class StandardAtmosphere
     """
     US Standard Atmosphere, 1976
     As published by NOAA, NASA, and USAF
@@ -69,13 +68,16 @@ def atmosphere(H_gp):  # class StandardAtmosphere
     if isinstance(H_gp, (float, int)):
         H_gp = np.array([H_gp])
 
-    regions = [(0. <= H_gp) & (H_gp <= 11e3),
-               (11e3 < H_gp) & (H_gp <= 20e3),
-               (20e3 < H_gp) & (H_gp <= 32e3),
-               (32e3 < H_gp) & (H_gp <= 47e3),
-               (47e3 < H_gp) & (H_gp <= 51e3),
-               (51e3 < H_gp) & (H_gp <= 71e3),
-               (71e3 < H_gp) & (H_gp <= 84852.)]
+    regions = [
+        (H_gp >= 0.0) & (H_gp <= 11e3),
+        (H_gp > 11e3) & (H_gp <= 20e3),
+        (H_gp > 20e3) & (H_gp <= 32e3),
+        (H_gp > 32e3) & (H_gp <= 47e3),
+        (H_gp > 47e3) & (H_gp <= 51e3),
+        (H_gp > 51e3) & (H_gp <= 71e3),
+        (H_gp > 71e3) & (H_gp <= 84852.0),
+    ]
+
 
     expressions = [lambda x: RHO0 * (1. - x / 44330.94) ** 4.25587615,
                    lambda x: RHO0 * 0.29707755 * np.exp((11e3 - x) / 6341.62),
@@ -362,8 +364,7 @@ def Kivalov07(Z, delh=50):
 
         cos_delphi = (4 * (rhm * np.cos(im)) ** 2 - (delh * np.sin(im)) ** 2) / (
             4 * (rhm * np.cos(im)) ** 2 + (delh * np.sin(im)) ** 2)
-        dM = rho * np.sqrt(rh * rh + rhp * rhp - 2 * rh * rhp * cos_delphi)
-        return dM
+        return rho * np.sqrt(rh * rh + rhp * rhp - 2 * rh * rhp * cos_delphi)
 
     H = np.arange(0., Hmax, delh)
     X = np.empty(Z.shape)

@@ -318,11 +318,9 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
 
 
 def new_diagnostics(coords, rcoo, Appars, optstat):
-    figs = {}
     # coordinate diagnostics
     fig = plot_coord_moves(coords, rcoo)
-    figs['coords.moves'] = fig
-
+    figs = {'coords.moves': fig}
     # fig = plot_coord_scatter(coords, rcoo)
     # figs['coords.scatter'] = fig
     # fig = plot_coord_walk(coords)
@@ -734,12 +732,10 @@ def plot_aperture_flux(fitspath, proc, tracker):
     star_labels = list(map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format,
                            tracker.segm.labels, tracker.rcoo))
 
-    figs = {
+    return {
         'lc.aps.opt': plot_lc(t, flux, flxStd, star_labels, '(Optimal)'),
-        'lc.aps.bg': plot_lc(t, fluxBG, flxBGStd, star_labels, '(BG)')
+        'lc.aps.bg': plot_lc(t, fluxBG, flxBGStd, star_labels, '(BG)'),
     }
-
-    return figs
 
 
 def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
@@ -747,7 +743,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 
     # no more than 200 error bars so we don't clutter the plot
     error_every = flxStd.shape[1] // int(max_errorbars)
-    title = 'Aperture flux %s' % description
+    title = f'Aperture flux {description}'
 
     # plot with frame number at bottom
     t0 = t[0].to_datetime()

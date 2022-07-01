@@ -356,7 +356,7 @@ class ApertureCollection(EllipseCollection):
 
     def __str__(self):
         # FIXME: better repr with widths, heights, angles
-        return '%s of shape %s' % (self.__class__.__name__, self.shape)
+        return f'{self.__class__.__name__} of shape {self.shape}'
 
     # def __repr__(self):
     #     return str(self)
@@ -518,26 +518,19 @@ class ApertureCollection(EllipseCollection):
             print('#' * 300)
             return
 
-        if not self.size:
-            concatenate = lambda o, a: a
-            # if the Collection was initialized as empty, set the new properties as current
-        else:
-            concatenate = props.concatenate
-
+        concatenate = props.concatenate if self.size else (lambda o, a: a)
         # embed()
         oprops = self._properties._original
         # Find which properties differ and update those
         for key, val in props.items():
-            if (not key in oprops) \
-                    or (not np.array_equal(oprops[key], props[
-                key])):  # `np.array_equal` here flags the empty properties as being unequal to the new ones, whereas `np.all` evaluates as True under the same conditions
+            if key not in oprops or not np.array_equal(oprops[key], props[key]):  # `np.array_equal` here flags the empty properties as being unequal to the new ones, whereas `np.all` evaluates as True under the same conditions
                 new = concatenate(self[key], val)
 
                 # print( '8'*88 )
                 # print('APPEND', key, self[key], val  )
                 # print( 'NEW:', new )
 
-                setter = getattr(self, 'set_%s' % key)
+                setter = getattr(self, f'set_{key}')
                 setter(new)
 
                 # print( )
@@ -581,8 +574,7 @@ class ApertureCollection(EllipseCollection):
     def area_between(self, idxs):
         """return the area enclosed between the two apertures given by idxs"""
         A = np.array(self.area(idxs), ndmin=2)
-        area = np.abs(np.subtract(*A.T))
-        return area
+        return np.abs(np.subtract(*A.T))
 
     def center_proximity(self, position, idx=...):
         """
@@ -645,7 +637,7 @@ class ApertureCollection(EllipseCollection):
     # ==============================================================================================
     # TODO: maybe maxe this a propetry??
     def add_to_axes(self, ax=None):
-        if not self in ax.collections:
+        if self not in ax.collections:
             # print( 'Adding collection to axis' )
 
             # necessary for apertures to map correctly to data positions
@@ -888,10 +880,7 @@ class ApLineCollection(LineCollection):
     # @expose.args( pre='='*100, post='?'*100 )
     def make_segments(self, radii):
 
-        if radii.size:
-            return [list(zip((r, r), (0, 1))) for r in radii]
-        else:
-            return []
+        return [list(zip((r, r), (0, 1))) for r in radii] if radii.size else []
 
     def update_from(self, aps):
 
@@ -1113,12 +1102,7 @@ class InteractionMixin():
         # can all be changed at a specific index.
 
         # FIXME: SMELLY CODE!!!!!!!!!!!!
-        if not self.size:
-            concatenate = lambda o, a: a
-            # HACK! if the Collection was initialized as empty, set the new properties as current
-        else:
-            concatenate = PropertyManager.concatenate
-
+        concatenate = PropertyManager.concatenate if self.size else (lambda o, a: a)
         # for key in self._properties.__broadcast__:
         for key, val in props.items():
 
@@ -1134,7 +1118,7 @@ class InteractionMixin():
                 print(e)
                 embed()
 
-            setter = getattr(self, 'set_%s' % key)
+            setter = getattr(self, f'set_{key}')
 
             print()
             # try:
@@ -1148,7 +1132,7 @@ class InteractionMixin():
     def resize(self, relative_motion, idx=..., ):
         print('RESIZING!', relative_motion, self.radii, idx)
 
-        if not relative_motion is None:
+        if relative_motion is not None:
             rnew = self.radii
             rnew[idx] += relative_motion
             if not self.within_allowed_range(rnew):

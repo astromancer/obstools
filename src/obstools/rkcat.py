@@ -148,7 +148,7 @@ def iter_lines(filename):
 
     """
     with open(filename, 'r') as fp:
-        for i, line in enumerate(fp):
+        for line in fp:
             if not line.startswith(('\n', '-')):
                 yield line.strip('\n')
 
@@ -200,7 +200,7 @@ def read_ascii(filename, mask_missing=False):
     n = len(lines) // 2
     ncols = len(column_slices) * 2
     # dtypes = tuple('U%s' % w for w in widths)
-    data = np.empty((n, ncols), 'U%s' % widths.max())  # somewhat inefficient
+    data = np.empty((n, ncols), f'U{widths.max()}')
 
     ix_odd = np.arange(1, ncols, 2)
     ix_even = np.arange(0, ncols, 2)
@@ -355,7 +355,7 @@ class RKCat(object):
         # l = np.zeros(a2D.shape, bool)
         # f = np.zeros(len(tbl), 'U2')
 
-        for i, t in enumerate(types):
+        for t in types:
             match = (a2D == t)
             l[match.any(1)] = False
 

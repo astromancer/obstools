@@ -285,20 +285,18 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         out_new = (d > d_cut)
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
 
-        changed = (out != out_new).any()
-        if changed:
-            out = out_new
-            xym[out] = np.ma.masked
-            n_out = out.sum()
-
-            if n_out / n_points > 0.5:
-                raise Exception('Too many outliers!!')
-
-            logger.info('Ignoring %i/%i (%.3f%%) values with |δr| > %.1f',
-                        n_out, n_points, (n_out / n_points) * 100, d_cut)
-        else:
+        if not (changed := (out != out_new).any()):
             break
 
+        out = out_new
+        xym[out] = np.ma.masked
+        n_out = out.sum()
+
+        if n_out / n_points > 0.5:
+            raise Exception('Too many outliers!!')
+
+        logger.info('Ignoring %i/%i (%.3f%%) values with |δr| > %.1f',
+                    n_out, n_points, (n_out / n_points) * 100, d_cut)
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), out
 
 
@@ -515,9 +513,7 @@ class LabelUser(object):
         self._ignore_labels = np.setdiff1d(self.segm.labels, labels)
 
     def resolve_labels(self, labels=None):
-        if labels is None:
-            return self.use_labels
-        return self.segm.has_labels(labels)
+        return self.use_labels if labels is None else self.segm.has_labels(labels)
 
     @property
     def nlabels(self):
@@ -1319,11 +1315,10 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         self.measurements[index] = yx
 
         # weights
-        if self.snr_weighting or self.snr_cut:
-            if (self._weights is None) or (count // self._update_weights_every):
-                self._weights = self.get_snr_weights(image)
-                # TODO: maybe aggregate weights and use mean ??
-
+        if (self.snr_weighting or self.snr_cut) and (
+            (self._weights is None) or (count // self._update_weights_every)
+        ):
+            self._weights = self.get_snr_weights(image)
         # # update relative positions from CoM measures
         # check here if measurements of cluster centres are good enough!
         if ((count + 1) % self._update_rvec_every) == 0 and count > 0 and \
@@ -1422,7 +1417,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # '/media/Oceanus/UCT/Observing/data/Feb_2015/
         #  MASTER_J0614-2725/20150225.001.fits' : 23
 
-        if not ((mask is None) or (self.masks.bad_pixels is None)):
+        if mask is not None and self.masks.bad_pixels is not None:
             mask |= self.masks.bad_pixels
         else:
             mask = self.masks.bad_pixels  # may be None
@@ -1434,7 +1429,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         if np.ma.is_masked(start_indices):
             raise ValueError('Start indices cannot be masked array')
 
-        if not start_indices.dtype.kind == 'i':
+        if start_indices.dtype.kind != 'i':
             start_indices = start_indices.round().astype(int)
 
         yx = self._measure_star_locations(image, mask, start_indices)
@@ -1450,8 +1445,6 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     def _measure_star_locations(self, image, mask, start_indices):
 
         seg = self.segm.select_subset(start_indices, image.shape)
-        xy = seg.com_bg(image, self.use_labels, mask, None)
-
         # note this is ~2x faster than padding image and mask. can probably
         #  be made even faster by using __slots__
         # todo: check if using grid + offset then com is faster
@@ -1467,7 +1460,7 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # good = ~self.is_bad(com)
         # self.coms[i, good] = com[good]
 
-        return xy  # + start_indices
+        return seg.com_bg(image, self.use_labels, mask, None)
 
     # def check_measurement(self, xy):
 
@@ -1683,21 +1676,14 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
     def pprint(self):
         from motley.table import Table
 
-        # FIXME: not working
-
-        # TODO: say what is being ignored
-        # TODO: include uncertainties
-
-        # coo = [:, ::-1]  # , dtype='O')
-        tbl = Table(self.rcoo_xy,
-                    col_headers=list('xy'),
-                    col_head_props=dict(bg='g'),
-                    row_headers=self.use_labels,
-                    # number_rows=True,
-                    align='>',  # easier to read when right aligned
-                    )
-
-        return tbl
+        return Table(
+            self.rcoo_xy,
+            col_headers=list('xy'),
+            col_head_props=dict(bg='g'),
+            row_headers=self.use_labels,
+            # number_rows=True,
+            align='>',  # easier to read when right aligned
+        )
 
     def sdist(self):
         coo = self.rcoo
@@ -1868,9 +1854,8 @@ class StarTracker(LabelUser, LoggingMixin, LabelGroupsMixin):
         # shift calculated as snr weighted mean of individual CoM shifts
         xym = np.ma.MaskedArray(xy, np.isnan(xy))
         δ = (self.rcoo[self.use_labels - 1] - xym)
-        offset = np.ma.average(δ, 0, weights)
         # this offset already relative to the global segmentation
-        return offset
+        return np.ma.average(δ, 0, weights)
 
     def update_rvec_point(self, coo, weights=None):
         # TODO: bayesian_update

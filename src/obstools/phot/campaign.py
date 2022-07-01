@@ -215,17 +215,7 @@ class ImageSamplerHDU(_HDUExtra):
             raise ValueError('Cannot create image sampler for data with '
                              f'{self.ndim} dimensions.')
 
-        # ensure NE orientation
-        data = self.oriented
-
-        # make sure we pass 3d data to sampler. This is a hack so we can use
-        # the sampler to get thumbnails from data that is a 2d image,
-        # eg. master flats.  The 'sample' will just be the image itself.
-
-        if self.ndim == 2:
-            # insert axis in front
-            data = self.data[None]
-
+        data = self.data[None] if self.ndim == 2 else self.oriented
         return BootstrapResample(data)
 
     @ftl.lru_cache()
@@ -679,48 +669,6 @@ class PhotCampaign(PPrintContainer,
         dss.register_constellation()
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
-        return dss
-
-        # group observations by telescope / instrument
-        # groups, indices = self.group_by('telescope', 'instrument',
-        #                                 return_index=True)
-
-        # start with the group having the most observations
-
-        # create data containers
-        # n = len(self)
-        # images = np.empty(n, 'O')
-        # params = np.empty((n, 3))
-        # fovs = np.empty((n, 2))
-        # coords = np.empty(n, 'O')
-        # ng = len(groups)
-        # aligned_on = np.empty(ng, int)
-        # matchers = np.empty(ng, 'O')
-
-        # # For each image group, align images wrt each other
-        # # ensure that `params`, `fovs` etc maintains the same order as `self`
-        # for i, (gid, run) in enumerate(groups.items()):
-        #     idx = indices[gid]
-        #     m = matchers[i] = run.coalign(depth, sample_stat, plot=plot,
-        #                                **find_kws)
-
-        #     aligned_on[i] = idx[m.idx]
-
-        # try:
-
-        #     #
-        #     dss = ImageRegisterDSS(self[reference_index].coords, fov_dss,
-        #                             **find_kws)
-
-        #     for i, gid in enumerate(groups.keys()):
-        #         mo = matchers[i]
-        #         theta = self[aligned_on[i]].get_rotation()
-        #         p = dss.match_points(mo.yx, mo.fov, theta)
-        #         params[indices[gid]] += p
-        # except:
-        #     from IPython import embed
-        #     embed()
-
         return dss
 
     def close(self):

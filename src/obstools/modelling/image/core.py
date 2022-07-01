@@ -120,8 +120,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
         if isinstance(models, Model):
             models = [models]
 
-        n_models = len(models)
         if not isinstance(models, MutableMapping):
+            n_models = len(models)
             if n_models not in (0, self.seg.nlabels):
                 raise ValueError("Mapping from segments to models is not "
                                  "1-to-1")
@@ -850,16 +850,14 @@ class AperturesFromModel(LoggingMixin):
         if coords is None:
             coords = fcoords  # use fit coordinates for aperture positions
 
-        if sky:
-            sx, sy = sigma_xy
-            rxsky = sx * self.rsky
-            rysky = sy * self.rsky[1]
-            return [EllipticalAnnulus(coo, *rxsky, rysky, theta)
-                    for coo in coords[:, 1::-1]]
-
-        else:
+        if not sky:
             return [EllipticalAperture(coo, rx, ry, theta)
                     for coo in coords[:, 1::-1]]
+        sx, sy = sigma_xy
+        rxsky = sx * self.rsky
+        rysky = sy * self.rsky[1]
+        return [EllipticalAnnulus(coo, *rxsky, rysky, theta)
+                for coo in coords[:, 1::-1]]
 
         # TODO: use_fit_coords
         # TODO: handle bright and faint seperately here
@@ -879,11 +877,11 @@ class AperturesFromModel(LoggingMixin):
         rskyin, rskyout = rsky
         info = 'Frame {:d}, rin={:.1f}, rout={:.1f}'
         if np.isnan(rsky).any():
-            self.logger.warning('Nans in sky apertures: ' + info, i, *rsky)
+            self.logger.warning(f'Nans in sky apertures: {info}', i, *rsky)
         if rskyin > rskyout:
-            self.logger.warning('rskyin > rskyout: ' + info, i, *rsky)
+            self.logger.warning(f'rskyin > rskyout: {info}', i, *rsky)
         if rskyin > rmax:
-            self.logger.warning('Large sky apertures: ' + info, i, *rsky)
+            self.logger.warning(f'Large sky apertures: {info}', i, *rsky)
 
 
 # class ImageModeller(SegmentedImageModel, ModellingResultsMixin):

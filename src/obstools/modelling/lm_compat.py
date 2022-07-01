@@ -59,7 +59,7 @@ class lmMixin():
 
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
-        self.logger.debug('Guessed: (%s)' % ', '.join(map(decimal_repr, p0)))
+        self.logger.debug(f"Guessed: ({', '.join(map(decimal_repr, p0))})")
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
 
@@ -76,8 +76,7 @@ class lmMixin():
             plsq = result.params
             p, punc = np.transpose([(p.value, p.stderr)
                                     for p in plsq.values()])
-            bad = np.allclose(p, p0)
-            if bad:  # model "converged" to the initial values
+            if bad := np.allclose(p, p0):
                 self.logger.warning('%s fit did not converge!', self)
                 self.logger.debug('input parameters identical to output')
 
@@ -153,13 +152,13 @@ def lmModelFactory(base_, method_names, param_names):
     class lmConvertMeta(type):
         """Constructor that creates the converted class"""
 
-        def __new__(meta, name, bases, namespace):
+        def __new__(cls, name, bases, namespace):
             for base in bases:
                 for mn, method in inspect.getmembers(base, inspect.isfunction):
                     if (mn in method_names):
                         # decorate the method
                         namespace[mn] = convert_params(method)
-            return type.__new__(meta, name, bases, namespace)
+            return type.__new__(cls, name, bases, namespace)
 
     class lmCompatModel(lmMixin, base_, metaclass=lmConvertMeta):
         params = make_params(param_names)

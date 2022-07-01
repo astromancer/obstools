@@ -62,7 +62,7 @@ def plot_modelled_image(model, image, params, seg=None, residual_mask=False,
         ImageDisplay(model(params), ax=axes[2 - ovr], title='Model')
 
         # residuals
-        if not (residual_mask is None or residual_mask is False):
+        if residual_mask is not None and residual_mask is not False:
             image = np.ma.MaskedArray(image, residual_mask)
 
         residuals = model.residuals(params, image)
@@ -80,9 +80,7 @@ def plot_modelled_image(model, image, params, seg=None, residual_mask=False,
         im.ax.text(0, -0.45, s.expandtabs(),
                    transform=im.ax.transAxes, fontsize=12)
 
-    # segmentation
-    seg = seg or getattr(model, 'seg', None)
-    if seg:
+    if seg := seg or getattr(model, 'seg', None):
         if overlay_segments:
             axes[1].add_collection(seg.get_contours())
             seg.draw_labels(axes[1])
@@ -209,7 +207,7 @@ def plot_cross_section(model, p, data, grid=None, std=None, yscale=1,
     def gof_text(stat, name, xpos=0):
         v = stat(p, data, grid, std)
         s = sci_repr(v, latex=True).strip('$')
-        txt = '$%s = %s$' % (name, s)
+        txt = f'${name} = {s}$'
         # print(txt)
         return axTxt.text(xpos, 0, txt, fontsize=14, va='top',
                           transform=axTxt.transAxes)

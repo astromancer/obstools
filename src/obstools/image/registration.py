@@ -298,10 +298,7 @@ class MultivariateGaussians(Model):
         return self._check_params(p), self._check_grid(xy)
 
     def _check_params(self, p):
-        if (p is None) or (p == ()):
-            # default parameter values for evaluation
-            return np.zeros(self.dof)
-        return p
+        return np.zeros(self.dof) if (p is None) or (p == ()) else p
 
     def _check_grid(self, grid):
         #
@@ -373,9 +370,8 @@ class MultivariateGaussians(Model):
         grid = duplicate_if_scalar(grid, self.n_dims, raises=False)
         if grid.size == self.n_dims:
             grid = self._auto_grid(grid)
-        else:
-            if (grid.ndim != 3) or (grid.shape[-1] != self.n_dims):
-                raise ValueError('Invalid grid')
+        elif (grid.ndim != 3) or (grid.shape[-1] != self.n_dims):
+            raise ValueError('Invalid grid')
 
         # compute model values
         z = self((), grid)
@@ -691,15 +687,13 @@ def display_multitab(images, fovs, params, coords):
     import more_itertools as mit
 
     ui = MplMultiTab()
-    for i, (image, fov, p, yx) in enumerate(zip(images, fovs, params, coords)):
+    for image, fov, p, yx in zip(images, fovs, params, coords):
         xy = yx[:, ::-1]  # roto_translate_yx(yx, np.r_[-p[:2], 0])[:, ::-1]
         ex = mit.interleave((0, 0), fov)
         im = ImageDisplay(image, extent=list(ex))
         im.ax.plot(*xy.T, 'kx', ms=5)
         ui.add_tab(im.figure)
         plt.close(im.figure)
-        # if i == 1:
-        #    break
     return ui
 
 
@@ -1102,20 +1096,18 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         out_new = (d > d_cut)
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
 
-        changed = (outliers != out_new).any()
-        if changed:
-            out = out_new
-            xym[out] = np.ma.masked
-            n_out = out.sum()
-
-            if n_out / n_points > 0.5:
-                raise Exception('Too many outliers!!')
-
-            logger.info('Ignoring %i/%i (%.1f%%) values with |δr| > %.3f',
-                        n_out, n_points, (n_out / n_points) * 100, d_cut)
-        else:
+        if not (changed := (outliers != out_new).any()):
             break
 
+        out = out_new
+        xym[out] = np.ma.masked
+        n_out = out.sum()
+
+        if n_out / n_points > 0.5:
+            raise Exception('Too many outliers!!')
+
+        logger.info('Ignoring %i/%i (%.1f%%) values with |δr| > %.3f',
+                    n_out, n_points, (n_out / n_points) * 100, d_cut)
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
 
@@ -1385,7 +1377,7 @@ class SkyImage(object):
             frame_kws = dict(fc='none', lw=1, ec='0.5',
                              alpha=kws.get('alpha'))
             if isinstance(frame, dict):
-                frame_kws.update(frame)
+                frame_kws |= frame
 
             *xy, theta = p
             frame = Rectangle(np.subtract(xy, half_pixel_size), *urc,
@@ -1652,11 +1644,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # message
         cls.logger.info('Aligning %i images on image %i', n, ridx)
 
-        if len(angles):
-            angles = np.array(angles) - angles[ridx]  # relative angles
-        else:
-            angles = np.zeros(n)
-
+        angles = np.array(angles) - angles[ridx] if len(angles) else np.zeros(n)
         reg = cls(**find_kws)
         for i in indices:
             reg(images[i], fovs[i], angles[i], plot=plot)
@@ -2566,8 +2554,7 @@ class ImageRegistrationDSS(ImageRegister):
     def get_rotation(self):
         # transform pixel to ICRS coordinate
         h = self.hdu[0].header
-        theta = np.pi / 2 - np.arctan(-h['CD1_1'] / h['CD1_2'])
-        return theta
+        return np.pi / 2 - np.arctan(-h['CD1_1'] / h['CD1_2'])
 
     # todo: def proper_motion_correction(self, coords):
 

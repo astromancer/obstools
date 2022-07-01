@@ -153,11 +153,7 @@ class GaussianLikelihood(Likelihood):
         #               point
         #
 
-        if sigma is None:
-            sigma_term = 0
-        else:
-            sigma_term = np.log(sigma).sum()
-
+        sigma_term = 0 if sigma is None else np.log(sigma).sum()
         return (- data.size * LN2PI_2
                 # # TODO: einsum here for mahalanobis distance term
                 - 0.5 * self.wrss(p, data, grid, stddev)
@@ -427,8 +423,13 @@ class Model(OptionallyNamed, LoggingMixin):
         # then the formula for AICc is as follows.
         k = len(p)
         n = data.size
-        return 2 * (k + (k * k + k) / (n - k - 1) -
-                    self.ln_likelihood(p, data, *args, **kws))
+        return 2 * (
+            (
+                k
+                + (k**2 + k) / (n - k - 1)
+                - self.ln_likelihood(p, data, *args, **kws)
+            )
+        )
         # "If the assumption that the model is univariate and linear with normal
         # residuals does not hold, then the formula for AICc will generally be
         # different from the formula above. For some models, the precise formula
@@ -517,14 +518,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
         # nested parameters: flatten prior to minimize, re-structure post-fit
         # TODO: move to HandleParameters Mixin??
-        if isinstance(p0, Parameters):
-            p0 = p0.flattened
-        else:
-            # need to convert to float since we are using p0 dtype to type
-            # cast the results vector for structured parameters and user might
-            # have passed an array-like of integers
-            p0 = p0.astype(float)
-
+        p0 = p0.flattened if isinstance(p0, Parameters) else p0.astype(float)
         # check that call works.  This check here so that we can identify
         # potential problems with the function call / arguments before entering
         # the optimization routine. Any potential errors that occur here will
@@ -582,8 +576,7 @@ class Model(OptionallyNamed, LoggingMixin):
             msg = result.message
 
         if success:
-            unchanged = np.allclose(p, p0)
-            if unchanged:
+            if unchanged := np.allclose(p, p0):
                 # TODO: maybe also warn if any close ?
                 self.logger.warning('"Converged" parameter vector is '
                                     'identical to initial guess: %s', p0)
@@ -962,12 +955,7 @@ class CompoundModel(Model):
         if keys is all:
             keys = self.models.keys()
 
-        dtype = []
-        for key in keys:
-            dtype.append(
-                self._adapt_dtype(self.models[key], ())
-            )
-        return dtype
+        return [self._adapt_dtype(self.models[key], ()) for key in keys]
 
     def _adapt_dtype(self, model, out_shape):
         # adapt the dtype of a component model so that it can be used with
@@ -976,20 +964,15 @@ class CompoundModel(Model):
         # used for more than one key (label) to be represented by a 2D array.
 
         # make sure size in a tuple
-        if out_shape == 1:
-            out_shape = ()
-        else:
-            out_shape = int2tup(out_shape)
-
+        out_shape = () if out_shape == 1 else int2tup(out_shape)
         dt = model.get_dtype()
-        if len(dt) == 1:  # simple model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, out_shape + dof
-        else:  # compound model
+        if len(dt) != 1:
             # structured dtype - nest!
             return model.name, dt, out_shape
+        name, base, dof = dt[0]
+        dof = int2tup(dof)
+        # extend shape of dtype
+        return model.name, base, out_shape + dof
 
     def _results_container(self, keys=all, dtype=None, fill=np.nan,
                            shape=(), type_=Parameters):
