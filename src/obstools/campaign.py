@@ -16,6 +16,7 @@ from collections import UserList, abc
 
 # third-party
 import numpy as np
+from loguru import logger
 from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
@@ -23,16 +24,17 @@ from astropy.io.fits.hdu.base import _BaseHDU
 # local
 import docsplice as doc
 from motley.table import AttrTable
-from recipes import bash, caching, io
-from recipes.oo import SelfAware, null
-from recipes.logging import LoggingMixin
-from recipes.string import plural, strings
-from recipes.string.brackets import braces
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.grouping import AttrGrouper, Groups
 from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
+from recipes.dicts import groupby
+from recipes import bash, caching, io
+from recipes.oo import SelfAware, null
+from recipes.logging import LoggingMixin
+from recipes.string.brackets import braces
+from recipes.string import pluralize, strings
 
 # relative
 from . import _hdu_hasher, cachePaths
@@ -343,14 +345,17 @@ class PhotCampaign(PPrintContainer,
         -------
         PhotCampaign
         """
-        kws.setdefault('loader', _BaseHDU.readfrom)
+        
         files = files_or_dir
+        # original = files_or_dir
 
         # resolve input from text file with list of file names
         if isinstance(files, str) and files.startswith('@'):
+            logger.debug('Loading from plain text list: {!r}.', files[1:])
             files = io.read_lines(files.lstrip('@'))
 
         if isinstance(files, (str, Path)):
+            logger.debug("Loading: '{!s}'", files) # files.relative_to(files.parent.parent))
             if Path(files).is_file():
                 files = [files]
             else:
@@ -371,18 +376,23 @@ class PhotCampaign(PPrintContainer,
         if not isinstance(files, (abc.Container, abc.Iterable)):
             raise TypeError(f'Invalid input type {type(files)} for `files`.')
 
-        obj = cls.load_files(files, **kws)
-        if len(obj) == 0:
+        loader = kws.pop('loader', _BaseHDU.readfrom)
+        allow_empty = kws.pop('allow_empty')
+        obj = cls.load_files(files, loader, allow_empty=True, **kws)
+
+        if len(obj) == 0 and not allow_empty:
             # although we could load an empty run here, least surprise
             # dictates throwing an error
-            raise ValueError(f'Could not resolve any valid files with '
-                             f'extensions: {extensions} from input '
-                             f'{files_or_dir!r}.')
+            raise ValueError(
+                f'Could not resolve any valid files with extensions: '
+                f'{extensions} from input {type(files_or_dir).__name__}: '
+                f'{str(files_or_dir)!r}.')
 
         return obj
 
     @classmethod
-    def load_files(cls, filenames, loader=_BaseHDU.readfrom, **kws):
+    def load_files(cls, filenames, loader=_BaseHDU.readfrom, allow_empty=False,
+                   **kws):
         """
         Load data from (list of) filename(s).
 
@@ -395,21 +405,19 @@ class PhotCampaign(PPrintContainer,
 
         """
 
-        # cls.logger.debug('Loading {:d} files', len(filenames))
-
         # sanitize filenames:  input filenames may contain None - remove these
-        filenames = filter(None, filenames)
-        hdus = []
-        said = False
-        i = 0
         # note sort filenames here by alphanumeric order
-        for i, name in enumerate(sorted(filenames), 1):
-            if name is None:
-                if not said:
-                    cls.logger.info('Filtering filenames that are `None`.')
-                    said = True
-                continue
+        files = groupby(sorted(filenames), bool)
+        if False in files:
+            cls.logger.info('Filtering `None` from filename list.')
 
+        filenames = files.get(True, ())
+        if not (filenames or allow_empty):
+            raise ValueError('No data found.')
+
+        i = 0
+        hdus = []
+        for i, name in enumerate(sorted(filenames), 1):
             # load the HDU
             cls.logger.debug('Loading {!r}.', str(name))
 
@@ -419,18 +427,17 @@ class PhotCampaign(PPrintContainer,
 
                 # load file
                 hdu = loader(name, **kws)
+                hdus.append(hdu)
 
                 # handle warnings
                 if warnings:
-                    get_msg = op.attrgetter('message')
                     cls.logger.warning(
                         'Loading file: {!r} triggered the following {}:\n{}',
-                        name, plural("warning", warnings),
+                        name, pluralize('warning', warnings),
                         '\n'.join(strings(map(get_msg, warnings)))
                     )
-            hdus.append(hdu)
-
-        cls.logger.success('Loaded {:d} {:s}.', i, plural('file', hdus))
+        if i:
+            cls.logger.success('Loaded {:d} {:s}.', i, pluralize('file', hdus))
         return cls(hdus)
 
     def __init__(self, hdus=None):
