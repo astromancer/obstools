@@ -19,7 +19,7 @@ from pyxides.vectorize import Vectorized, AttrVector
 from scrawl.imagine import ImageDisplay
 from recipes.oo import SelfAware
 from recipes.pprint import qualname
-from recipes.misc import duplicate_if_scalar
+from recipes.utils import duplicate_if_scalar
 from recipes.dicts import pformat, AttrDict as ArtistContainer
 
 # relative

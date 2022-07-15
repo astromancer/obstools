@@ -25,7 +25,7 @@ from pyxides.vectorize import vdict
 from recipes.dicts import pformat
 from recipes.functionals import echo
 from recipes.logging import LoggingMixin
-from recipes.misc import duplicate_if_scalar
+from recipes.utils import duplicate_if_scalar
 
 # relative
 from ... import io

@@ -45,7 +45,7 @@ from recipes.string import indent
 from recipes.lists import split_like
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
-from recipes.misc import duplicate_if_scalar
+from recipes.utils import duplicate_if_scalar
 from scrawl.imagine import ImageDisplay
 
 # relative

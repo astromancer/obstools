@@ -12,7 +12,7 @@ from astropy.utils import lazyproperty
 # local
 from recipes.caching import Cached as cached
 from recipes.logging import LoggingMixin
-from recipes.misc import duplicate_if_scalar
+from recipes.utils import duplicate_if_scalar
 
 # relative
 from .. import _hdu_hasher, cachePaths
