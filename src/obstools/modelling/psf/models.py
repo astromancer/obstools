@@ -1,6 +1,5 @@
 
 
-
 # std
 from warnings import warn
 from collections import Callable
@@ -13,21 +12,17 @@ from scipy.optimize import leastsq
 
 # local
 from obstools.modelling.core import Model
-from recipes.lists import find_missing_numbers
-
-
+from recipes.lists import missing_integers
 
 
 # from recipes.logging import LoggingMixin
 
 
 # TODO:  use astropy.models!!!!??? // lmfit.models
-# ****************************************************************************************************
 def constant(p, grid):
     return p[0]
 
 
-# ****************************************************************************************************
 def circularGaussian(p, grid):  # todo: sphericalGaussian (nd)
     """Circular Gaussian function for fitting star profiles."""
     # relatively fast gaussian evaluation for fitting
@@ -35,6 +30,7 @@ def circularGaussian(p, grid):  # todo: sphericalGaussian (nd)
     yxm = grid - p[1::-1, np.newaxis, np.newaxis]
     r2 = (yxm * yxm).sum(0)  # squared radial distance from centre
     return z0 * np.exp(-a * r2) + d
+
 
 def circularGaussianMean0(p, r2):  # todo: sphericalGaussian (nd)
     """Circular Gaussian function for fitting star profiles."""
@@ -44,12 +40,12 @@ def circularGaussianMean0(p, r2):  # todo: sphericalGaussian (nd)
     # r2 = (yxm * yxm).sum(0)  # squared radial distance from centre
     return z0 * np.exp(-a * r2)
 
+
 def radialGaussianPSF(p, r2):
     a, *z0 = p
     return z0 * np.exp(-a * r2)
 
 
-# ****************************************************************************************************
 # def gaussian2D(p, grid):
 #   """Elliptical Gaussian function for fitting star profiles."""
 #   x0, y0, z0, a, b, c, d = p
@@ -57,8 +53,10 @@ def radialGaussianPSF(p, r2):
 #   xm, ym = x-x0, y-y0
 #   return z0 * np.exp(-(a*xm**2 - 2*b*xm*ym + c*ym**2)) + d
 
-def gaussian2D(p, grid):
-    """Elliptical Gaussian function for fitting star profiles."""
+def gaussian2d(p, grid):
+    """
+    Elliptical Gaussian function for fitting star profiles.
+    """
 
     # recasting in terms of (a, b, c) parameters (instead of sigma)
     # yields faster computation times and better convergence results
@@ -69,15 +67,16 @@ def gaussian2D(p, grid):
     return z0 * np.exp(-(a * yxm2[1] - 2 * b * yxm[0] * yxm[1] + c * yxm2[0])) + d
     # TODO check if einsum faster!!!
 
+
 # alias
-ellipticalGaussian = gaussian2D
+gauss2d = gauss2D = gaussian2D = bivariate_normal = gaussian2d
 
 # from scipy.stats import multivariate_normal
 # def gaussian2D(p, grid):
 # """Elliptical Gaussian function for fitting star profiles."""
 # _, _, z0, a, b, c, d = p
 # detP = (a*c + b*b) * 4
-##inverse of precision matrix
+# inverse of precision matrix
 # covm = (1 / detP) * np.array([[c,   b],
 # [b,   a]]) * 2
 
@@ -108,7 +107,6 @@ def no_nan(p):
     return ~np.isnan(p).any()
 
 
-# ****************************************************************************************************
 class PSF(Model):
     """Class that implements the point source function."""
 
@@ -148,7 +146,8 @@ class PSF(Model):
             ix = np.asarray(to_cache).astype(int)
 
         self.to_cache = ix
-        self.to_guess = np.array(find_missing_numbers(np.r_[-1, ix, npar]))  # indeces of uncached params
+        self.to_guess = np.array(missing_integers(
+            np.r_[-1, ix, npar]))  # indeces of uncached params
         # self.default_cache = #defpar[ix]
 
         self.validations = [no_nan]
@@ -187,7 +186,9 @@ class PSF(Model):
 
         shape = data.shape
         # print(shape)
-        bgix = np.multiply(shape, edgefraction).round().astype(int)  # use 10% edge pixels mean as bg estimate
+
+        # use 10% edge pixels mean as bg estimate
+        bgix = np.multiply(shape, edgefraction).round().astype(int)
         subset = np.r_[data[tuple(np.mgrid[:bgix[0], :shape[1]])].ravel(),
                        data[tuple(np.mgrid[:shape[0], :bgix[1]])].ravel()]
         #subset = subset[~np.isnan(subset)]
@@ -238,10 +239,9 @@ class PSF(Model):
         else:
             self.validations.append(func)
 
-                    # def set_bounds(self):
+            # def set_bounds(self):
 
 
-# ****************************************************************************************************
 class ConstantBG(PSF):
     name = 'bg'
     _ix_not_neg = [0]
@@ -262,7 +262,8 @@ class ConstantBG(PSF):
     # def get_aperture_params
 
 # TODO: class Gaussian parent class
-# ****************************************************************************************************
+
+
 class CircularGaussianPSF(PSF):
     name = 'gauss5'
 
@@ -286,7 +287,8 @@ class CircularGaussianPSF(PSF):
 
         # location
         if grid is None:
-            y0, x0 = np.divide(data.shape, 2)  # assumes the peak is roughly in the center of the data array
+            # assumes the peak is roughly in the center of the data array
+            y0, x0 = np.divide(data.shape, 2)
         else:
             y0, x0 = grid[0, :, 0].mean(), grid[1, 0, :].mean()
 
@@ -340,7 +342,7 @@ class CircularGaussianPSF(PSF):
         fwhm = self.get_fwhm(p)
         return np.r_[self.get_coo(p), fwhm, fwhm, 0]
 
-            # def validate(self, p, window):
+        # def validate(self, p, window):
         #     p = np.asarray(p)
         #     w2 = np.divide(window, 2)
         #     nans = np.isnan(p).any()                    # nans are bad
@@ -348,7 +350,7 @@ class CircularGaussianPSF(PSF):
         #     badcoo = np.any(np.abs(p[:2] - w2) >= w2)   # center coordinates outside of grid - unphysical
         #     return ~(badcoo | negpars | nans)
 
-            # def reparameterize(self, p):
+        # def reparameterize(self, p):
         #     #reparameterize to more physically meaningful quantities
         #     _, _, z0, a, _ = p
         #     sigma               = np.sqrt(2*a)
@@ -356,7 +358,6 @@ class CircularGaussianPSF(PSF):
         #     par_alt             =
         #
         #     return par_alt
-
 
     # def reparameterize(self, p):
     #     """
@@ -374,8 +375,6 @@ class CircularGaussianPSF(PSF):
     #     return p[0], p[1], sigma, 0, 0, 0
 
 
-
-# ****************************************************************************************************
 class GaussianPSF(CircularGaussianPSF):
     # TODO: option to pass angle, semi-major, semi-minor; or covariance matrix; volume?
     """ 7 param 2D Elliptical Gaussian over constant background"""
@@ -410,8 +409,7 @@ class GaussianPSF(CircularGaussianPSF):
         ratio = min(sigx, sigy) / max(sigx, sigy)
         ellipticity = np.sqrt(1 - ratio ** 2)
         fwhm = self.get_fwhm(p)
-        par_alt = sigx, sigy, cov, theta, ellipticity, fwhm
-        return par_alt
+        return sigx, sigy, cov, theta, ellipticity, fwhm
 
     def integrate(self, p):
         """
@@ -461,7 +459,8 @@ class GaussianPSF(CircularGaussianPSF):
 
         fwhm = self.get_fwhm(p)
         counts = self.integrate(p)
-        sigx, sigy = 1 / (2 * a), 1 / (2 * c)  # standard deviation along the semimajor and semiminor axes
+        # standard deviation along the semimajor and semiminor axes
+        sigx, sigy = 1 / (2 * a), 1 / (2 * c)
         ratio = min(a, c) / max(a, c)  # Ratio of minor to major axis of Gaussian kernel
         theta = 0.5 * np.arctan2(-b, a - c)  # rotation angle of the major axis in sky plane
         ellipticity = np.sqrt(1 - ratio ** 2)
@@ -543,7 +542,7 @@ class GaussianPSF(CircularGaussianPSF):
     def get_aperture_params(self, p):
         return np.r_[self.get_coo(p), self.get_sigma_xy(p), self.get_theta(p)]
 
-            # def validate(self, p, window):
+        # def validate(self, p, window):
         #     p = np.asarray(p)
         #     w2 = np.divide(window, 2)
         #     nans = np.isnan(p).any()                    # nans are bad
@@ -551,7 +550,7 @@ class GaussianPSF(CircularGaussianPSF):
         #     badcoo = np.any(np.abs(p[:2] - w2) >= w2)      # center coordinates outside of grid - unphysical
         #     return ~(badcoo | negpars | nans)
 
-            # def jacobian(self, p, X, Y):
+        # def jacobian(self, p, X, Y):
         # """ """
         # x0, y0, z0, a, b, c, d = p
         # Xm = X-x0
@@ -561,7 +560,7 @@ class GaussianPSF(CircularGaussianPSF):
         # -(X-x0)**2 * self(p, X, Y),
         # -2*(X-x0)*(Y-y0)
 
-            # @staticmethod
+        # @staticmethod
         # def radial(p, r):
         #     #WARNING: does this make sense????
         #     """
@@ -727,7 +726,7 @@ class DiscretizedGaussian():  # GaussianPSF??
     def rss(self, p, data, grid):
         return np.square(self(p, grid) - data)
 
-            # def Gaussian(p, x):
+        # def Gaussian(p, x):
         # """Gaussian function for fitting radial star profiles"""
         # A, b, mx = p
         # return A*np.exp(-b*(x-mx)**2 )
@@ -739,7 +738,6 @@ def Moffat(p, x, y):
     return z0 * (1 + ((x - x0) ** 2 + (y - y0) ** 2) / (a * a)) ** -b + c
 
 
-# ****************************************************************************************************
 class StarFit:
     # TODO: Kernel Density Estimation... or is this too slow??
     def __init__(self, psf=None, algorithm=None, caching=True, hints=True,
@@ -796,7 +794,6 @@ class StarFit:
         # pyqtRemoveInputHook()
         # embed()
         # pyqtRestoreInputHook()
-
 
         # Y, X = grid
         args = data, grid

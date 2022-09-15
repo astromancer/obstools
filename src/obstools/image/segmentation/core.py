@@ -22,6 +22,7 @@ from photutils.segmentation import SegmentationImage
 # local
 from motley.image import AnsiImage
 from pyxides.vectorize import vdict
+from recipes import api
 from recipes.dicts import pformat
 from recipes.functionals import echo
 from recipes.logging import LoggingMixin
@@ -299,7 +300,7 @@ class SliceDict(vdict):
         super().__init__()
         kws.update(mapping)
         for k, v in kws.items():
-            self[k] = v  # ensure item conversion
+            self[k] = v  # ensures item conversion in `__setitem__`
 
     def __setitem__(self, key, value):
         # convert items to namedtuple so we can later do things like
@@ -355,7 +356,7 @@ class SliceDict(vdict):
     #                         for s, sz in zip(sl, self.seg.shape)]
     #     return sizes
 
-    def grow(self, labels, increment=1, clip=False):
+    def extend(self, labels, increment=1, clip=False):
         """
         Increase the size of each slice in either / both  directions by an
         increment.
@@ -367,7 +368,7 @@ class SliceDict(vdict):
         urc = np.add(self.urc(labels), increment).astype(int)
         llc = np.add(self.llc(labels), -increment).astype(int)
         if clip:
-            urc = urc.clip(None, duplicate_if_scalar(clip))
+            urc = urc.clip(None, duplicate_if_scalar(clip)) # TODO:.parent.shape
             llc = llc.clip(0)
 
         return [tuple(slice(*i) for i in _)
@@ -626,7 +627,7 @@ def radial_source_profile(image, seg, labels=None):
     com = seg.com(image, labels)
     grid = np.indices(image.shape)
     profiles = []
-    for i, (sub, g) in enumerate(seg.coslice(image, grid, flatten=True,
+    for i, (sub, g) in enumerate(seg.cutouts(image, grid, flatten=True,
                                              labels=labels)):
         r = np.sqrt(np.square(g - com[i, None].T).sum(0))
         profiles.append((r, sub))
@@ -944,7 +945,7 @@ class SegmentedImage(SegmentationImage,     # base
         s.update(zip(self.labels, SegmentationImage.slices.fget(self)))
         return SliceDict(s)
 
-    def sliced(self, label):  # cutout
+    def sliced(self, label):
         """
         Shorthand for
         >>> seg.data[seg.slices[label]]
@@ -970,7 +971,7 @@ class SegmentedImage(SegmentationImage,     # base
         return self.get_widths()
 
     def get_widths(self, labels=None):
-        return self._get_hw(labels, 0)
+        return self._get_hw(labels, 1)
 
     def _get_hw(self, labels, i):
         l = self.shape[::-1][i]
@@ -984,11 +985,8 @@ class SegmentedImage(SegmentationImage,     # base
 
     @lazyproperty
     def max_label(self):
-        if self.labels.size:
-            return super().max_label
-
         # otherwise `np.max` borks with empty sequence
-        return 0
+        return super().max_label if self.labels.size else 0
 
     def make_cmap(self, background_color='#000000', seed=seed):
         # this function fails for all zero data since `make_random_cmap`
@@ -1046,9 +1044,8 @@ class SegmentedImage(SegmentationImage,     # base
         if isinstance(labels, abc.Hashable):
             # interpret as a group label
             if labels not in self.groups:
-                raise ValueError('Could not interpret object %r as a set of '
-                                 'labels, or as a key to any label group.' %
-                                 labels)
+                raise ValueError(f'Could not interpret object {labels!r} as a '
+                                 'set of labels, or as a key to any label group.')
 
             labels = self.groups[labels]
 
@@ -1080,7 +1077,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         invalid = np.setdiff1d(labels, valid)
         if len(invalid):
-            raise ValueError('Invalid label(s): %s' % str(tuple(invalid)))
+            raise ValueError(f'Invalid label(s): {tuple(invalid)}')
 
         return labels
 
@@ -1136,18 +1133,15 @@ class SegmentedImage(SegmentationImage,     # base
             labels = np.setdiff1d(labels, ignore_labels)
         return self.data[None] == labels[:, None, None]
 
-    # def to_bool(self, labels=None, ignore_labels=()):
-    #
-    #     return self.to_bool_3d(labels, ignore_labels).any(0)
-
     @classmethod
     def from_binary(cls, array):
-        data, n_obj = ndimage.label(array)
+        # data, n_obj
+        data, _ = ndimage.label(array)
         return cls(data)
 
     # aliases
     # from_boolean = from_bool = from_binary
-    as_mask = to_binary  # to_mask = to_boolean = to_bool =
+    as_mask = to_boolean = to_binary  # to_mask = to_bool
 
     def mask_image(self, image, labels=None, ignore_labels=()):
         """
@@ -1278,8 +1272,8 @@ class SegmentedImage(SegmentationImage,     # base
         -------
 
         """
-        for label in self.resolve_labels(labels):
-            yield self.slices[label]
+        for _, cutout in self.enum_slices(labels):
+            yield cutout
 
     def enum_slices(self, labels=None):
         """
@@ -1291,32 +1285,40 @@ class SegmentedImage(SegmentationImage,     # base
 
     def iter_segments(self, image, labels=None):
         """
-        Yields labelled sub-regions of the image sequentially
+        Yields flattened sub-regions of the image sequentially by label.
 
         Parameters
         ----------
         image
         labels
 
-        Returns
+        Yields
         -------
 
         """
-        yield from self.coslice(image, labels=labels, flatten=True)
+        yield from self.cutouts(image, labels=labels, flatten=True)
 
-    def coslice(self, *arrays, labels=None, masked=False, flatten=False,
-                labelled=False):
+    @api.synonyms(
+        {'enum(erate)?':      'labelled',
+         'mask(ed)':          'masked',
+         'flat(ten(ed)?)?':   'flatten'},
+        action=None
+    )
+    def cutouts(self, *arrays, labels=None, masked=False, flatten=False,
+                labelled=False, extend=0):
         """
         Yields labelled sub-regions of multiple arrays sequentially as tuple of
         (optionally masked) arrays.
 
         Parameters
         ----------
-        arrays: tuple of arrays
-            May contain None, in which case None is returned in the same
-            position instead of the sliced sub-array
+        arrays: One or more ndarray(s)
+            Arrays can have any dimensionality greater or equal 2 - cutouts are
+            made along the last 2 dimensions. May contain None, in which case
+            None is returned in the same position instead of the sliced
+            sub-array. 
         labels: array-like
-            Sequence of integer labels
+            Sequence of integer labels.
         masked: bool or sequence of ints
             If True:
                 For each cutout, mask all "background" pixels (i.e. those
@@ -1328,16 +1330,16 @@ class SegmentedImage(SegmentationImage,     # base
                  remaining arrays in the sequence will be returned masked:
                  eg: (4, ...) means mask all arrays beyond the fourth.
             If none of the above:
-                no masking is done, cutouts are `np.ndarray`
+                No masking is done, resulting image cutouts are `np.ndarray`.
         flatten: bool
-            Yield flattened arrays of data corresponding to label instead of a
-            masked_array. This option is here since it is faster to check the
-            sub-array labels than the entire frame if the slices have
-            already been calculated.
-            Note that both `mask` and `flatten` cannot be simultaneously True
-             and will raise a ValueError
+            Yield flattened 1D arrays of data corresponding to label instead of
+            a masked_array. This option is here since it is faster to check the
+            sub-array labels than the entire frame if the slices have already
+            been calculated. Note that both `mask` and `flatten` cannot be
+            simultaneously True and will raise a ValueError.
         labelled:
-            enumerate with `label` value
+            Each (tuple of) cutout(s) is enumerate with `label` value in the
+            fashion of the builtin enumerate.
 
 
         Yields
@@ -1359,8 +1361,7 @@ class SegmentedImage(SegmentationImage,     # base
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
         if flags.any() and flatten:
-            raise ValueError(
-                "Use either `masked` or `flatten`. Can't do both.")
+            raise ValueError("Use either `masked` or `flatten`. Can't do both.")
 
         # function that yields the result. neat little trick avoid unit tuples
         unpack = (next if n == 1 else tuple)
@@ -1370,15 +1371,22 @@ class SegmentedImage(SegmentationImage,     # base
         if flatten:
             flags[:] = True
 
-        for label, section in self.enum_slices(labels):
+        if extend := int(extend):
+            labels = self.resolve_labels(labels)
+            itr = zip(labels, self.slices.extend(labels, extend, clip=self.shape))
+        else:
+            itr = self.enum_slices(labels)
+
+        for label, section in itr:
             # NOTE this propagates values that are `None` in `arrays` tuple
-            cuts = (
-                _2d_slicer(a, section,
-                           self.masks[label] if flag else None,
-                           flatten)
-                for a, flag in zip(arrays, flags)
-            )
-            yield yielder(label, unpack, cuts)
+            cutouts = (_2d_slicer(_, section,
+                                  self.masks[label] if flag else None,
+                                  flatten)
+                       for _, flag in zip(arrays, flags))
+            yield yielder(label, unpack, cutouts)
+
+    # alias
+    coslice = cutout = cutouts
 
     # Image methods
     # --------------------------------------------------------------------------
@@ -1438,10 +1446,10 @@ class SegmentedImage(SegmentationImage,     # base
         # this label will not be used for statistic computation
         return seg_data
 
-    def thumbnails(self, image=None, labels=None, masked=False,
+    def thumbnails(self, image=None, labels=None, masked=False, extend=0,
                    same_size=False):
         """
-        Thumbnail cutout images based on segmentation
+        Thumbnail cutout images based on segmentation.
 
         Parameters
         ----------
@@ -1456,11 +1464,15 @@ class SegmentedImage(SegmentationImage,     # base
         data = self.data if image is None else image
         self._check_input_data(data)
         if not same_size:
-            return list(self.coslice(data, labels=labels, masked=masked))
+            return list(self.cutouts(data, labels=labels, masked=masked, extend=extend))
 
+        if labels is None:
+            labels = self.resolve_labels()
+
+        # TODO: move same_size to cutouts??
         sizes = self.slices.sizes(labels)
-        biggest = sizes.max(0)
-        slices = self.slices.grow(labels, (biggest - sizes) / 2, self.shape)
+        biggest = sizes.max(0) + int(extend)
+        slices = self.slices.extend(labels, (biggest - sizes) / 2, self.shape)
         if masked:
             mask = self.to_binary()
             return [np.ma.MaskedArray(image[_], mask[_]) for _ in slices]
@@ -1648,7 +1660,7 @@ class SegmentedImage(SegmentationImage,     # base
         counter = itt.count()
         com = np.empty((len(labels), image.ndim))
         # u  = np.empty((len(labels), image.ndim))  # uncertainty
-        for lbl, (seg, sub, msk, grd) in self.coslice(
+        for lbl, (seg, sub, msk, grd) in self.cutouts(
                 self.data, image, mask, grid, labels=labels, labelled=True):
             #
             i = next(counter)
@@ -1793,7 +1805,7 @@ class SegmentedImage(SegmentationImage,     # base
 
             # get annuli - test pixels
             b3 = self.to_annuli(0, 1, labels)
-            slices = self.slices.grow(labels, 2)
+            slices = self.slices.extend(labels, 2)
             for label, b, s in zip(labels, b3, slices):
                 bb = b[s]
                 pixels = mim[s][bb]
@@ -1982,7 +1994,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         grid = np.indices(self.shape)
         for i, (lbl, (sub, g)) in enumerate(
-                self.coslice(self.data, grid, labels=labels, labelled=True)):
+                self.cutouts(self.data, grid, labels=labels, labelled=True)):
             # print(i, lbl, )
             keep[i] = inside_segment(coords[i], sub, g)
             if not keep[i]:
@@ -2383,7 +2395,7 @@ class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
         return self.get_coord_grids()
 
     def get_coord_grids(self, labels):
-        return dict(self.coslice(self.grid, labels=self.resolve_labels(labels),
+        return dict(self.cutouts(self.grid, labels=self.resolve_labels(labels),
                                  flatten=True, labelled=True))
 
     # def get_coord_grids(self, labels=None):

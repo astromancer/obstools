@@ -229,7 +229,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
     @classmethod
     # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
-    def from_hdu(cls, hdu, sample_stat='median', depth=10, **kws):
+    def from_hdu(cls, hdu, sample_stat='median', depth=5, **kws):
         """
         Construct a SkyImage from an HDU by first drawing a sample image, then
         running the source detection algorithm on it.
@@ -266,6 +266,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
         # use `hdu.detect` so we cache the detections on the hdu filename
         seg = hdu.detect(sample_stat, depth, **kws)
+
         # pull the sample image (computed in the line above) from the cache
         image = hdu.get_sample_image(sample_stat, depth)
 
@@ -318,7 +319,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     # @lazyproperty
     # def xy(self):
     #     self.detect()
-    
+
     @property
     def fov(self):
         """Field of view"""
@@ -379,7 +380,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         return art
 
     plot = show
-    
+
     def label_image(self, ax, name='', **kws):
         return ax.text(*self.corners[-1], name,
                        rotation=np.degrees(self.angle),
@@ -413,7 +414,7 @@ class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorized):
         # check init parameters.  If `images` are arrays, also need `fovs`
         n = len(images)
         if n != len(fovs):
-            # items = self.checks_type(images, silent=True)
+            # items = self.check_all_types(images, silent=True)
             types = set(map(type, images))
 
             if len(types) == 1 and issubclass(types.pop(), SkyImage):

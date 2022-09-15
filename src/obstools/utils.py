@@ -2,6 +2,7 @@
 # std
 import re
 import numbers
+import contextlib
 import urllib.request
 import operator as op
 import functools as ftl
@@ -13,8 +14,8 @@ from loguru import logger
 from astropy.io import fits
 from astropy.time import Time
 from astropy.coordinates.name_resolve import NameResolveError
-from astropy.coordinates import (jparser, SkyCoord, EarthLocation,
-                                 UnknownSiteException)
+from astropy.coordinates import (EarthLocation, SkyCoord, UnknownSiteException,
+                                 jparser)
 
 # local
 from recipes import caching
@@ -24,7 +25,8 @@ from . import cachePaths as cached
 
 
 # from motley.profiling.timers import timer
-
+DMS = '\N{DEGREE SIGN}\N{PRIME}\N{DOUBLE PRIME}'
+HMS = 'ʰᵐˢ'
 
 RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
 
@@ -33,17 +35,12 @@ def prod(x):
     """
     Product of a list of numbers; ~40x faster vs np.prod for Python tuples.
     """
-    if len(x) == 0:
-        return 1
-
-    return ftl.reduce(op.mul, x)
+    return 1 if (len(x) == 0) else ftl.reduce(op.mul, x)
 
 
 def int2tup(v):
     """wrap integer in a tuple"""
-    if isinstance(v, numbers.Integral):
-        return v,
-    return tuple(v)
+    return (v, ) if isinstance(v, numbers.Integral) else tuple(v)
     # else:
     #     raise ValueError('bad item %s of type %r' % (v, type(v)))
 
@@ -53,10 +50,9 @@ def get_site(name):
     """resolve site name and cache the result"""
     if isinstance(name, EarthLocation):
         return name
-    try:
+
+    with contextlib.suppress(UnknownSiteException):
         return EarthLocation.of_site(name)
-    except UnknownSiteException:
-        pass
 
     # try resolve as an address. NOTE this will almost always return a
     # location, even for something that is obviously crap like 'Foo' or 'Moo'
@@ -130,12 +126,12 @@ def get_coords_named(name):
         logger.warning(
             'Coordinates for object {!r:} could not be retrieved due to the '
             'following exception: \n{:s}', name, str(err)
-            )
+        )
     else:
         if isinstance(coo, SkyCoord):
             logger.opt(lazy=True).info(
                 'The following ICRS J2000.0 coordinates were retrieved:\n{:s}',
-                lambda: ra_dec_string(coo, precision=2, sep=' ', pad=1)
+                lambda: ra_dec_string(coo)
             )
         return coo
 
@@ -185,13 +181,13 @@ def resolver(name):
 
 def convert_skycoords(ra, dec):
     """Try convert ra dec to SkyCoord"""
-    if ra and dec:
-        try:
-            return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
-        except ValueError:
-            logger.warning(
-                'Could not interpret coordinates: {:s}; {:s}', ra, dec
-                )
+    if not (ra and dec):
+        return
+
+    try:
+        return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
+    except ValueError:
+        logger.warning('Could not interpret coordinates: {:s}; {:s}', ra, dec)
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):
@@ -200,19 +196,19 @@ def retrieve_coords_ra_dec(name, verbose=True, **fmt):
     if coords is None:
         return None, None, None
 
-    default_fmt = dict(precision=2, sep=' ', pad=1)
-    fmt.update(default_fmt)
-    ra = coords.ra.to_string(unit='h', **fmt)
-    dec = coords.dec.to_string(unit='deg', alwayssign=1, **fmt)
-
-    return coords, ra, dec
+    return coords, *ra_dec_strings(coords, **{**dict(precision=1, pad=1), **fmt})
 
 
-def ra_dec_string(coords, **kws):
-    kws_ = dict(precision=2, sep=' ', pad=1)
-    kws_.update(**kws)
-    return (f'α = {coords.ra.to_string(unit="h", **kws_)}; '
-            f'δ = {coords.dec.to_string(unit="deg", alwayssign=1, **kws_)}')
+def ra_dec_string(coords, symbols='αδ', equal=' = ', join='; ', **kws):
+    # α '\N{GREEK SMALL LETTER ALPHA}'
+    # δ '\N{GREEK SMALL LETTER DELTA}'
+    return join.join(map(equal.join, zip(symbols, ra_dec_strings(coords, **kws))))
+
+
+def ra_dec_strings(coords, **kws):
+    kws = {**dict(precision=1, pad=True), **kws}
+    return (coords.ra.to_string(unit="h", sep=HMS, **kws),
+            coords.dec.to_string(unit="deg", sep=DMS, alwayssign=1, **kws))
 
 
 def get_skymapper_table(coords, bands, size=(10, 10)):
@@ -241,11 +237,10 @@ def get_skymapper_table(coords, bands, size=(10, 10)):
     data = np.array(data)
     t = Time(data[:, columns.index(b'mjd_obs')].astype(str), format='mjd')
 
-    logger.info('Found {:d} {:s}-band SkyMapper DR1 images for coordinates {:s}'
-                ' spanning dates {:s} to {:s}.',
-                len(data), bands,
-                ra_dec_string(coords, precision=2, sep=' ', pad=1),
-                t.min().iso.split()[0], t.max().iso.split()[0])
+    logger.opt(lazy=True).info('{}', lambda: 
+        f'Found {len(data):d} {bands}-band SkyMapper DR1 images for coordinates {ra_dec_string(coords)} '
+        f'spanning dates {t.min().iso.split()[0]} to {t.max().iso.split()[0]}.',
+        )
 
     return columns, data
 
@@ -265,8 +260,7 @@ def get_skymapper(coords, bands, size=(10, 10), combine=True,
 
     # retrieve data possibly from cache
     logger.info('Retrieving images...')
-    hdus = [_get_skymapper(url) for url in urls]
-    return hdus
+    return [_get_skymapper(url) for url in urls]  # hdus
 
 
 @caching.to_file(cached.sky)  # memoize for performance
@@ -316,8 +310,8 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
                      'quickv'
                      )  # TODO: module scope ?
     if server not in known_servers:
-        raise ValueError('Unknown server: %s.  Please select from: %s'
-                         % (server, str(known_servers)))
+        raise ValueError(f'Unknown server: {server!r}. '
+                         f'Please use one of the following: {known_servers}')
 
     # resolve size
     h, w = size  # FIXME: if number
@@ -340,12 +334,11 @@ def get_dss(server, ra, dec, size=(10, 10), epoch=2000):
         raw = html.read()
 
     # parse error message
-    error = RGX_DSS_ERROR.search(raw)
-    if error:
+    if error := RGX_DSS_ERROR.search(raw):
         raise STScIServerError(error[1])
 
     # log
-    logger.info("Retrieving {:.1f}' x {:.1f}' image for object at J{:.1f} "
+    logger.info("Retrieving {:.1f}′ x {:.1f}′ image for object at J{:.1f} "
                 "coordinates RA = {:.3f}; DEC = {:.3f} from {!r:}.",
                 h, w, epoch, ra, dec, server)
 

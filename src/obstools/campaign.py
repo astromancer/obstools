@@ -23,7 +23,7 @@ from astropy.io.fits.hdu.base import _BaseHDU
 
 # local
 import docsplice as doc
-from motley.table import AttrTable
+from motley.table.attrs import AttrTable
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.grouping import AttrGrouper, Groups
@@ -39,7 +39,6 @@ from recipes.string import pluralize, strings
 # relative
 from . import _hdu_hasher, cachePaths
 from .image.sample import ImageSamplerMixin
-from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
 from .image.detect import SourceDetection, SourceDetectionMixin
 
@@ -50,12 +49,15 @@ from .image.detect import SourceDetection, SourceDetectionMixin
 # TODO: # each item in this container should have  MultivariateTimeSeries
 #  containing changes of observed brightness (etc ...) over time
 
+# ---------------------------------------------------------------------------- #
+get_msg = op.attrgetter('message')
+
 
 def is_property(v):
     return isinstance(v, property)
 
+# ---------------------------------------------------------------------------- #
 
-# def now_hms
 
 class FilenameHelper:
     """
@@ -68,6 +70,8 @@ class FilenameHelper:
     def __str__(self):
         return str(self.path)
 
+    __repr__ = __str__
+
     @property
     def path(self):
         return self._path
@@ -79,6 +83,10 @@ class FilenameHelper:
     @property
     def stem(self):
         return str(self._path.stem)
+
+    @property
+    def basename(self):
+        return str(self._path.stem).split('.', 1)[0]
 
 
 class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
@@ -99,8 +107,7 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
 
     def common_root(self):
         parents = {p.parent for p in self.paths}
-        root = parents.pop()
-        if root:  # single root
+        if (root := parents.pop()):  # single root
             return root
         # multiple roots: return None
 
@@ -287,7 +294,7 @@ class CampaignType(SelfAware, ListOf):
 
 class PhotCampaign(PPrintContainer,
                    GlobIndexing,     # needs to be before `UserList` in mro
-                   CampaignType(_BaseHDU),
+                   CampaignType(_BaseHDU),  # pylint: disable=abstract-method
                    AttrGrouper,
                    Vectorized,
                    LoggingMixin):
@@ -325,7 +332,8 @@ class PhotCampaign(PPrintContainer,
 
     # Initialize pprint helper
     tabulate = AttrTable(
-        ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning'])
+        ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning']
+    )
 
     #
     @classmethod
@@ -351,7 +359,7 @@ class PhotCampaign(PPrintContainer,
         -------
         PhotCampaign
         """
-        
+
         files = files_or_dir
         # original = files_or_dir
 
@@ -361,7 +369,7 @@ class PhotCampaign(PPrintContainer,
             files = io.read_lines(files.lstrip('@'))
 
         if isinstance(files, (str, Path)):
-            logger.debug("Loading: '{!s}'", files) # files.relative_to(files.parent.parent))
+            logger.debug("Loading: '{!s}'", files)  # files.relative_to(files.parent.parent))
             if Path(files).is_file():
                 files = [files]
             else:
@@ -485,7 +493,7 @@ class PhotCampaign(PPrintContainer,
 
         return self.__class__(np.hstack((self.data, other.data)))
 
-    def coalign(self, sample_stat='median', depth=10, plot=False, **find_kws):
+    def coalign(self, sample_stat='median', depth=5, plot=False, **find_kws):
         """
         Perform image alignment internally for sample images from all stacks in
         this campaign by the method of point set registration.  This is
@@ -551,7 +559,7 @@ class PhotCampaign(PPrintContainer,
         # reg.data, _ = cosort(reg.order, reg.data)
         return reg
 
-    def _coalign(self, sample_stat='median', depth=10, primary=None,
+    def _coalign(self, sample_stat='median', depth=5, primary=None,
                  plot=False, **find_kws):
         # check
         assert not self.varies_by('telescope')  # , 'camera')
@@ -562,6 +570,7 @@ class PhotCampaign(PPrintContainer,
         # image with highest resolution if any, otherwise, just take the first.
         # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
 
+        # self.logger.debug('PRIMARY = {}', primary)
         reg = ImageRegister.from_hdus(self, sample_stat, depth, primary,
                                       **find_kws)
         reg.fit()
@@ -593,7 +602,7 @@ class PhotCampaign(PPrintContainer,
 
     @doc.splice(coalign, 'Parameters')
     def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
-                       sample_stat='median', depth=10, primary=None,
+                       sample_stat='median', depth=5, primary=None,
                        plot=False, **find_kws):
         """
         Align all the image stacks in this campaign with a survey image centred
@@ -606,7 +615,7 @@ class PhotCampaign(PPrintContainer,
 
         Parameters
         ----------
-        primary : int, default 0
+        primary : int, default None
             The index of the image that will be used as the reference image for
             the alignment. If `None`, the highest resolution image amongst the
             observations will be used.
@@ -653,7 +662,7 @@ class PhotCampaign(PPrintContainer,
         return dss
 
     def coalign_dss(self, fov=None, fov_stretch=1.2,
-                    sample_stat='median', depth=10, primary=0,
+                    sample_stat='median', depth=5, primary=None,
                     plot=False, **find_kws):
         return self.coalign_survey('dss', fov, fov_stretch, sample_stat, depth,
                                    primary, plot, **find_kws)
@@ -665,7 +674,8 @@ class PhotCampaign(PPrintContainer,
     @property
     def phot(self):
         # The photometry interface
-        from .core import PhotInterface
+        from .phot.core import PhotInterface
+
         return PhotInterface(self)
 
 
