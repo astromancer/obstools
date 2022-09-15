@@ -1,5 +1,5 @@
 """
-Radial pixel sweep / Moore's neighbour trace
+Radial pixel sweep / Moore's neighbour trace.
 """
 
 import itertools as itt
@@ -31,6 +31,15 @@ nix[tuple(moves.T)] = range(8)
 # cleanup module namespace
 del n, a, o
 
+# TODO: test:
+# b = np.array([[ 1,  1,  1,  1,  1,  1,  1],
+#               [ 1,  0,  1,  0,  1,  0,  1],
+#               [ 1,  1,  1,  1,  1,  0,  0],
+#               [ 0,  1,  0,  1,  0,  0,  0],
+#               [ 1,  1,  0,  0,  0,  0,  0],
+#               [ 1,  0,  1,  0,  1,  1,  1],
+#               [ 0,  1,  1,  0,  1,  0,  1],
+#               [ 1,  0,  0,  0,  1,  1,  1]])
 
 def trace_boundary(b, stop=int(1e4)):
     """

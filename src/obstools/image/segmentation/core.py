@@ -2229,15 +2229,15 @@ class SegmentedImage(SegmentationImage,     # base
         segments = []
         perimeter = []
         while b.any():
-            pixels, boundary, p = trace_boundary(b)
+            pixels, points, p = trace_boundary(b)
             # get outline image, fill it, difference original, repeat.
             # This will trace outer as well as inner boundaries for
             # segments with holes.
             tmp = np.zeros_like(b)
             tmp[tuple(pixels.T)] = True
-            b[ndimage.binary_fill_holes(tmp)] = False
+            b = np.logical_xor(b, ndimage.binary_fill_holes(tmp))
             #
-            segments.append((boundary + origin + offset)[:, ::-1])
+            segments.append((points + origin + offset)[:, ::-1])
             perimeter.append(p)
 
             if count > 10:
@@ -2281,13 +2281,14 @@ class SegmentedImage(SegmentationImage,     # base
         # if not 'colors' in kws:
         cmap = self.get_cmap(kws.pop('cmap', None))
 
-        # note: use PathPatch if you want to be able to hatch the regions.
-        #  at the moment you cannot hatch individual paths in PathCollection
+        # NOTE: use PathPatch if you want to be able to hatch the regions.
+        #  at the moment you cannot hatch individual paths in PathCollection.
         boundaries = self.get_boundaries(labels)
         contours, _ = zip(*boundaries.values())
 
         #
-        colors = np.fromiter(boundaries.keys(), int)
+        colors = mit.flatten([b] * len(c) for b, c in zip(boundaries, contours))
+        colors = np.fromiter(colors, int)
         kws.setdefault('colors', cmap(colors / colors.max()))
         return LineCollection(list(mit.flatten(contours)), **kws)
 
