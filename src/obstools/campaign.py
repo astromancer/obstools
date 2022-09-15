@@ -41,6 +41,7 @@ from . import _hdu_hasher, cachePaths
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
+from .image.detect import SourceDetection, SourceDetectionMixin
 
 
 # TODO: multiprocess generic methods
@@ -104,26 +105,18 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         # multiple roots: return None
 
 
-class HDUExtra(PrimaryHDU,
-               ImageSamplerMixin,
-               ImageCalibratorMixin,
-               LoggingMixin,
-               SourceDetectionMixin):
-    """
-    Some extra methods and properties that help PhotCampaign
-    """
+class SampleImageSourceDetection(SourceDetection):
 
-    #detect = SourceDetection('sigma_threshold')
-
-    @caching.to_file(cachePaths.detection, typed={'self': _hdu_hasher})
-    def detect(self,  stat='median', depth=5, snr=3, **kws):
+    @caching.to_file(cachePaths.detection,
+                     typed={'self': lambda s: _hdu_hasher(s.parent)})
+    def __call__(self, stat='median', depth=5, **kws):
         """
         Cached source detection for HDUs
 
         Parameters
         ----------
         stat : str, optional
-            [description], by default 'median'
+            Statistic to use, by default 'median'.
         depth : int, optional
             [description], by default 5
         snr : int, optional
@@ -138,8 +131,21 @@ class HDUExtra(PrimaryHDU,
         [type]
             [description]
         """
-        image = self.get_sample_image(stat, depth)
-        return super().detect(image, snr=snr, **kws)
+        # note: `get_sample_image` is cached
+        image = self.parent.get_sample_image(stat, depth)
+        return super().__call__(image, **kws)
+
+
+class HDUExtra(PrimaryHDU,
+               ImageSamplerMixin,
+               ImageCalibratorMixin,
+               LoggingMixin,
+               SourceDetectionMixin):
+    """
+    Some extra methods and properties that help PhotCampaign
+    """
+
+    detect = SampleImageSourceDetection('sigma_threshold')
 
     @property
     def file(self):
