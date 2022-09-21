@@ -20,7 +20,8 @@ from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage
 
 # local
-from motley.image import AnsiImage
+import motley
+import motley.image
 from pyxides.vectorize import vdict
 from recipes import api
 from recipes.dicts import pformat
@@ -47,7 +48,7 @@ from .groups import LabelGroupsMixin, auto_id
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
-
+# ---------------------------------------------------------------------------- #
 def is_lazy(_):
     return isinstance(_, lazyproperty)
 
@@ -62,13 +63,31 @@ def image_sub(background_estimator):
     return sub
 
 
-def _unpack_with_label(label, unpack, itr):
+# ---------------------------------------------------------------------------- #
+def _unpack(label, section, unpack, itr):
+    return unpack(itr)
+
+
+def _unpack_with_label(label, section, unpack, itr):
     return label, unpack(itr)
 
 
-def _unpack_without_label(_, unpack, itr):
-    return unpack(itr)
+def _unpack_with_slice(label, section, unpack, itr):
+    return section, unpack(itr)
 
+
+def _unpack_with_label_and_slice(label, section, unpack, itr):
+    return label, section, unpack(itr)
+
+
+def _get_unpack(with_label, with_slice):
+    return (
+        (_unpack, _unpack_with_slice),
+        (_unpack_with_label, _unpack_with_label_and_slice)
+    )[with_label][with_slice]
+
+
+# ---------------------------------------------------------------------------- #
 
 # def autoreload_isinstance_hack(obj, kls):
 #     for parent in obj.__class__.mro():
@@ -1299,16 +1318,18 @@ class SegmentedImage(SegmentationImage,     # base
         yield from self.cutouts(image, labels=labels, flatten=True)
 
     @api.synonyms(
-        {'enum(erate)?':      'labelled',
-         'mask(ed)':          'masked',
-         'flat(ten(ed)?)?':   'flatten'},
+        {'enum(erated?)?':  'labelled',
+         'with_label':      'labelled',
+         'with_slice':      'with_slices',
+         'mask(ed)':        'masked',
+         'flat(ten(ed)?)?': 'compress'},
         action=None
     )
-    def cutouts(self, *arrays, labels=None, masked=False, flatten=False,
-                labelled=False, extend=0):
+    def cutouts(self, *arrays, labels=None, masked=False, compress=False,
+                labelled=False, extend=0, with_slices=False):
         """
         Yields labelled sub-regions of multiple arrays sequentially as tuple of
-        (optionally masked) arrays.
+        (optionally masked or compressed) arrays.
 
         Parameters
         ----------
@@ -1331,13 +1352,13 @@ class SegmentedImage(SegmentationImage,     # base
                  eg: (4, ...) means mask all arrays beyond the fourth.
             If none of the above:
                 No masking is done, resulting image cutouts are `np.ndarray`.
-        flatten: bool
-            Yield flattened 1D arrays of data corresponding to label instead of
+        compress: bool
+            Yield compressed 1D arrays of data corresponding to label instead of
             a masked_array. This option is here since it is faster to check the
             sub-array labels than the entire frame if the slices have already
-            been calculated. Note that both `mask` and `flatten` cannot be
+            been calculated. Note that both `mask` and `compress` cannot be
             simultaneously True and will raise a ValueError.
-        labelled:
+        labelled: bool
             Each (tuple of) cutout(s) is enumerate with `label` value in the
             fashion of the builtin enumerate.
 
@@ -1360,15 +1381,15 @@ class SegmentedImage(SegmentationImage,     # base
 
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
-        if flags.any() and flatten:
-            raise ValueError("Use either `masked` or `flatten`. Can't do both.")
+        if flags.any() and compress:
+            raise ValueError("Use either `masked` or `compress`. Can't do both.")
 
         # function that yields the result. neat little trick avoid unit tuples
         unpack = (next if n == 1 else tuple)
-        yielder = (_unpack_without_label, _unpack_with_label)[bool(labelled)]
+        yielder = _get_unpack(labelled, with_slices)
 
         # flag which determined arrays in the sequence are to mask
-        if flatten:
+        if compress:
             flags[:] = True
 
         if extend := int(extend):
@@ -1381,9 +1402,9 @@ class SegmentedImage(SegmentationImage,     # base
             # NOTE this propagates values that are `None` in `arrays` tuple
             cutouts = (_2d_slicer(_, section,
                                   self.masks[label] if flag else None,
-                                  flatten)
+                                  compress)
                        for _, flag in zip(arrays, flags))
-            yield yielder(label, unpack, cutouts)
+            yield yielder(label, section, unpack, cutouts)
 
     # alias
     coslice = cutout = cutouts
