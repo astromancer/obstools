@@ -37,10 +37,9 @@ from recipes.string.brackets import braces
 from recipes.string import pluralize, strings
 
 # relative
-from . import _hdu_hasher, cachePaths
 from .image.sample import ImageSamplerMixin
+from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
-from .image.detect import SourceDetection, SourceDetectionMixin
 
 
 # TODO: multiprocess generic methods
@@ -112,13 +111,18 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         # multiple roots: return None
 
 
-class SampleImageSourceDetection(SourceDetection):
-
-    @caching.to_file(cachePaths.detection,
-                     typed={'self': lambda s: _hdu_hasher(s.parent)})
-    def __call__(self, stat='median', depth=5, **kws):
+class HDUExtra(PrimaryHDU,
+               ImageSamplerMixin,
+               ImageCalibratorMixin,
+               LoggingMixin,
+               SourceDetectionMixin):
+    """
+    Some extra methods and properties to support PhotCampaign features.
+    """
+    
+    def detect(self, stat='median', depth=5, interval=..., report=True, **kws):
         """
-        Cached source detection for HDUs
+        Cached source detection for HDUs.
 
         Parameters
         ----------
@@ -135,24 +139,19 @@ class SampleImageSourceDetection(SourceDetection):
 
         Returns
         -------
-        [type]
-            [description]
+        seg
+            SegmentedImage
         """
         # note: `get_sample_image` is cached
-        image = self.parent.get_sample_image(stat, depth)
-        return super().__call__(image, **kws)
-
-
-class HDUExtra(PrimaryHDU,
-               ImageSamplerMixin,
-               ImageCalibratorMixin,
-               LoggingMixin,
-               SourceDetectionMixin):
-    """
-    Some extra methods and properties that help PhotCampaign
-    """
-
-    detect = SampleImageSourceDetection('sigma_threshold')
+        image = self.get_sample_image(stat, depth, interval)
+        seg = self.detection(image, **kws)
+        seg.relabel_consecutive()
+        
+        if report:
+            self.detection.report(image, seg)
+            seg.show_cutouts_console(image, cmap='cmr.voltage', 
+                                     title=self.file.name, extend=2)
+        return seg
 
     @property
     def file(self):

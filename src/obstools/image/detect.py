@@ -6,6 +6,7 @@ from collections import defaultdict
 
 # third-party
 import numpy as np
+from scipy import ndimage
 from sklearn.mixture import GaussianMixture
 from photutils import detect_sources, detect_threshold
 
@@ -26,21 +27,21 @@ DEFAULT_ALGORITHM = 'sigma_threshold'
 # ---------------------------------------------------------------------------- #
 
 
-def make_border_mask(data, edge_cutoffs):
+def make_border_mask(image, edge_cutoffs):
     if isinstance(edge_cutoffs, int):
-        return _make_border_mask(data,
+        return _make_border_mask(image.shape,
                                  edge_cutoffs, -edge_cutoffs,
                                  edge_cutoffs, -edge_cutoffs)
     edge_cutoffs = tuple(edge_cutoffs)
     if len(edge_cutoffs) == 4:
-        return _make_border_mask(data, *edge_cutoffs)
+        return _make_border_mask(image.shape, *edge_cutoffs)
 
     raise ValueError(f'Invalid edge_cutoffs {edge_cutoffs}')
 
 
-def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
+def _make_border_mask(shape, xlow=0, xhi=None, ylow=0, yhi=None):
     """Edge mask"""
-    mask = np.zeros(data.shape, bool)
+    mask = np.zeros(shape, bool)
 
     mask[:ylow] = True
     if yhi is not None:
@@ -51,11 +52,12 @@ def _make_border_mask(data, xlow=0, xhi=None, ylow=0, yhi=None):
         mask[:, xhi:] = True
     return mask
 
+
 # ---------------------------------------------------------------------------- #
 
 
 class DetectionBase(LoggingMixin):
-    """Base class for source detection"""
+    """Base class for source detection."""
 
     members = {}
 
@@ -89,9 +91,20 @@ class DetectionBase(LoggingMixin):
 
     #     self.fit_predict = staticmethod(algorithm)
 
-    def __call__(self, image, mask=False, dilate=0, /, *args, **kws):
+    # alias
+    # def detect(self, *args, **kws):
+    #     # alias for `__call__`
+    #     return self.__call__(*args, **kws)
+
+    def __call__(self, image, mask=False,
+                 npixels=7, edge_cutoff=None, monolithic=False,
+                 dilate=0, deblend=False,
+                 **kws):
         """
-        Image object detection that returns a `SegmentedImage` instance.
+        Image object detection that returns a `SegmentedImage` instance. Post
+        processing to remove sources that do not meet criteria (`npixels`,
+        `snr`, `monolithic`, `roundness` etc), followed by optional dilation
+        (increasing segment sizes).
 
 
         Parameters
@@ -106,24 +119,43 @@ class DetectionBase(LoggingMixin):
         obstools.image.segmentation.SegmentedImage
         """
 
-        # logger.info('{} {}', args, kws)
+        # self.logger.debug('Running source detection algorithm: {!r} {}', )
 
         # Initialize
-        seg = SegmentedImage(self.fit_predict(image, mask, *args, **kws))
+        seg_data = self.fit_predict(image, mask, **kws)
+        return self.post_process(image, seg_data, npixels, edge_cutoff,
+                                 monolithic, dilate, deblend)
+
+    def post_process(self, image, seg_data, npixels, edge_cutoff=None,
+                     monolithic=True, dilate=0, deblend=False):
+        if monolithic:
+            mask = seg_data.astype(bool)
+            filled = ndimage.binary_fill_holes(mask)
+            seg_data, _ = ndimage.label(filled)
+            seg = SegmentedImage(seg_data)
+
+            remove_labels = set(seg_data[filled & ~mask]).union(
+                seg.labels[seg.areas < npixels])
+            seg.remove_labels(list(remove_labels))
+        else:
+            seg = SegmentedImage(seg_data)
+
+        if deblend:  # and not no_sources:
+            from photutils import deblend_sources
+            seg = deblend_sources(image, seg, npixels)
+
+        if edge_cutoff:
+            border = make_border_mask(image, edge_cutoff)
+            # labels = np.unique(seg.data[border])
+            seg.remove_masked_labels(border)
 
         # dilate
         if dilate != 'auto':
             seg.dilate(iterations=dilate)
 
-        self.report(image, seg)
+        # self.report(image, seg)
         return seg
 
-    # alias
-    detect = __call__
-    # def detect(self, *args, **kws):
-    #     # alias for `__call__`
-    #     return self.__call__(*args, **kws)
-    
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
@@ -135,8 +167,8 @@ class DetectionBase(LoggingMixin):
 
 
 class SigmaThreshold(DetectionBase):
-    def fit_predict(self, image, mask=False, background=None, snr=3., npixels=7,
-                    edge_cutoff=None, deblend=False):
+    def fit_predict(self, image, mask=False, background=None,
+                    snr=3., npixels=7):
         """
         Image detection worker
 
@@ -153,10 +185,7 @@ class SigmaThreshold(DetectionBase):
         """
 
         self.logger.info('Running detect with: {:s}',
-                         str(dict(snr=snr,
-                                  npixels=npixels,
-                                  edge_cutoff=edge_cutoff,
-                                  deblend=deblend)))
+                         str(dict(snr=snr, npixels=npixels)))
 
         if mask is None:
             mask = False  # need this for logical operators below to work
@@ -184,15 +213,6 @@ class SigmaThreshold(DetectionBase):
         if no_sources:
             self.logger.info('No objects detected.')
             return np.zeros_like(image, bool)
-
-        if deblend:  # and not no_sources:
-            from photutils import deblend_sources
-            seg = deblend_sources(image, seg, npixels)
-
-        if edge_cutoff:
-            border = make_border_mask(image, edge_cutoff)
-            # labels = np.unique(seg.data[border])
-            seg.remove_masked_labels(border)
 
         # intentionally return an array
         return seg.data
@@ -400,6 +420,7 @@ class _SourceDetectionLoop(_ResultsAggregator):
 
         if not self.info:
             return 'No detections!'
+
         # report detections here
         col_headers = list(self.info.keys())
         info_list = list(self.info.values())
@@ -503,7 +524,7 @@ class MultiThreshold(_SourceDetectionLoop):
 
 class SourceDetection:
     """A descriptor object for managing source detection algorithms."""
-    
+
     def __init__(self, algorithm=DEFAULT_ALGORITHM, *args, **kws):
         self.algorithm = algorithm
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
@@ -512,9 +533,11 @@ class SourceDetection:
         self.parent = obj
         return self
 
-    def __call__(self, *args, **kws):
-        return self._algorithm(*args, **kws)
-    
+    # @caching.memoize(typed={'image': caching.hashers.array,
+    #                         'mask': caching.hashers.array})
+    def __call__(self, image, *args, **kws):
+        return self._algorithm(image, *args, **kws)
+
     def __set__(self, obj, algorithm):
         """
         >>> class MyImage:
@@ -536,6 +559,9 @@ class SourceDetection:
     def algorithm(self, algorithm):
         self._algorithm = DetectionBase.resolve(algorithm)()
 
+    def report(self, image, seg, show=5):
+        return self._algorithm.report(image, seg, show)
+
 
 class SourceDetectionMixin:
     """
@@ -543,7 +569,7 @@ class SourceDetectionMixin:
     can be used to construct image models from images.
     """
 
-    detect = SourceDetection(DEFAULT_ALGORITHM)
+    detection = SourceDetection(DEFAULT_ALGORITHM)
 
     @classmethod
     def from_image(cls, image, detect=True, **detect_opts):
@@ -575,9 +601,9 @@ class SourceDetectionMixin:
             detect = DEFAULT_ALGORITHM
             detect_opts = dict(detect, **detect_opts)
 
-        if isinstance(detect, str) and cls.detect.algorithm != detect:
+        if isinstance(detect, str) and cls.detection.algorithm != detect:
             # switch algorithms
-            cls.detect.algorithm = detect
+            cls.detection.algorithm = detect
 
         # Detect objects & segment image
         # detect_opts = dict(detect if isinstance(detect, dict) else {},
@@ -593,4 +619,11 @@ class SourceDetectionMixin:
         # models to the segments.
 
         # Detect objects & init with segmented image
-        return cls.detect(image, **detect_opts)
+        return cls.detection(image, **detect_opts)
+
+    def detect(self, image, *args, report=True, **kws):
+        # subclasses to implement stuff here
+        seg = self.detection(image, *args, **kws)
+        if report:
+            self.detection.report(image, seg)
+        return seg
