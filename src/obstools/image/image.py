@@ -229,7 +229,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
     @classmethod
     # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
-    def from_hdu(cls, hdu, sample_stat='median', depth=5, **kws):
+    def from_hdu(cls, hdu, sample_stat='median', depth=5, interval=...,
+                 report=True, **kws):
         """
         Construct a SkyImage from an HDU by first drawing a sample image, then
         running the source detection algorithm on it.
@@ -260,25 +261,21 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
                 'on an image array.'
             )
 
-        # self.filename
-
         # logger.info(str(kws))
 
-        # use `hdu.detect` so we cache the detections on the hdu filename
-        seg = hdu.detect(sample_stat, depth, **kws)
+        # use `hdu.detection` which caches the detections on the hdu filename
+        seg = hdu.detect(sample_stat, depth, interval, report, **kws)
 
         # pull the sample image (computed in the line above) from the cache
-        image = hdu.get_sample_image(sample_stat, depth)
+        image = hdu.get_sample_image(sample_stat, depth, interval)
 
         # TODO: if wcs is defined, use that as default
-
         return cls(image, hdu.fov, angle=hdu.pa, segmentation=seg)
 
     @classmethod
     def from_image(cls, image, fov=None, scale=None, **kws):
-        image = cls(image, fov, scale=scale)
-        image.detect(**kws)
-        return image
+        return cls(image, fov, scale=scale, 
+                   segmentation=super().from_image(image, **kws))
 
     def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None,
                  segmentation=None):

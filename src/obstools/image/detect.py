@@ -12,7 +12,7 @@ from photutils import detect_sources, detect_threshold
 
 # local
 import recipes.pprint as pp
-from recipes import string
+from recipes import string, caching
 from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
 from recipes.oo.property import classproperty
@@ -91,13 +91,21 @@ class DetectionBase(LoggingMixin):
 
     #     self.fit_predict = staticmethod(algorithm)
 
-    # alias
-    # def detect(self, *args, **kws):
-    #     # alias for `__call__`
-    #     return self.__call__(*args, **kws)
+    def detect(self, image, mask=None, *args, report=False, **kws):
 
-    def __call__(self, image, mask=False,
-                 npixels=7, edge_cutoff=None, monolithic=False,
+        seg = self.__call__(image, mask, *args, **kws)
+
+        if report:
+            if report is True:
+                report = {}
+            self.report(image, seg, **report)
+
+        return seg
+
+    @caching.cached(typed={'image': caching.hashers.array,
+                           'mask': caching.hashers.array})
+    def __call__(self, image, mask=None,
+                 npixels=7, edge_cutoff=None, monolithic=True,
                  dilate=0, deblend=False,
                  **kws):
         """
@@ -122,12 +130,22 @@ class DetectionBase(LoggingMixin):
         # self.logger.debug('Running source detection algorithm: {!r} {}', )
 
         # Initialize
-        seg_data = self.fit_predict(image, mask, **kws)
+        seg_data = self.fit_predict(image, mask, npixels=npixels, **kws)
         return self.post_process(image, seg_data, npixels, edge_cutoff,
                                  monolithic, dilate, deblend)
 
+    def fit_predict(self, *args, **kws):
+        raise NotImplementedError
+
     def post_process(self, image, seg_data, npixels, edge_cutoff=None,
                      monolithic=True, dilate=0, deblend=False):
+        self.logger.debug('Post-processing detected sources with criteria: {}',
+                          dict(npixels=npixels,
+                               edge_cutoff=edge_cutoff,
+                               monolithic=monolithic,
+                               dilate=dilate,
+                               deblend=deblend))
+
         if monolithic:
             mask = seg_data.astype(bool)
             filled = ndimage.binary_fill_holes(mask)
@@ -140,34 +158,34 @@ class DetectionBase(LoggingMixin):
         else:
             seg = SegmentedImage(seg_data)
 
-        if deblend:  # and not no_sources:
-            from photutils import deblend_sources
-            seg = deblend_sources(image, seg, npixels)
-
         if edge_cutoff:
             border = make_border_mask(image, edge_cutoff)
             # labels = np.unique(seg.data[border])
             seg.remove_masked_labels(border)
 
+        if deblend:  # and not no_sources:
+            seg = seg.deblend(image, npixels)
+
         # dilate
-        if dilate != 'auto':
+        if dilate:
             seg.dilate(iterations=dilate)
 
-        # self.report(image, seg)
+        seg.relabel_consecutive()
         return seg
 
-    def fit_predict(self, *args, **kws):
-        raise NotImplementedError
-
-    def report(self, image, seg, show=5):
+    def report(self, image, seg, show=5, **kws):
         self.logger.opt(lazy=True).info(
-            'Detected {:d} sources covering {:.2%} of image.',
-            lambda: seg.nlabels, lambda: sum(seg.fractional_areas)
+            'Detected {0[0]:d} source{0[1]} covering {0[2]} pixels ({0[3]:.2%} '
+            'of the image area).',
+            lambda: (seg.nlabels, 's' * (seg.nlabels > 1), seg.areas.sum(), 
+                     sum(seg.fractional_areas))
         )
+        self.logger.info('Source images:\n{}',
+                         seg.format_cutouts_console(image, **kws))
 
 
 class SigmaThreshold(DetectionBase):
-    def fit_predict(self, image, mask=False, background=None,
+    def fit_predict(self, image, mask=None, background=None,
                     snr=3., npixels=7):
         """
         Image detection worker
@@ -222,7 +240,7 @@ class GMM(DetectionBase):
     def __init__(self, n_components=5, **kws):
         self.gmm = GaussianMixture(n_components, **kws)
 
-    def fit_predict(self, image, mask=False):
+    def fit_predict(self, image, mask=None):
         """
         Construct a SegmentedImage using Gaussian Mixture Model prediction
         for pixels.
@@ -251,7 +269,7 @@ class GMM(DetectionBase):
         seg[pixels] = self.gmm.fit_predict(y)
         return seg
 
-    def __call__(self, image, mask=False, *args, plot=False, **kws):
+    def __call__(self, image, mask=None, *args, plot=False, **kws):
 
         if plot:
             from matplotlib import pyplot as plt
@@ -536,7 +554,7 @@ class SourceDetection:
     # @caching.memoize(typed={'image': caching.hashers.array,
     #                         'mask': caching.hashers.array})
     def __call__(self, image, *args, **kws):
-        return self._algorithm(image, *args, **kws)
+        return self._algorithm.detect(image, *args, **kws)
 
     def __set__(self, obj, algorithm):
         """
@@ -559,8 +577,8 @@ class SourceDetection:
     def algorithm(self, algorithm):
         self._algorithm = DetectionBase.resolve(algorithm)()
 
-    def report(self, image, seg, show=5):
-        return self._algorithm.report(image, seg, show)
+    def report(self, image, seg, show=5, **kws):
+        return self._algorithm.report(image, seg, show, **kws)
 
 
 class SourceDetectionMixin:
@@ -583,7 +601,7 @@ class SourceDetectionMixin:
         ----------
         image : np.ndarray
             Image with sources
-        detect : bool
+        detect : bool or dict
             Controls whether source detection algorithm is run. This argument
             provides a shortcut to the default source detection by setting
             `True`, or alternatively to skip source detection by setting
@@ -622,8 +640,5 @@ class SourceDetectionMixin:
         return cls.detection(image, **detect_opts)
 
     def detect(self, image, *args, report=True, **kws):
-        # subclasses to implement stuff here
-        seg = self.detection(image, *args, **kws)
-        if report:
-            self.detection.report(image, seg)
-        return seg
+        # subclasses to implement stuff by overwriting this method
+        return self.detection(image, *args, report=report, **kws)

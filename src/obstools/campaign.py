@@ -119,7 +119,7 @@ class HDUExtra(PrimaryHDU,
     """
     Some extra methods and properties to support PhotCampaign features.
     """
-    
+
     def detect(self, stat='median', depth=5, interval=..., report=True, **kws):
         """
         Cached source detection for HDUs.
@@ -142,16 +142,12 @@ class HDUExtra(PrimaryHDU,
         seg
             SegmentedImage
         """
-        # note: `get_sample_image` is cached
+        # NOTE: `get_sample_image` and `detection` are both cached for performance
         image = self.get_sample_image(stat, depth, interval)
-        seg = self.detection(image, **kws)
-        seg.relabel_consecutive()
-        
-        if report:
-            self.detection.report(image, seg)
-            seg.show_cutouts_console(image, cmap='cmr.voltage', 
-                                     title=self.file.name, extend=2)
-        return seg
+        return self.detection(image, **kws,
+                              report=dict(title=self.file.name,
+                                          title_props=('B', '_'),
+                                          extend=2))
 
     @property
     def file(self):
