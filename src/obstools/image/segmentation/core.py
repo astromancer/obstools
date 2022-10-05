@@ -233,7 +233,7 @@ def select_rect_pad(segm, image, start, shape):
 def inside_segment(coords, sub, grid):
     b = []
     ogrid = grid[0, :, 0], grid[1, 0, :]
-    for j, (g, f) in enumerate(zip(ogrid, coords)):
+    for g, f in zip(ogrid, coords):
         bi = np.digitize(f, g - 0.5)
         b.append(bi)
 
@@ -295,7 +295,8 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     # slice along last two dimensions
     cutout = array[tuple((..., *slice_))]
 
-    if mask in (None, False):  # (mask is None) or (mask is False): #
+    # NOTE next line must work for `mask` an array!
+    if (mask is None) or (mask is False):
         return cutout
 
     if compress:
@@ -348,7 +349,13 @@ class SliceDict(vdict):
     def _get_corners(self, vh, slices):
         # vh - vertical horizontal positions as two character string
         yss, xss = (self._corner_slice_mapping[_] for _ in vh)
-        return [(getattr(y, yss), getattr(x, xss)) for (y, x) in slices]
+        unpack = list
+        if isinstance(slices, yxTuple):
+            slices = [slices]
+            unpack = next
+
+        return unpack(((getattr(y, yss), getattr(x, xss))
+                       for (y, x) in slices))
 
     def lower_left_corners(self, labels=...):
         """lower left corners of segment slices"""
@@ -366,6 +373,7 @@ class SliceDict(vdict):
         """upper left corners of segment slices"""
         return self._get_corners('ul', self[labels])
 
+    # aliases
     llc = lower_left_corners
     lrc = lower_right_corners
     urc = upper_right_corners
@@ -373,6 +381,9 @@ class SliceDict(vdict):
 
     def sizes(self, labels=...):
         return np.subtract(self.urc(labels), self.llc(labels))
+
+    # alias
+    shapes = sizes
 
     # def extents(self, labels=None):
     #     """xy sizes"""
@@ -396,7 +407,7 @@ class SliceDict(vdict):
         urc = np.add(self.urc(labels), increment).astype(int)
         llc = np.add(self.llc(labels), -increment).astype(int)
         if clip:
-            urc = urc.clip(None, duplicate_if_scalar(clip)) # TODO:.parent.shape
+            urc = urc.clip(None, duplicate_if_scalar(clip))  # TODO:.parent.shape
             llc = llc.clip(0)
 
         return [tuple(slice(*i) for i in _)
@@ -550,8 +561,7 @@ class MaskedStatsMixin:
             method = MaskedStatistic(getattr(ndimage, stat))
             setattr(cls, stat, method)
             # also add aliases for convenience
-            alias = cls._aliases.get(stat)
-            if alias:
+            if alias := cls._aliases.get(stat):
                 setattr(cls, alias, method)
 
 
@@ -580,12 +590,14 @@ class MaskedStatistic:
         self.__doc__ = self._doc_template % name.title().replace('_', ' ')
 
     def __get__(self, seg, kls=None):
+        # sourcery skip: assign-if-exp, reintroduce-else
 
         if seg is None:  # called from class
             return self
 
-        # bind this class to the seg instance from whence the lookup came.
-        # Essentially this binds the first argument `seg` in `__call__` below
+        # Dynamically bind this class to the seg instance from whence the lookup
+        # came. Essentially this binds the first argument `seg` in `__call__`
+        # below
         return types.MethodType(self, seg)
 
     def __call__(self, seg, image, labels=None):
@@ -701,17 +713,16 @@ class SegmentedImage(SegmentationImage,     # base
                      MaskedStatsMixin,      # stats methods for masked images
                      SegmentMasksMixin,     # handles masks for foreground obj
                      LabelGroupsMixin,      # keeps track of label groups
-                     LoggingMixin,          # logger
-                     ):
+                     LoggingMixin):         # logger
     """
     Extends `photutils.segmentation.SegmentationImage` functionality.
 
     Additions to the SegmentationImage class.
         * classmethod for construction from an image of sources
 
-        * support for iterating over segments / slices
+        * support for iterating over segments / slices with `cutouts` method.
 
-        * calculations on masked arrays
+        * Calculations on masked arrays:
         * methods for statistics on image segments (min, max, mean, median, etc)
         * methods for calculating center-of-mass, counts, flux in each segment
         * re-ordering (sorting) labels by any of the above statistics
@@ -797,7 +808,7 @@ class SegmentedImage(SegmentationImage,     # base
         """
 
         # Initialize
-        seg = cls(cls.detection(image, mask, **kws))
+        seg = cls(cls.detection(image, mask, **kws))  # FIXME
 
         # dilate
         if dilate != 'auto':
@@ -888,8 +899,8 @@ class SegmentedImage(SegmentationImage,     # base
 
     def __str__(self):
         params = ['shape', 'nlabels', 'groups']
-        return pformat({p: getattr(self, p) for p in params},
-                       self.__class__.__name__)
+        return dicts.pformat({p: getattr(self, p) for p in params},
+                             self.__class__.__name__)
 
     def __reduce__(self):
         # for some reason default object.__reduce__ borks with TypeError when
@@ -1494,7 +1505,8 @@ class SegmentedImage(SegmentationImage,     # base
         data = self.data if image is None else image
         self._check_input_data(data)
         if not same_size:
-            return list(self.cutouts(data, labels=labels, masked=masked, extend=extend))
+            return list(self.cutouts(data, labels=labels, masked=masked,
+                                     extend=extend))
 
         if labels is None:
             labels = self.resolve_labels()
@@ -1738,7 +1750,7 @@ class SegmentedImage(SegmentationImage,     # base
         -------
 
         """
-        assert len(label_sets) in (1, 2)
+        assert len(label_sets) in {1, 2}
         *old, new = label_sets
         old, = old or (None, )
         if isinstance(new, dict):
@@ -1782,20 +1794,22 @@ class SegmentedImage(SegmentationImage,     # base
         if not iterations:
             return self
 
+        if iterations == 'auto':
+            return self.auto_dilate(labels)
+
         if not isinstance(iterations, numbers.Integral):
-            raise ValueError('`iterations` should be an integer')
+            raise ValueError('`iterations` parameter should be an integer.')
 
         # expand masks to 3D sequence
         labels = self.resolve_labels(labels)
         masks = self.to_binary(labels, expand=True)
 
         if structure is None:
-            d = {4: 1, 8: 2}.get(connectivity)
-            if d:
+            if d := {4: 1, 8: 2}.get(connectivity):
                 structure = ndimage.generate_binary_structure(2, d)
             else:
                 raise ValueError('Invalid connectivity={0}.  '
-                                 'Options are 4 or 8'.format(connectivity))
+                                 'Options are 4 or 8.'.format(connectivity))
 
         # structure array needs to have same dimensionality as masks
         if structure.ndim == 2:
@@ -1817,7 +1831,7 @@ class SegmentedImage(SegmentationImage,     # base
         self.data = data
         return self
 
-    def auto_dilate(self, image, labels=None, dmax=5, sigma=3):
+    def auto_dilate(self, image, labels=None, dmax=5, sigma=3, connectivity=1):
         #
         from obstools.stats import mad
 
@@ -1834,7 +1848,7 @@ class SegmentedImage(SegmentationImage,     # base
             σ = mad(mim, m)
 
             # get annuli - test pixels
-            b3 = self.to_annuli(0, 1, labels)
+            b3 = self.to_annuli(0, 1, labels, connectivity=connectivity)
             slices = self.slices.extend(labels, 2)
             for label, b, s in zip(labels, b3, slices):
                 bb = b[s]
@@ -1844,14 +1858,19 @@ class SegmentedImage(SegmentationImage,     # base
                 if dark.all():
                     labels = np.setdiff1d(labels, label)
                 else:
-                    logger.debug('label: {:d}: {:d} pixels added', label,
+                    logger.debug('label: {:d}: {:d} pixels added.', label,
                                  sum(~dark))
                     bb[tuple(w[:, dark])] = False
                     self.data[s][bb] = label
 
+    def deblend(self, image, npixels, **kws):
+        return self.__class__(
+            deblend_sources(image, self.data, npixels, **kws).data
+        )
+
     def blend(self):
         """
-        Inverse operation of deblend.  Merge segments that are touching
+        Inverse operation of `deblend`.  Merge segments that are touching
         but have different labels.
         """
 
@@ -1885,11 +1904,13 @@ class SegmentedImage(SegmentationImage,     # base
         self.data = ndimage.shift(self.data, offset)
         # todo: optimization: update slices instead of re-running find_objects
 
-    def to_annuli(self, buffer=0, width=5, labels=None, remove_sources=True):
+    def to_annuli(self, buffer=0, width=5, labels=None, remove_sources=True,
+                  connectivity=1):
         """
-        Create 3D boolean array containing annular masks for sky regions.
-        Regions containing labelled pixels from other sources within sky regions
-        are removed unless otherwise requested.
+        Create 3D boolean array containing annular masks for sky regions around
+        labelled regions in `labels`. Regions containing labelled pixels from
+        other sources within sky regions are removed unless
+        `remove_sources=False` requested.
 
         Parameters
         ----------
@@ -1906,7 +1927,7 @@ class SegmentedImage(SegmentationImage,     # base
         labels = self.resolve_labels(labels)
         masks = self.to_binary(labels, expand=True)
         # structure array needs to have same rank as masks
-        struct = ndimage.generate_binary_structure(2, 1)[None]
+        struct = ndimage.generate_binary_structure(2, connectivity)[None]
         if buffer:
             m0 = ndimage.binary_dilation(masks, struct, iterations=buffer)
         else:
@@ -2020,8 +2041,6 @@ class SegmentedImage(SegmentationImage,     # base
         count = 0
         keep = np.zeros(len(coords), bool)
 
-        # print('yo!', coords)
-
         grid = np.indices(self.shape)
         for i, (lbl, (sub, g)) in enumerate(
                 self.cutouts(self.data, grid, labels=labels, labelled=True)):
@@ -2082,20 +2101,21 @@ class SegmentedImage(SegmentationImage,     # base
         # TODO: DisplayMixin: seg.show(), seg.show.term(), seg.show.overlay
         #       seg.show.labels()
         """
-        Plot the image using the `ImageDisplay` class
+        Plot the segmented image using the `ImageDisplay` class.
 
 
         Parameters
         ----------
-        cmap:
+        cmap: str
+            Colourmap name.
         contours: bool
-            Should contours be drawn around object perimeter
+            Should contours be drawn around object perimeters.
         bbox: bool
-            Should rectangles be drawn representing the segment bounding boxes
+            Should rectangles be drawn representing the segment bounding boxes.
         label: bool
-            Should the segments be labelled with numbers on the image
+            Should the segments be labelled with numbers on the image.
         kws:
-            passed to `ImageDisplay`
+            passed to `ImageDisplay` class.
 
         Returns
         -------
@@ -2112,9 +2132,11 @@ class SegmentedImage(SegmentationImage,     # base
         # conditional here prevents bork on empty segmentation image
 
         kws.setdefault('sliders', False)
+        kws.setdefault('hist', False)
+        kws.setdefault('cbar', False)
 
         # plot
-        im = ImageDisplay(self.data, cmap=cmap, **kws)
+        im = ImageDisplay(self.data, cmap=cmap, clim=(0, self.max_label), **kws)
 
         if contours:
             lines = self.get_contours()
@@ -2125,11 +2147,12 @@ class SegmentedImage(SegmentationImage,     # base
 
         if label:
             # add label text (number) on each segment
-            self.show_labels(im.ax, color='w', fontdict=dict(weight='bold'))
+            self.show_labels(im.ax, color='w', alpha=0.5,
+                             fontdict=dict(weight='bold'))
 
         return im
 
-    display = show
+    plot = display = show
 
     def show_labels(self, ax, **kws):
 
@@ -2150,7 +2173,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         return texts
 
-    draw_labels = show_labels
+    plot_labels = draw_labels = show_labels
 
     def show_terminal(self, show_labels=True, frame=True, origin=0):
         """
@@ -2351,9 +2374,9 @@ class SegmentedImage(SegmentationImage,     # base
             Length of the circumference of each part of the segment.
         """
         self.check_label(label)
-        s = self.slices[label]
-        b = (self.data[s] == label)
-        origin = [_.start for _ in s]
+        b = (self.sliced(label) == label)
+        origin = self.slices.llc(label)
+
         count = 0
         segments = []
         perimeter = []

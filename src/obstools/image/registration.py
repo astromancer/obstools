@@ -288,10 +288,8 @@ class MultiGauss(Model):
         return self._check_params(p), (self._check_grid(xy), *args)
 
     def _check_params(self, p):
-        if (p is None) or (p == ()):
-            # default parameter values for evaluation
-            return np.zeros(self.dof)
-        return p
+        # default parameter values for evaluation
+        return np.zeros(self.dof) if (p is None) or (p == ()) else p
 
     def _check_grid(self, grid):
         #
@@ -359,7 +357,7 @@ class MultiGauss(Model):
 
         ndims = self.n_dims
         if ndims != 2:
-            raise Exception(f'Can only image 2D models. Model is {ndims}D.')
+            raise ValueError(f'Can only image 2D models. Model is {ndims}D.')
 
         if grid is None:
             size = duplicate_if_scalar(size, ndims, raises=False)
@@ -534,7 +532,7 @@ def offset_disp_cluster(xy0, xy1, sigma=None, plot=False):
     points = (xy0[None] - xy1[:, None]).reshape(-1, 2).T
 
     if sigma is None:
-        # size of gaussians a third of closest distance between stars
+        # size of gaussians a third of closest distance between sources
         sigma = min(dist_flat(xy0).min(), dist_flat(xy1).min()) / 3
 
     gmm = GaussianSourceField(points.T, sigma)
@@ -567,7 +565,7 @@ def offset_disp_cluster(xy0, xy1, sigma=None, plot=False):
 def dist_flat(coo):
     """lower triangle of (symmetric) distance matrix"""
     # n = len(coo)
-    sdist = cdist(coo, coo)  # pixel distance between stars
+    sdist = cdist(coo, coo)  # pixel distance between sources
     # since the distance matrix is symmetric, ignore lower half
     return sdist[np.tril_indices(len(coo), -1)]
 
@@ -671,21 +669,18 @@ def plot_coords_nrs(cooref, coords):
 
 
 def display_multitab(images, fovs, params, coords):
-    from scrawl.multitab import MplMultiTab
+    from mpl_multitab import MplMultiTab
     from scrawl.imagine import ImageDisplay
 
     import more_itertools as mit
 
     ui = MplMultiTab()
-    for i, (image, fov, p, yx) in enumerate(zip(images, fovs, params, coords)):
+    for image, fov, p, yx in zip(images, fovs, params, coords):
         xy = yx[:, ::-1]  # roto_translate_yx(yx, np.r_[-p[:2], 0])[:, ::-1]
         ex = mit.interleave((0, 0), fov)
         im = ImageDisplay(image, extent=list(ex))
         im.ax.plot(*xy.T, 'kx', ms=5)
         ui.add_tab(im.figure)
-        plt.close(im.figure)
-        # if i == 1:
-        #    break
     return ui
 
 
@@ -694,7 +689,7 @@ def display_multitab(images, fovs, params, coords):
 
 # def measure_positions_dbscan(xy):
 #     # DBSCAN clustering
-#     db, n_clusters, n_noise = id_stars_dbscan(xy)
+#     db, n_clusters, n_noise = id_sources_dbscan(xy)
 #     xy, = group_features(db, xy)
 #
 #     # Compute cluster centres as geometric median
@@ -725,7 +720,7 @@ def display_multitab(images, fovs, params, coords):
 #     #  🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
 #     # clustering + relative position measurement
-#     logger.info('Identifying stars')
+#     logger.info('Identifying sources')
 #     n_clusters, n_noise = cluster_points(clustering, coms)
 #     xy, = group_features(clustering, coms)
 #
@@ -773,15 +768,15 @@ def display_multitab(images, fovs, params, coords):
 #     return centres, σ_xy, xy_offsets, outliers, xy
 
 
-def id_stars_kmeans(images, segmentations):
+def id_sources_kmeans(images, segmentations):
     # combine segmentation for sample images into global segmentation
     # this gives better overall detection probability and yields more accurate
     # optimization results
 
-    # this function also uses kmeans clustering to id stars within the overall
-    # constellation of stars across sample images.  This is fast but will
-    # mis-identify stars if the size of camera dither between frames is on the
-    # order of the distance between stars in the image.
+    # this function also uses kmeans clustering to id sources within the overall
+    # constellation of sources across sample images.  This is fast but will
+    # mis-identify sources if the size of camera dither between frames is on the
+    # order of the distance between sources in the image.
 
     coms = []
     snr = []
@@ -794,8 +789,8 @@ def id_stars_kmeans(images, segmentations):
     lengths = list(map(len, coms))
     mode_value, counts = mode(lengths)
     k, = mode_value
-    # nstars = list(map(len, coms))
-    # k = np.max(nstars)
+    # nsources = list(map(len, coms))
+    # k = np.max(nsources)
     features = np.concatenate(coms)
 
     # rescale each feature dimension of the observation set by stddev across
@@ -871,7 +866,7 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
 
 
 # def _sanitize_positions(xy):
-#     n, n_stars, _ = xy.shape
+#     n, n_sources, _ = xy.shape
 #     nans = np.isnan(np.ma.getdata(xy))
 #     bad = (nans | np.ma.getmask(xy)).any(-1)
 #     ignore_frames = bad.all(-1)
@@ -889,13 +884,13 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
 
 def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     """
-    Measure the relative positions of detected stars from the individual
+    Measure the relative positions of detected sources from the individual
     location measurements in xy. Use the locations of the most-often
     detected individual objects.
 
     Parameters
     ----------
-    xy:     array, shape (n_points, n_stars, 2)
+    xy:     array, shape (n_points, n_sources, 2)
     d_cut:  float
     detect_freq_min: float
         Required detection frequency of individual sources in order for
@@ -907,21 +902,21 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     """
     assert 0 < detect_freq_min < 1
 
-    n, n_stars, _ = xy.shape
+    n, n_sources, _ = xy.shape
     nans = np.isnan(np.ma.getdata(xy))
 
     # mask nans.  masked
     xy = np.ma.MaskedArray(xy, nans)
 
     # Due to varying image quality and or camera/telescope drift,
-    # some  stars (those near edges of the frame, or variable ones) may
+    # some  sources (those near edges of the frame, or variable ones) may
     # not be detected in many frames. Cluster centroids are not an accurate
-    # estimator of relative position for these stars since it's an
-    # incomplete sample. Only stars that are detected in at least
+    # estimator of relative position for these sources since it's an
+    # incomplete sample. Only sources that are detected in at least
     # `detect_freq_min` fraction of the frames will be used to calculate
     # frame xy offset.
     # Any measure of centrality for cluster centers is only a good estimator
-    # of the relative positions of stars when the camera offsets are
+    # of the relative positions of sources when the camera offsets are
     # taken into account.
 
     bad = (nans | np.ma.getmask(xy)).any(-1)
@@ -929,31 +924,31 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     n_ignore = ignore_frames.sum()
     n_use = n - n_ignore
     if n_ignore == n:
-        raise Exception('All points are masked!')
+        raise ValueError('All points are masked!')
 
     if n_ignore:
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values for position '
                     'measurement', n_ignore, n, n_ignore / n)
 
-    n_detections_per_star = np.zeros(n_stars, int)
+    n_detections_per_star = np.zeros(n_sources, int)
     w = np.where(~bad)[1]
     u = np.unique(w)
     n_detections_per_star[u] = np.bincount(w)[u]
 
     f_det = (n_detections_per_star / n_use)
-    use_stars = f_det > detect_freq_min
-    i_use, = np.where(use_stars)
+    use_sources = f_det > detect_freq_min
+    i_use, = np.where(use_sources)
     if not len(i_use):
-        raise Exception(
-            'Detected frequently for all sources appears to be too low. There '
-            'are {n_stars} objects across {n} images. Their detection '
+        raise ValueError(
+            'Detected frequency for all sources appears to be too low. There '
+            'are {n_sources} objects across {n} images. Their detection '
             'frequencies are: {fdet}.'
         )
 
-    if np.any(~use_stars):
-        logger.info('Ignoring {:d} / {:d} stars with low (<={:.0%}) detection '
+    if np.any(~use_sources):
+        logger.info('Ignoring {:d} / {:d} sources with low (<={:.0%}) detection '
                     'frequency for frame offset measurement.',
-                    n_stars - len(i_use), n_stars, detect_freq_min)
+                    n_sources - len(i_use), n_sources, detect_freq_min)
 
     # NOTE: we actually want to know where the cluster centres would be
     #  without a specific point to measure delta better
@@ -961,29 +956,29 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     # first estimate of relative positions comes from unshifted cluster centers
     # Compute cluster centres as geometric median
     good = ~ignore_frames
-    xyc = xy[good][:, use_stars]
-    nansc = nans[good][:, use_stars]
+    xyc = xy[good][:, use_sources]
+    nansc = nans[good][:, use_sources]
     if nansc.any():
         # prevent warning emit in _measure_positions_offsets
         xyc[nansc] = 0
         xyc[nansc] = np.ma.masked
 
-    # delay centre compute for fainter stars until after re-centering
-    # np.empty((n_stars, 2))  # ma.masked_all
-    centres = δxy = np.ma.masked_all((n_stars, 2))
+    # delay centre compute for fainter sources until after re-centering
+    # np.empty((n_sources, 2))  # ma.masked_all
+    centres = δxy = np.ma.masked_all((n_sources, 2))
     for i, j in enumerate(i_use):
         centres[j] = geometric_median(xyc[:, i])
 
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
-    σxy = np.empty((n_stars, 2))  # σxy = np.ma.masked_all((n_stars, 2))
+    σxy = np.empty((n_sources, 2))  # σxy = np.ma.masked_all((n_sources, 2))
 
     # compute positions of all sources with frame offsets measured from best
-    # and brightest stars
-    centres[use_stars], σxy[use_stars], δxy[good], out = \
-        _measure_positions_offsets(xyc, centres[use_stars], d_cut)
+    # and brightest sources
+    centres[use_sources], σxy[use_sources], δxy[good], out = \
+        _measure_positions_offsets(xyc, centres[use_sources], d_cut)
     #
-    for i in np.where(~use_stars)[0]:
+    for i in np.where(~use_sources)[0]:
         # mask for bad frames in δxy will propagate here
         recentred = xy[:, i].squeeze() - δxy
         centres[i] = geometric_median(recentred)
@@ -992,14 +987,18 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     # fix outlier indices
     idxf, idxs = np.where(out)
     idxg, = np.where(good)
-    idxu, = np.where(use_stars)
+    idxu, = np.where(use_sources)
     outlier_indices = (idxg[idxf], idxu[idxs])
     xy[outlier_indices] = np.ma.masked
 
     # pprint!
     if report:
-        #                                          counts
-        report_measurements(xy, centres, σxy, δxy, None, detect_freq_min)
+        try:
+            #                                          counts
+            report_measurements(xy, centres, σxy, δxy, None, detect_freq_min)
+
+        except Exception as err:
+            logger.exception('Report failed')
 
     return xy, centres, σxy, δxy, outlier_indices
 
@@ -1010,8 +1009,8 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
     # ensure we have at least some centres
     assert not np.all(np.ma.getmask(centres))
 
-    n, n_stars, _ = xy.shape
-    n_points = n * n_stars
+    n, n_sources, _ = xy.shape
+    n_points = n * n_sources
 
     outliers = np.zeros(xy.shape[:-1], bool)
     xym = np.ma.MaskedArray(xy, copy=True)
@@ -1020,16 +1019,16 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
     while True:
         count = next(counter)
         if count >= 5:
-            raise Exception('Emergency stop')
+            raise Exception('Emergency stop!')
 
         # xy position offset in each frame
         xy_offsets = (xym - centres).mean(1, keepdims=True)
 
-        # shifted cluster centers (all stars)
+        # shifted cluster centers (all sources)
         xy_shifted = xym - xy_offsets
         # Compute cluster centres as geometric median of shifted clusters
-        centres = np.ma.empty((n_stars, 2))
-        for i in range(n_stars):
+        centres = np.ma.empty((n_sources, 2))
+        for i in range(n_sources):
             centres[i] = geometric_median(xy_shifted[:, i])
 
         if d_cut is None:
@@ -1060,7 +1059,7 @@ def _measure_positions_offsets(xy, centres, d_cut=None):
         n_out = out.sum()
 
         if n_out / n_points > 0.5:
-            raise Exception('Too many outliers!!')
+            raise ValueError('Too many outliers!!')
 
         logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
                     n_out, n_points, (n_out / n_points), d_cut)
@@ -1127,32 +1126,34 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
                         detect_frac_min=None, count_thresh=None, logger=logger):
     # report on relative position measurement
     import operator as op
+    import math
 
     from recipes import pprint
     from motley.table import Table
-    from motley.utils import ConditionalFormatter
+    from motley.formatters import Decimal, Conditional, Numeric
     # from obstools.stats import mad
     # TODO: probably mask nans....
 
     #
-    n_points, n_stars, _ = xy.shape
-    n_points_tot = n_points * n_stars
+
+    n_points, n_sources, _ = xy.shape
+    n_points_tot = n_points * n_sources
 
     if np.ma.is_masked(xy):
         bad = xy.mask.any(-1)
         good = np.logical_not(bad)
         points_per_star = good.sum(0)
-        stars_per_image = good.sum(1)
+        sources_per_image = good.sum(1)
         n_noise = bad.sum()
-        no_detection, = np.where(np.equal(stars_per_image, 0))
+        no_detection, = np.where(np.equal(sources_per_image, 0))
         if len(no_detection):
-            logger.info(f'No stars detected in frames: {no_detection!s}')
+            logger.info(f'No sources detected in frames: {no_detection!s}')
 
         if n_noise:
             extra = (f'\nn_noise = {n_noise}/{n_points_tot} '
                      f'({n_noise / n_points_tot :.1%})')
     else:
-        points_per_star = np.tile(n_points, n_stars)
+        points_per_star = np.tile(n_points, n_sources)
         extra = ''
 
     # check if we managed to reduce the variance
@@ -1172,39 +1173,51 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     # FIXME: percentage format in total wrong
     # TODO: align +- values
     col_headers = ['x', 'y', 'n']  # '(px.)'
-    formatters = {'n': ftl.partial(pprint.decimal_with_percentage,
-                                   total=n_points, precision=0)}  #
-
-    if detect_frac_min is not None:
-        n_min = detect_frac_min * n_points
-        formatters['n'] = ConditionalFormatter('y', op.le, n_min,
-                                               formatters['n'])
+    n_min = (detect_frac_min or -math.inf) * n_points
+    formatters = {
+        'n': Conditional('y', op.le, n_min,
+                         Decimal.as_percentage_of(total=n_points,
+                                                  precision=0))}
 
     # get array with number ± std representations
     columns = [pprint.uarray(centres, σ_xy, 2)[:, ::-1], points_per_star]
     # FIXME: don't print uncertainties if less than 6 measurement points
 
+    # x, y = pprint.uarray(centres, σ_xy, 2)
+    # columns = {
+    #     'x': Column(x, unit='pixels'),
+    #     'y': Column(y, unit='pixels'),
+    #     'n': Column(points_per_star,
+    #                 fmt=Conditional('y', op.le, n_min,
+    #                                     Decimal.as_percentage_of(total=n_points,
+    #                                                                  precision=0)),
+    #                 total='{}')
+    # }
+
     if counts is not None:
-        # TODO highlight counts?
-        cn = 'counts'  # (ADU)
-        formatters[cn] = ftl.partial(pprint.numeric, thousands=' ', precision=1,
-                                     compact=False)
-        if count_thresh:
-            formatters[cn] = ConditionalFormatter('c', op.ge, count_thresh,
-                                                  formatters[cn])
+        # columns['counts'] = Column(
+        #     counts, unit='ADU',
+        #     fmt=Conditional('y', op.le, n_min,
+        #                         Percentage(total=n_points,
+        #                                        precision=0))
+        #     )
+
+        formatters['counts'] = Conditional(
+            'c', op.ge, (count_thresh or math.inf),
+            Numeric(thousands=' ', precision=1, shorten=False))
         columns.append(counts)
-        col_headers += [cn]
+        col_headers += ['counts']
 
     # add variance columns
     # col_headers += ['r_σx', 'r_σy'] + ['mr_σx', 'mr_σy']
     # columns += [var_reduc[:, ::-1], mad_reduc[:, ::-1]]
 
-    # tbl = np.ma.column_stack(columns)
+    #
     tbl = Table.from_columns(*columns,
                              title='Measured star locations',
                              title_props=TABLE_STYLE,
                              units=['pixels', 'pixels', ''],
-                             col_head=col_headers,
+                             col_headers=col_headers,
                              col_head_props=TABLE_STYLE,
                              col_head_align='^',
                              precision=3,
@@ -1234,7 +1247,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     >>> reg(image, fov)
     # match a new (partially overlapping) image to the reference image:
     >>> xy_offset, rotation = reg(new_image, new_fov)
-    # cross identify stars across images
+    # cross identify sources across images
     >>> reg.register()
     # plot a mosaic of the overlapping, images
     >>> mos = reg.mosaic()
@@ -1253,6 +1266,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: say something about the matching algorithm and that it's lightning
     #  fast for nearly_aligned images with few sources
 
+    # TODO: move to config
     find_kws = dict(snr=3.,
                     npixels=5,
                     edge_cutoff=2,
@@ -1265,24 +1279,22 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # Expansion factor for grid search
     _search_area_stretch = 1.25
 
-    # Sigma for GMM as a fraction of minimal distance between stars
+    # Sigma for GMM as a fraction of minimal distance between sources
     _dmin_frac_sigma = 3
+    _sigma_fallback = 10  # TODO: move to config
 
     # TODO: switch for units to arcminutes or whatever ??
     # TODO: uncertainty on center of mass from pixel noise!!!
 
     @classmethod
-    def from_hdus(cls, run, sample_stat='median', depth=10, primary=None,
+    def from_hdus(cls, run, sample_stat='median', depth=5, primary=None,
                   fit_angle=True, **find_kws):
         # get sample images etc
         # `from_hdu` is used since the sample image and source detection results
         # are cached (persistantly), so this should be fast on repeated calls.
-        images = []
-        for i, hdu in enumerate(run):
-            im = SkyImage.from_hdu(hdu, sample_stat, depth,
-                                   **{**cls.find_kws, **find_kws})
-            images.append(im)
-
+        images = [SkyImage.from_hdu(hdu, sample_stat, depth,
+                                    **{**cls.find_kws, **find_kws})
+                  for hdu in run]
         return cls(images, primary=primary, fit_angle=fit_angle, **find_kws)
 
     # @classmethod                # p0 -----------
@@ -1319,7 +1331,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                  primary=None, **find_kws):
         """
         Initialize an image register. This class should generally be initialized
-        without arguments. The model of the constellation of stars is built
+        without arguments. The model of the constellation of sources is built
         iteratively by calling an instance of this class on an image. eg:
         >>> ImageRegister()(image)
 
@@ -1350,12 +1362,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self._idx = 0
         self.count = 0
         if primary is None:
-            if (len(images) == 0):
-                primary = 0
-            else:
+            if len(images):
                 # align on image with highest source density if not specified
                 source_density = self.scales.mean(1) * self.attrs('seg.nlabels')
                 primary = source_density.argmax(0)
+            else:
+                primary = 0
+
+        elif len(images):
+            if (self.attrs('seg.nlabels')[primary]) < 2:
+                warnings.warn('Primary image {primary} contains too few sources.')
 
         self.fit_angle = bool(fit_angle)
         self._xy = None
@@ -1370,7 +1386,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # self._sigma_guess = self.guess_sigma(self.xy)
 
         # state variable placeholders
-        self.labels = self.n_stars = self.n_noise = None
+        self.labels = None
         self._colour_sequence_cache = ()
 
     def __repr__(self):
@@ -1477,6 +1493,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def n_points(self):
         return sum(map(len, self.coms))
 
+    # @property
+    def n_sources(self):
+        self.check_has_labels()
+        return len(set(self.labels) - {-1})
+
+    def n_noise(self):
+        self.check_has_labels()
+        return list(self.labels).count(-1)
+
     # @lazyproperty
     @property
     def xyt_block(self):
@@ -1488,6 +1513,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     @property
     def min_dist(self):
+        if len(self.xy) <= 1:
+            raise ValueError('Too few (< 2) sources in primary image frame.')
+
         return dist_flat(self.xy).min()
 
     # def min_dist(self):
@@ -1495,6 +1523,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def guess_sigma(self):
         """choose sigma for GMM based on distances between detections"""
+        if len(self.xy) <= 1:
+            logger.warning('Too few (< 2) sources in primary image frame to '
+                           'initialize GMM with an informed default. Using '
+                           'fallback value: {}', self._sigma_fallback)
+            return self._sigma_fallback
+
         return self.min_dist / self._dmin_frac_sigma
 
     @lazyproperty
@@ -1504,7 +1538,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return model
 
     def __call__(self, obj, *args, **kws):
-        if (obj is None) and (count == 0):
+        if (obj is None) and (self.count == 0):
             obj = self.data
 
         result = self.fit(obj, *args, **kws)
@@ -1549,14 +1583,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
 
         if (obj is None) and (self.count == 0):
-            # obj = self.data
+            self.check_has_data()
             # (re)fit all images
             obj = self[self.order]
             p0 = self.params[self.order]
             hop = (self._xy is None)
             refine = not hop
 
-        #
+        # dispatch fit
         refine = refine or self.refining
         fitters = {ImageRegister:           self.fit_register,
                    (np.ndarray, SkyImage):  self.fit_image,
@@ -1569,8 +1603,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
             raise TypeError(f'Cannot fit object of type {type(obj)}.')
 
         self.logger.opt(lazy=True).debug(
-            'Fitting: {!s}',
-            lambda: pp.caller(fit, (type(obj), p0, hop, refine, plot), kws)
+            'Fitting:{!s}',
+            lambda: indent(
+                f'\n{pp.caller(fit, (type(obj), p0, hop, refine, plot), kws)}'
+            )
         )
         result = fit(obj, p0, hop, refine, plot, **kws)
         self.count += 1
@@ -1611,6 +1647,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
 
         # convert coordinates to pixel coordinates of reference image
+        reg.check_has_data()
         xy, params = reg.convert_to_pixels_of(self)
 
         # use `fit_points` so we don't aggregate images just yet
@@ -1629,7 +1666,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
 
     def fit_hdu(self, hdu, p0=None, hop=True, refine=True,
-                plot=False, sample_stat='median', depth=10, **find_kws):
+                plot=False, sample_stat='median', depth=5, **find_kws):
         """
 
         Parameters
@@ -1703,15 +1740,23 @@ class ImageRegister(ImageContainer, LoggingMixin):
             dxy = self._dxy_hop(xyr, plot)
             p = p0 + [*dxy, 0]
 
-        if not hop or refine:
-            self.logger.debug('Refining fit via gradient descent.')
-            # do mle via gradient decent
-            self.model.fit_angle = self.fit_angle
-            p = self.model.fit(xy, p0=p0)
+        if not refine or hop:
+            return p
 
-        return p
+        if len(xy) == 1:
+            self.logger.info('Ignoring request to refine fit since the '
+                             'image contains only a single source.')
+            return p
+
+        self.logger.debug('Refining fit via gradient descent.')
+        # do mle via gradient decent
+        self.model.fit_angle = self.fit_angle
+        return self.model.fit(xy, p0=p0)
 
     def register(self, clf=None, plot=False):
+
+        self.check_has_data()
+
         # clustering + relative position measurement
         clf = clf or self.clustering
         self.cluster_points(clf)
@@ -1732,7 +1777,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     @property
     def labels_per_image(self):
         if self.labels is None:
-            raise Exception('Unregistered!')
+            raise ValueError('Unregistered!')
 
         # group_features(self.labels, self.labels)[0]
         return split_like(self.labels, self.coms)
@@ -1747,7 +1792,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # get cluster labels bright to faint
         counts, = group_features(self.labels, self.attrs.counts)
 
-        # get the labels of stars that are detected in at least one of the
+        # get the labels of sources that are detected in at least one of the
         # science frames
         detected = ~counts[1:].mask
         nb, = np.where(detected.any(0))
@@ -1802,7 +1847,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         # this ignores noise points from clustering
-        centres = np.empty((self.n_stars, 2))  # ma.masked_all
+        centres = np.empty((self.n_sources(), 2))  # ma.masked_all
         for i, xy in enumerate(np.rollaxis(self.xyt_block, 1)):
             centres[i] = geometric_median(xy)
 
@@ -1819,11 +1864,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def clustering(self, *args, **kws):
         """
         Classifier for clustering source coordinates in order to cross identify
-        stars.
+        sources.
         """
         from sklearn.cluster import MeanShift
 
-        # choose bandwidth based on minimal distance between stars
+        # choose bandwidth based on minimal distance between sources
         return MeanShift(**{**kws,
                             **dict(bandwidth=self.min_dist / 2,
                                    cluster_all=False)})
@@ -1831,43 +1876,48 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def cluster_points(self, clf=None):
         """
         Run clustering algorithm on the set of position measurements in order to 
-        cross identify stars.
+        cross identify sources.
         """
-        # clustering to cross-identify stars
-        assert len(self) > 1
+        # clustering to cross-identify sources
+        self.check_has_data()
+        if len(self) == 1:
+            logger.warning('{} contains only one image. Using position '
+                           'measurements from this image directly.',
+                           self.__class__.__name__)
+            self.xy = self[0].xy
+            self.labels = np.arange(len(self.xy))
+            return
 
         clf = clf or self.clustering
 
         X = np.vstack(self.xyt)
         n = len(X)
-        # stars_per_image = list(map(len, xy))
-        # no_detection = np.equal(stars_per_image, 0)
+        # sources_per_image = list(map(len, xy))
+        # no_detection = np.equal(sources_per_image, 0)
         # scaler = StandardScaler()
         # X = scaler.fit_transform(np.vstack(xy))
 
         self.logger.info('Clustering {:d} position measurements to cross '
-                         'identify sources using:\n\t{:s}', n, indent(str(clf)))
-        clf.fit(X)
-        labels = clf.labels_
+                         'identify sources using:{:s}', n, indent(f'\n{clf}'))
+        #
+        self.labels = clf.fit(X).labels_
+
         # core_samples_mask = (clf.labels_ != -1)
         # core_sample_indices_, = np.where(core_samples_mask)
 
         # Number of clusters in labels, ignoring noise if present.
-        self.n_stars = n_stars = len(set(labels)) - int(-1 in labels)
-        self.n_noise = n_noise = list(labels).count(-1)
+        n_sources = self.n_sources()
+        n_noise = self.n_noise()
         # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-        logger.info('Identified {:d} stars using {:d}/{:d} points ({:d} noise)',
-                    n_stars, n - n_noise, n, n_noise)
+        logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise)',
+                    n_sources, n - n_noise, n, n_noise)
 
         # sanity check
-        n_stars_most = max(map(len, self.coms))
-        if n_stars > n_stars_most * 1.5:
-            warnings.warn(f"Looks like we're overfitting clusters. Image with "
-                          f"most sources has {n_stars_most}, while clustering "
-                          f"produced {n_stars} clusters. Reduce bandwidth.")
-
-        #
-        self.labels = clf.labels_
+        n_sources_most = max(map(len, self.coms))
+        if n_sources > n_sources_most * 1.5:
+            warnings.warn("Looks like we're overfitting clusters. Image with "
+                          f'most sources has {n_sources_most}, while clustering'
+                          f' produced {n_sources} clusters. Reduce bandwidth.')
 
     # def check_labelled(self):
         # if not len(self):
@@ -1883,17 +1933,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         Plot the identified sources (clusters) in a single frame
         """
-        if not len(self):
-            raise Exception(
-                'No data. Please add some images first. eg: '
-                '{self.__class__.__name__}()(image, fov)'
-            )
-
-        if self.labels is None:
-            raise Exception(
-                'No clusters identified. Run `register` to fit '
-                'clustering model to the measured centre-of-mass points'
-            )
+        self.check_has_data()
+        self.check_has_labels()
 
         n = len(self)
         fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
@@ -1914,6 +1955,20 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #                   tuple(zip((0, 0), ishape)))))
         return art
 
+    def check_has_labels(self):
+        if self.labels is None:
+            raise ValueError(
+                'No cluster labels available. Run `register` to fit '
+                'clustering model to the measured centre-of-mass points.'
+            )
+
+    def check_has_data(self):
+        if len(self):
+            return
+
+        raise ValueError('No data. Please add some images first. eg: '
+                         '{self.__class__.__name__}()(image, fov)')
+
     def recentre(self, centre_distance_cut=None, f_detect_measure=0.25,
                  plot=False):
         """
@@ -1921,7 +1976,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         This re-centering algorithm can accurately measure the position of
         sources in the global frame taking frame-to-frame offsets into
         account. The xy offset of each image is measured from the mean
-        xy-offset of the brightest stars from their respective cluster centres.
+        xy-offset of the brightest sources from their respective cluster centres.
         Once all the frames have been shifted, we re-compute the cluster
         centers using the geometric median.  We check that the new positions
         yield clusters that are more tightly bound, (ie. offset transformation
@@ -2307,7 +2362,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             r = np.divide(self.fovs[i], image.shape) / self.pixel_scale
             p = self.params[i]
             seg = self.detections[i].dilate(2, copy=True)
-            for sub, g in seg.coslice(image, np.indices(image), flatten=True):
+            for sub, g in seg.cutouts(image, np.indices(image), flatten=True):
                 g = transform.rigid(g.reshape(-1, 2) * r, p)
                 grid.extend(g)
                 pixels.extend(sub.ravel())
@@ -2337,7 +2392,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # def fit_image_brute(self, image, fov, rotation=0., step_size=0.05,
     #                       return_coords=False, plot=False, sigma_gmm=0.03):
     #
-    #     seg, yx, counts = self.find_stars(image, fov)
+    #     seg, yx, counts = self.find_sources(image, fov)
     #     return self.fit_points_brute(yx, fov, rotation, step_size,
     #                                    return_coords, plot, sigma_gmm)
 
@@ -2364,7 +2419,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                         label=dict(color='w', size='xx-small'),
                         tabbed=True):
 
-        reorder = op.itemgetter(*(self.order + 1))
+        reorder = op.itemgetter(*(self.order + isinstance(self, ImageRegisterDSS)))
         segments = reorder(self.detections)
         images = reorder(self.images)
 
@@ -2379,8 +2434,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
             #img.save(loc / f'{hdu.file.stem}-ragged.png')
 
         if tabbed:
-            from scrawl.multitab import MplMultiTab
-            
+            from mpl_multitab import MplMultiTab
+
             ui = MplMultiTab(figures=figures)
             ui.show()
             return ui
@@ -2484,7 +2539,7 @@ class ImageRegisterDSS(ImageRegister):
     #
     #     #
     #     use = np.ones(len(xy), bool)
-    #     # ignore stars not detected in dss, but detected in sample image
+    #     # ignore sources not detected in dss, but detected in sample image
     #     use[labels == 0] = False
     #     # ignore labels that are detected as 2 (or more) sources in the
     #     # sample image, but only resolved as 1 in dss
