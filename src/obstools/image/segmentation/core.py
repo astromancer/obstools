@@ -17,17 +17,17 @@ from scipy import ndimage
 from loguru import logger
 from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
-from photutils.segmentation import SegmentationImage
+from photutils.segmentation import SegmentationImage, deblend_sources
 
 # local
 import motley
 import motley.image
 from pyxides.vectorize import vdict
-from recipes import api
-from recipes.dicts import pformat
 from recipes.functionals import echo
 from recipes.logging import LoggingMixin
+from recipes.pprint import formatters as fmt
 from recipes.utils import duplicate_if_scalar
+from recipes import api, dicts, pprint, string
 
 # relative
 from ... import io
@@ -37,18 +37,27 @@ from .trace import trace_boundary
 from .groups import LabelGroupsMixin, auto_id
 
 
-# from .detect import sigma_threshold
-
-
-# TODO: watershed segmentation on the negative image ?
-# TODO: detect_gmm():
-
-
 #
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
+
+STAT_FMT = {
+
+    'flux': ('Flux [ADU]',
+             lambda x: pprint.uarray(*x, thousands=' ')),
+    # fmt.Measurement(fmt.Decimal(0), thousands=' ', unit='ADU').unicode.starmap
+    'com': ('Position (y, x) [px]',
+            fmt.Collection(fmt.Decimal(1, short=False), brackets='()').map),
+    'areas': ('Area [px²]',
+              fmt.Decimal(0).map),
+    'roundness': ('Roundness',
+                  fmt.Decimal(3).map)
+}
+
 # ---------------------------------------------------------------------------- #
+
+
 def is_lazy(_):
     return isinstance(_, lazyproperty)
 
@@ -2200,6 +2209,93 @@ class SegmentedImage(SegmentationImage,     # base
     # alias
     show_console = show_terminal
 
+    def format_cutouts_console(self, image, labels=..., extend=1, cmap=None,
+                               statistics=(), **kws):
+
+        labels, sections, cutouts = zip(*self.cutouts(image, self.to_binary(),
+                                                      labelled=True, with_slices=True,
+                                                      extend=extend))
+        thumbs = []
+        for img, (ys, xs) in zip(motley.image.thumbnails(*zip(*cutouts), cmap=cmap),
+                                 sections):
+            # Tick labels
+            y0, y1 = ys.start, ys.stop
+            x0, x1 = xs.start, xs.stop
+            xticks = [''] * (x1 - x0 + 1)
+            xticks[::2] = range(x0, x1 + 1, 2)
+            yticks = [''] * (y1 - y0 + 1)
+            yticks[::2] = range(y0, y1 + 1, 2)
+            thumbs.append(
+                img.format(frame='[', xticks=xticks, yticks=yticks)
+            )
+
+        row_headers = None
+        if statistics:
+            thumbs = [thumbs]
+            row_headers = ['Image']
+            for stat in statistics:
+                header, fmt = STAT_FMT.get(stat, (echo, ''))
+                result = (func_or_result(image, labels)
+                          if callable(func_or_result := getattr(self, stat))
+                          else func_or_result)
+                thumbs.append(fmt(result))
+                row_headers.append(header)
+
+        tbl = motley.table.Table(thumbs,
+                                 col_headers=labels,
+                                 row_headers=row_headers,
+                                 order='c',
+                                 **kws)
+
+        # HACK to fix table rendering space issues with combining characters..
+        # -------------------------------------------------------------------- #
+
+        x = f'{motley.textbox.MAJOR_TICK_TOP}\x1b[0m'
+        s = str(tbl).replace(x, f'{x} ')
+
+        if tbl.ncols < 3:
+            return s
+
+        def _needs_fix(line):
+            i, j = 0, 0
+            while i != -1:
+                i = line.find('⎪', i + 1)
+                if line[i - 2:i].isspace():
+                    yield j
+                j += 1
+
+        def _fix_line(line, needs_fix):
+            j = 0
+            for i, k in enumerate(string.where(line, '⎪')):
+                if i in needs_fix:
+                    yield line[j:k-2]
+                    j = k
+            yield line[j:]
+
+        s = str(tbl).replace(x, f'{x} ')
+
+        top, *lines = s.splitlines(keepends=True)
+
+        if title := kws.get('title'):
+            title_line, *lines = lines
+
+        header, ticks, first, *lines = lines
+        needs_fix = list(_needs_fix(first))[bool(statistics):]
+        extra_space = 2 * len(needs_fix)
+        o = top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
+        if title:
+            o += title_line.replace(f'{title:^{len(title) + extra_space}}', title)
+
+        
+        o += ''.join(_fix_line(header, needs_fix)) + ticks
+        for line in [first, *lines]:
+            o += ''.join(_fix_line(line, needs_fix))
+
+        return o
+
+    def show_cutouts_console(self, image, labels=None, extend=1, cmap=None, **kws):
+        print(self.format_cutouts_console(image, labels, extend, cmap, **kws))
+
     def get_cmap(self, cmap=None):
         # colour map
         if cmap is None:
@@ -2211,7 +2307,7 @@ class SegmentedImage(SegmentationImage,     # base
     def format_ansi(self, show_labels=True, frame=True, origin=0, cmap=None):
 
         # colour map
-        im = AnsiImage(self.data, self.get_cmap(cmap), origin).format(frame)
+        im = motley.image.AnsiImage(self.data, self.get_cmap(cmap), origin).format(frame)
 
         # get positions / str for labels
         if show_labels:
