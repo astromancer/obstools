@@ -72,8 +72,10 @@ class BootstrapResample(LoggingMixin):
         if subset is ...:
             subset = size
 
-        # make a slice
-        subset = slice(*duplicate_if_scalar(subset, 1, raises=False))
+        if not isinstance(subset, slice):    
+            # make a slice
+            subset = slice(*duplicate_if_scalar(subset, 1, raises=False))
+        
         *interval, _ = subset.indices(size)
         i, j = interval
         isize = j - i
@@ -165,9 +167,9 @@ class ImageSamplerMixin:
 
         return BootstrapResample(data)
 
-    # since this function deals with random statistics, caching is disabled by
-    # default. We enable this cache in the pipeline to reduce unnecessary repeat
-    # computation
+    # NOTE: since this function deals with random statistics, caching is
+    # disabled by default. We enable this cache in the pipeline to reduce
+    # unnecessary repeat computation.
     @cached(cachePaths.samples, typed={'self': _hdu_hasher}, enabled=False)
     def get_sample_image(self, stat='median', min_depth=5, subset=...):
         """

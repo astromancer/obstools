@@ -1,18 +1,10 @@
 
-# std
-import logging
-import itertools as itt
-
 # third-party
 import numpy as np
-import more_itertools as mit
 
 # local
-from recipes.logging import get_module_logger
 from recipes.dicts import AttrReadItem, ListLike
 
-
-from loguru import logger
 
 class auto_id:
     """Enable automatic group labeling"""
@@ -52,11 +44,10 @@ class LabelGroups(Record):
 class LabelGroupsMixin:
     """Mixin class for grouping and labelling image segments"""
 
-    # def get_group_name(self, template):
+    _groups = None
 
     def __init__(self, groups=None):
-        self._groups = None
-        self.set_groups(groups)
+        self.groups = groups
 
     @property
     def groups(self):

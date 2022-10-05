@@ -22,6 +22,8 @@ from motley.table import Table
 from ..modelling import UnconvergedOptimization
 from .segmentation import SegmentedImage, groups
 
+# TODO: watershed segmentation on the negative image ?
+# TODO: detect_gmm():
 
 DEFAULT_ALGORITHM = 'sigma_threshold'
 # ---------------------------------------------------------------------------- #

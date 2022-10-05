@@ -154,7 +154,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     def iter_region_data(self, keys, *data, **kws):
         #
         seg = self.seg
-        for label, subs in seg.coslice(*data, labels=keys, enum=True, **kws):
+        for label, subs in seg.cutouts(*data, labels=keys, enum=True, **kws):
             yield seg.slices[label], subs
 
     # def fit(self, data, stddev=None, **kws):
@@ -206,7 +206,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     # def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
     #
     #     # iterator for data segments
-    #     subs = self.seg.coslice(data, stddev, labels=labels,masked=True)
+    #     subs = self.seg.cutouts(data, stddev, labels=labels,masked=True)
     #
     #     # # get slices
     #     # slices = self.seg.get_slices(labels)
@@ -226,7 +226,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     #         if p0 is not None:
     #             kws['p0'] = p0[model.name]
     #
-    #         # select data # this does the job of coslice
+    #         # select data # this does the job of cutouts
     #         # sub = np.ma.array(data[seg])
     #         # sub[..., self.seg.masks[label]] = np.ma.masked
     #         # std = None if (stddev is None) else stddev[..., slice_]
@@ -284,7 +284,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     #     flatten = kws.pop('flatten', False)
     #
     #     # iterator for data segments
-    #     subs = self.seg.coslice(data, std, labels=labels, masked=mask,
+    #     subs = self.seg.cutouts(data, std, labels=labels, masked=mask,
     #                             flatten=flatten)
     #
     #     # indexer for results container

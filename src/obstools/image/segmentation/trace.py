@@ -105,8 +105,7 @@ def trace_boundary(b, stop=int(1e4)):
                     boundary.append(boundary[-1] + EDGES[tuple(mv)])
 
                 # check if we are done. Jacob's stopping criterion
-                done = (current == start).all() and (mv == (0, -1)).all()
-                if done:
+                if done := (current == start).all() and (mv == (0, -1)).all():
                     # close the perimeter
                     perimeter += step_size
                     break

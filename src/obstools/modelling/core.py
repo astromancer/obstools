@@ -1099,7 +1099,7 @@ class CompoundModel(Model):
             if p0 is not None:
                 kws['p0'] = p0[model.name]
 
-            # select data -- does the same job as `SegmentedImage.coslice`
+            # select data -- does the same job as `SegmentedImage.cutouts`
             # sub = np.ma.array(data[seg])
             # sub[..., self.seg.masks[label]] = np.ma.masked
             # std = None if (stddev is None) else stddev[..., slice_]

@@ -14,6 +14,8 @@ from astropy.io.fits.hdu import PrimaryHDU
 # local
 from recipes.dicts import pformat
 
+# ---------------------------------------------------------------------------- #
+
 
 class keep:
     pass
@@ -35,11 +37,62 @@ class IndexHelper:
 
 _s = IndexHelper()
 
+# ---------------------------------------------------------------------------- #
+
+
+class CalibrationImageDescriptor:
+    """Descriptor class for calibration images"""
+
+    # Orientation = ImageOrientBase
+
+    def __init__(self, name):
+        self.name = f'_{name}'
+
+    def __get__(self, instance, kls):
+        # lookup from class                  lookup from instance
+        return self if instance is None else getattr(instance, self.name)
+
+    def __set__(self, instance, value):
+        if value is keep:
+            return
+
+        # Sub-framing
+        sub = getattr(instance.hdu, 'subrect', ...)
+        # set array as ImageCalibrator instance attribute '_dark' or '_flat'
+        img = get_array(value)
+        if img is not None:
+            img = img[sub]
+
+        setattr(instance, self.name, img)
+
+    def __delete__(self, instance):
+        setattr(instance, self.name, None)
+
+
+def get_array(hdu):
+    if hdu is None:
+        return
+
+    if isinstance(hdu, ImageCalibratorMixin):
+        # The image is an HDU object
+        # ensure consistent orientation between image - and calibration data
+        # NOTE: The flat fields will get debiased here. An array is returned
+        img = hdu.calibrated  # [instance.hdu.oriented.orient]
+    elif isinstance(img, PrimaryHDU):
+        img = img.data
+
+    img = np.asanyarray(img)
+    if img.ndim != 2:
+        raise ValueError(f'Calibration image must be 2d, not '
+                         f'{img.ndim}d.')
+
+    return img
+
 
 class ImageOrienter:
     """
-    Simple base class that stores the orientation state. Images are
-    re-oriented upon item access.
+    Simple base class that stores the orientation state. Images are re-oriented
+    upon item access.
     """
 
     def __init__(self, hdu, flip='', x=False, y=False):
@@ -100,64 +153,14 @@ class ImageOrienter:
         return self.hdu.data[self.orient]
 
 
-class CalibrationImage:
-    """Descriptor class for calibration images"""
-
-    # Orientation = ImageOrientBase
-
-    def __init__(self, name):
-        self.name = f'_{name}'
-
-    def __get__(self, instance, kls):
-        if instance is None:
-            return self  # lookup from class
-        return getattr(instance, self.name)
-
-    def __set__(self, instance, value):
-        if value is keep:
-            return
-
-        # Sub-framing
-        sub = getattr(instance.hdu, 'subrect', ...)
-        # set array as ImageCalibrator instance attribute '_dark' or '_flat'
-        img =  get_array(value)
-        if img is not None:
-            img = img[sub]
-            
-        setattr(instance, self.name, img)
-
-    def __delete__(self, instance):
-        setattr(instance, self.name, None)
-
-
-def get_array(hdu):
-    if hdu is None:
-        return
-
-    if isinstance(hdu, ImageCalibratorMixin):
-        # The image is an HDU object
-        # ensure consistent orientation between image - and calibration data
-        # NOTE: The flat fields will get debiased here. An array is returned
-        img = hdu.calibrated  # [instance.hdu.oriented.orient]
-    elif isinstance(img, PrimaryHDU):
-        img = img.data
-
-    img = np.asanyarray(img)
-    if img.ndim != 2:
-        raise ValueError(f'Calibration image must be 2d, not '
-                         f'{img.ndim}d.')
-
-    return img
-
-
-
 class ImageCalibrator(ImageOrienter):
     """
     Do calibration arithmetic for CCD images on the fly!
     """
+    
     # init the descriptors
-    dark = CalibrationImage('dark')
-    flat = CalibrationImage('flat')
+    dark = CalibrationImageDescriptor('dark')
+    flat = CalibrationImageDescriptor('flat')
 
     def __init__(self, hdu, dark=keep, flat=keep):
 
