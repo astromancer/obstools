@@ -1,5 +1,5 @@
 """
-Display image cutouts in the console.
+Display segmented images and image cutouts.
 """
 
 # third-party
@@ -27,44 +27,39 @@ STAT_FMT = {
                   fmt.Decimal(3).map)
 }
 
+# ---------------------------------------------------------------------------- #
 
-# def source_thumbnails_terminal(image, seg, top,
-#                                cmap='cmr.voltage_r', contour_color='r',
-#                                title=None,
-#                                label_fmt='{{label:d|B_}: ^{width}}'):
-#     """
-#     Cutout image thumbnails displayed as a grid in terminal
 
-#     Parameters
-#     ----------
-#     image : np.ndarray
-#         Image array with sources to display.
-#     seg : obstools.image.segmentation.SegmentedImage
-#         The segmented image of detected sources
-#     top : int
-#         Number of brightest sources to display images for.
-#     image_cmap : str, optional
-#         Colour map, by default 'cmr.voltage_r'.
-#     contour_color : str, optional
-#         Colour for the overlaid contour, by default 'r'.
-#     label_fmt : str, optional
-#         Format string for the image titles, by default
-#         '{{label:d|Bu}: ^{width}}'. This will produce centre justified lables in
-#         bold, underlined text above each image.
+class ContourLegendHandler:
+    def legend_artist(self, legend, orig_handle, fontsize, handlebox):
+        x0, y0 = handlebox.xdescent, handlebox.ydescent
+        x, y = orig_handle.get_data()
+        scale = max(x.ptp(), y.ptp()) / handlebox.height
+        line = Line2D((x - x.min()) / scale + x0, (y - y.min()) / scale + y0)
+        line.update_from(orig_handle)
+        line.set_alpha(1)
+        handlebox.add_artist(line)
+        return line
 
-#     """
-#     #    contour_cmap='hot'):
-#     # contours_cmap = seg.get_cmap(contour_cmap)
-#     #line_colours  = cmap(np.linspace(0, 1, top))
 
-#     labels = seg.labels[:top]
-#     image_stack = np.ma.array(seg.thumbnails(image, labels, True, True))
-#     return motley.image.thumbnails(image_stack.data, image_stack.mask,
-#                                    cmap, contour_color,
-#                                    title, labels, label_fmt)
+def make_contour_legend_proxies(lc, **kws):
+    for points, color in zip(lc.get_segments(), lc.get_colors()):
+        yield Line2D(*points.T, color=color, **kws)
+
+# ---------------------------------------------------------------------------- #
 
 
 class SegmentPlotter:
+    """
+    Helper class for plotting segmented images in various formats.
+    """
+
+    @lazyproperty
+    def console(self):
+        return ConsoleFormatter(self.seg)
+
+    # alias
+    terminal = console
 
     def __init__(self, seg):
         self.seg = seg
@@ -122,6 +117,14 @@ class SegmentPlotter:
 
         return im
 
+    def get_cmap(self, cmap=None):
+        # colour map
+        if cmap is None:
+            return self.seg.make_cmap()
+
+        from matplotlib.pyplot import get_cmap
+        return get_cmap(cmap)
+
     def labels(self, ax, **kws):
         import matplotlib.patheffects as path_effects
 
@@ -141,20 +144,31 @@ class SegmentPlotter:
 
         return texts
 
-    def get_cmap(self, cmap=None):
-        # colour map
-        if cmap is None:
-            return self.seg.make_cmap()
+    # ------------------------------------------------------------------------ #
+    # TODO: SegmentedImageContours ??
 
-        from matplotlib.pyplot import get_cmap
-        return get_cmap(cmap)
-
-    def contours(self, ax, labels=None, **kws):
+    def contours(self, ax, labels=None, legend=False, **kws):
         lines = self.get_contours(labels, **kws)
         ax.add_collection(lines)
-        return lines
 
-        # TODO: SegmentedImageContours ??
+        if legend:
+            from matplotlib.lines import Line2D
+
+            # legend defaults
+            kws = dict(title='Segments',
+                       title_fontproperties={'weight': 'bold'},
+                       loc='upper right',
+                       bbox_to_anchor=(-0.1, 1),
+                       handler_map={Line2D: ContourLegendHandler()})
+            if isinstance(legend, dict):
+                kws.update(dict)
+
+            labels = self.seg.resolve_labels(labels)
+            ax.legend(make_contour_legend_proxies(lines, linewidth=1.2),
+                      map(str, labels),
+                      **kws)
+
+        return lines
 
     def get_contours(self, labels=None, **kws):
         """
@@ -187,15 +201,11 @@ class SegmentPlotter:
         kws.setdefault('colors', cmap(colors / colors.max()))
         return LineCollection(list(mit.flatten(contours)), **kws)
 
-    @lazyproperty
-    def console(self):
-        return ConsoleFormatter(self.seg)
-
-    # alias
-    terminal = console
-
 
 class ConsoleFormatter:
+    """
+    Display images and image cutouts in the console.
+    """
 
     def __init__(self, seg):
         self.seg = seg
@@ -392,3 +402,39 @@ class ConsoleFormatter:
             o += ''.join(_fix_line(line, needs_fix))
 
         return o
+
+
+# def source_thumbnails_terminal(image, seg, top,
+#                                cmap='cmr.voltage_r', contour_color='r',
+#                                title=None,
+#                                label_fmt='{{label:d|B_}: ^{width}}'):
+#     """
+#     Cutout image thumbnails displayed as a grid in terminal
+
+#     Parameters
+#     ----------
+#     image : np.ndarray
+#         Image array with sources to display.
+#     seg : obstools.image.segmentation.SegmentedImage
+#         The segmented image of detected sources
+#     top : int
+#         Number of brightest sources to display images for.
+#     image_cmap : str, optional
+#         Colour map, by default 'cmr.voltage_r'.
+#     contour_color : str, optional
+#         Colour for the overlaid contour, by default 'r'.
+#     label_fmt : str, optional
+#         Format string for the image titles, by default
+#         '{{label:d|Bu}: ^{width}}'. This will produce centre justified lables in
+#         bold, underlined text above each image.
+
+#     """
+#     #    contour_cmap='hot'):
+#     # contours_cmap = seg.get_cmap(contour_cmap)
+#     #line_colours  = cmap(np.linspace(0, 1, top))
+
+#     labels = seg.labels[:top]
+#     image_stack = np.ma.array(seg.thumbnails(image, labels, True, True))
+#     return motley.image.thumbnails(image_stack.data, image_stack.mask,
+#                                    cmap, contour_color,
+#                                    title, labels, label_fmt)
