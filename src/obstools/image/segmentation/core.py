@@ -12,7 +12,6 @@ from collections import abc, defaultdict, namedtuple
 
 # third-party
 import numpy as np
-import more_itertools as mit
 from scipy import ndimage
 from loguru import logger
 from joblib import Parallel, delayed
@@ -20,20 +19,18 @@ from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage, deblend_sources
 
 # local
-import motley
-import motley.image
 from pyxides.vectorize import vdict
+from recipes import api, dicts
 from recipes.functionals import echo
 from recipes.logging import LoggingMixin
-from recipes.pprint import formatters as fmt
 from recipes.utils import duplicate_if_scalar
-from recipes import api, dicts, pprint, string
 
 # relative
 from ... import io
 from ...utils import prod
 from ..utils import shift_combine
 from .trace import trace_boundary
+from .display import SegmentPlotter
 from .groups import LabelGroupsMixin, auto_id
 
 
@@ -41,19 +38,6 @@ from .groups import LabelGroupsMixin, auto_id
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
-
-STAT_FMT = {
-
-    'flux': ('Flux [ADU]',
-             lambda x: pprint.uarray(*x, thousands=' ')),
-    # fmt.Measurement(fmt.Decimal(0), thousands=' ', unit='ADU').unicode.starmap
-    'com': ('Position (y, x) [px]',
-            fmt.Collection(fmt.Decimal(1, short=False), brackets='()').map),
-    'areas': ('Area [px²]',
-              fmt.Decimal(0).map),
-    'roundness': ('Roundness',
-                  fmt.Decimal(3).map)
-}
 
 # ---------------------------------------------------------------------------- #
 
@@ -166,7 +150,7 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     #                     |              |
     #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
     # After dilating post merger, we end up with two labels for a single source
-    # We fix these by running the "blend" routine.  Note that this will
+    # We fix these by running the "blend" routine. Note that this will
     #  actually blend blend sources that are touching but are actually
     #  distinct sources eg:
     #                     __________________
@@ -475,9 +459,9 @@ class SliceDict(vdict):
 #         Create container of slices from SegmentationImage, Slice instance, or
 #         from list of 2-tuples of slices.
 #
-#         Slices are stored in a numpy object array.  The first item in the
+#         Slices are stored in a numpy object array. The first item in the
 #         array is a slice that will return the entire object to which it is
-#         passed as item getter.  This represents the "background" slice.
+#         passed as item getter. This represents the "background" slice.
 #
 #         Parameters
 #         ----------
@@ -922,7 +906,7 @@ class SegmentedImage(SegmentationImage,     # base
     # Properties
     # --------------------------------------------------------------------------
     def _reset_lazy_properties(self):
-        """Reset all lazy properties.  Will work for subclasses"""
+        """Reset all lazy properties. Will work for subclasses"""
         for key, _ in inspect.getmembers(self.__class__, is_lazy):
             self.__dict__.pop(key, None)
         # TODO: base class method should suffice in recent versions - remove
@@ -967,7 +951,7 @@ class SegmentedImage(SegmentationImage,     # base
     @lazyproperty
     def slices(self):
         """
-        Segment bounding boxes as dict of tuple of slices.  The object
+        Segment bounding boxes as dict of tuple of slices. The object
         returned by this method has builtin vectorized item getting, so you
         can get many slices at once (as a list) by indexing it with a tuple,
         list, or np.ndarray.
@@ -1029,7 +1013,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def make_cmap(self, background_color='#000000', seed=seed):
         # this function fails for all zero data since `make_random_cmap`
-        # squeezes the rgb values into an array with shape (3,).  The parent
+        # squeezes the rgb values into an array with shape (3,). The parent
         # tries to set the background colour (a tuple) in the 0th position of
         # this array and fails. This overwrite would not be necessary if
         # `make_random_cmap` did not squeeze
@@ -1048,8 +1032,8 @@ class SegmentedImage(SegmentationImage,     # base
     def resolve_labels(self, labels=None, ignore=None, allow_zero=False):
         """
 
-        Get the list of labels from input.  Default is to return the
-        full list of unique labels in the segmentation image.  If a sequence
+        Get the list of labels from input. Default is to return the
+        full list of unique labels in the segmentation image. If a sequence
         of labels is provided, this method will check whether they are valid
         - i.e. contained in the segmentation image.
 
@@ -1223,9 +1207,9 @@ class SegmentedImage(SegmentationImage,     # base
         start
         shape
         type_:
-            The desired type of output.  Can be any class (or callable) that
+            The desired type of output. Can be any class (or callable) that
             accepts an array as initializer, but will typically be a subclass of
-            `SegmentationImage`, or an `np.ndarray`.  If None (default),
+            `SegmentationImage`, or an `np.ndarray`. If None (default),
             an instance of this class is returned.
 
         Returns
@@ -1459,9 +1443,9 @@ class SegmentedImage(SegmentationImage,     # base
                              f'{shape}')
 
         # TODO: maybe use numpy.broadcast_arrays if you want to do stats on
-        #  higher dimensional data sets using this class.  You will have to
+        #  higher dimensional data sets using this class. You will have to
         #  think carefully on how to managed masked points, since replacing a
-        #  label in the seg data will only work for 2d data.  May have to
+        #  label in the seg data will only work for 2d data. May have to
         #  resort to `labelled_comprehension`
 
     def _relabel_masked(self, image, masked_pixels_label=None):
@@ -1527,7 +1511,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         Parameters
         ----------
-        image: ndarray
+        image: ndarray or np.ma.MaskedArray
             2d image or 3d image stack (video).
         labels: sequence of int
             Labels to use.
@@ -1599,7 +1583,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def snr(self, image, labels=None, bg=(0,)):
         """
-        A signal-to-noise ratio estimate.  Calculates the SNR by taking the
+        A signal-to-noise ratio estimate. Calculates the SNR by taking the
         ratio of total background subtracted flux to the total estimated
         uncertainty (including poisson, sky, and instrumental noise) in each
         segment as per Merlin & Howell '95
@@ -1870,7 +1854,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def blend(self):
         """
-        Inverse operation of `deblend`.  Merge segments that are touching
+        Inverse operation of `deblend`. Merge segments that are touching
         but have different labels.
         """
 
@@ -1943,7 +1927,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def add_segments(self, data, label_insert=None, copy=False, group_id=None):
         """
-        Add segments from another SegmentationImage.  New segments will
+        Add segments from another SegmentationImage. New segments will
         over-write old segments in the pixel positions where they overlap.
 
         Parameters
@@ -2049,8 +2033,9 @@ class SegmentedImage(SegmentationImage,     # base
             if not keep[i]:
                 count += 1
                 self.logger.debug(
-                    'Discarding %i of %i at coords (%3.1f, %3.1f)',
-                    count, len(coords), *coords[i])
+                    'Discarding {} of {} at coords ({:3.1f}, {:3.1f})',
+                    count, len(coords), *coords[i]
+                )
 
         return keep
 
@@ -2096,259 +2081,12 @@ class SegmentedImage(SegmentationImage,     # base
                 pos[label] = yx[i][None]
         return pos
 
-    def show(self, cmap=None, contours=False, bbox=False, label=True,
-             **kws):
-        # TODO: DisplayMixin: seg.show(), seg.show.term(), seg.show.overlay
-        #       seg.show.labels()
-        """
-        Plot the segmented image using the `ImageDisplay` class.
-
-
-        Parameters
-        ----------
-        cmap: str
-            Colourmap name.
-        contours: bool
-            Should contours be drawn around object perimeters.
-        bbox: bool
-            Should rectangles be drawn representing the segment bounding boxes.
-        label: bool
-            Should the segments be labelled with numbers on the image.
-        kws:
-            passed to `ImageDisplay` class.
-
-        Returns
-        -------
-        im: `ImageDisplay` instance
-        """
-        from scrawl.imagine import ImageDisplay
-
-        # draw segment labels
-        # draw_labels = kws.pop('draw_labels', True)
-        draw_rect = kws.pop('draw_rect', False)
-
-        # use categorical colormap (random, muted colours)
-        cmap = 'gray' if (self.nlabels == 0) else self.make_cmap()
-        # conditional here prevents bork on empty segmentation image
-
-        kws.setdefault('sliders', False)
-        kws.setdefault('hist', False)
-        kws.setdefault('cbar', False)
-
-        # plot
-        im = ImageDisplay(self.data, cmap=cmap, clim=(0, self.max_label), **kws)
-
-        if contours:
-            lines = self.get_contours()
-            im.ax.add_collection(lines)
-
-        if bbox:
-            self.slices.plot(im.ax)
-
-        if label:
-            # add label text (number) on each segment
-            self.show_labels(im.ax, color='w', alpha=0.5,
-                             fontdict=dict(weight='bold'))
-
-        return im
+    # ------------------------------------------------------------------------ #
+    @lazyproperty
+    def show(self):
+        return SegmentPlotter(self)
 
     plot = display = show
-
-    def show_labels(self, ax, **kws):
-
-        import matplotlib.patheffects as path_effects
-
-        kws = {**dict(va='center', ha='center'), **kws}
-        texts = []
-        for lbl, pos in self._label_positions().items():
-            for x, y in pos[:, ::-1]:
-                txt = ax.text(x, y, str(lbl), **kws)
-
-                # add border around text to make it stand out (like the arrows)
-                txt.set_path_effects([
-                    path_effects.Stroke(linewidth=1, foreground='black'),
-                    path_effects.Normal()
-                ])
-                texts.append(txt)
-
-        return texts
-
-    plot_labels = draw_labels = show_labels
-
-    def show_terminal(self, show_labels=True, frame=True, origin=0):
-        """
-        A lightweight visualization of the segmented image for display in the
-        console.  This creates a string with colourised "pixels" using ANSI
-        escape sequences. Useful for visualising source cutouts or small
-        segmented images.  The string representation is printed to stdout and
-        returned by this function.
-
-
-        The string returned by this function, when printed, might look
-        something like this, but with the different segments each coloured
-        according to its label:
-
-           _________________________________________________
-           |                                               |
-           |                          ██                   |
-           |         ██             ██████        ██       |
-           |       ██████             ██        ████       |
-           |     ██████████                         ██     |
-           |       ██████                                  |
-           |         ██                                    |
-           |                                ████           |
-           |               ██             ████████         |
-           |             ██████             ██████         |
-           |             ████████             ██           |
-           |               ████                            |
-           |                 ██                            |
-           |                                               |
-           |                                               |
-           |                                               |
-           |             ██                        ██      |
-           |           ██████                    ██████    |
-           |             ██                    ██████████  |
-           |                                     ██████    |
-           |                                       ██      |
-           |_______________________________________________|
-
-
-        Parameters
-        ----------
-        show_labels: bool
-            Whether to add region labels (numbers)
-        frame: bool
-            should a frame be drawn around the image area
-
-        Returns
-        -------
-        str
-        """
-        # return self.format_ansi(show_labels, frame, origin).render()
-        im = self.format_ansi(show_labels, frame, origin)
-        print(im)
-        return im
-
-    # alias
-    show_console = show_terminal
-
-    def format_cutouts_console(self, image, labels=..., extend=1, cmap=None,
-                               statistics=(), **kws):
-
-        labels, sections, cutouts = zip(*self.cutouts(image, self.to_binary(),
-                                                      labelled=True, with_slices=True,
-                                                      extend=extend))
-        thumbs = []
-        for img, (ys, xs) in zip(motley.image.thumbnails(*zip(*cutouts), cmap=cmap),
-                                 sections):
-            # Tick labels
-            y0, y1 = ys.start, ys.stop
-            x0, x1 = xs.start, xs.stop
-            xticks = [''] * (x1 - x0 + 1)
-            xticks[::2] = range(x0, x1 + 1, 2)
-            yticks = [''] * (y1 - y0 + 1)
-            yticks[::2] = range(y0, y1 + 1, 2)
-            thumbs.append(
-                img.format(frame='[', xticks=xticks, yticks=yticks)
-            )
-
-        row_headers = None
-        if statistics:
-            thumbs = [thumbs]
-            row_headers = ['Image']
-            for stat in statistics:
-                header, fmt = STAT_FMT.get(stat, (echo, ''))
-                result = (func_or_result(image, labels)
-                          if callable(func_or_result := getattr(self, stat))
-                          else func_or_result)
-                thumbs.append(fmt(result))
-                row_headers.append(header)
-
-        tbl = motley.table.Table(thumbs,
-                                 col_headers=labels,
-                                 row_headers=row_headers,
-                                 order='c',
-                                 **kws)
-
-        # HACK to fix table rendering space issues with combining characters..
-        # -------------------------------------------------------------------- #
-
-        x = f'{motley.textbox.MAJOR_TICK_TOP}\x1b[0m'
-        s = str(tbl).replace(x, f'{x} ')
-
-        if tbl.ncols < 3:
-            return s
-
-        def _needs_fix(line):
-            i, j = 0, 0
-            while i != -1:
-                i = line.find('⎪', i + 1)
-                if line[i - 2:i].isspace():
-                    yield j
-                j += 1
-
-        def _fix_line(line, needs_fix):
-            j = 0
-            for i, k in enumerate(string.where(line, '⎪')):
-                if i in needs_fix:
-                    yield line[j:k-2]
-                    j = k
-            yield line[j:]
-
-        s = str(tbl).replace(x, f'{x} ')
-
-        top, *lines = s.splitlines(keepends=True)
-
-        if title := kws.get('title'):
-            title_line, *lines = lines
-
-        header, ticks, first, *lines = lines
-        needs_fix = list(_needs_fix(first))[bool(statistics):]
-        extra_space = 2 * len(needs_fix)
-        o = top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
-        if title:
-            o += title_line.replace(f'{title:^{len(title) + extra_space}}', title)
-
-        
-        o += ''.join(_fix_line(header, needs_fix)) + ticks
-        for line in [first, *lines]:
-            o += ''.join(_fix_line(line, needs_fix))
-
-        return o
-
-    def show_cutouts_console(self, image, labels=None, extend=1, cmap=None, **kws):
-        print(self.format_cutouts_console(image, labels, extend, cmap, **kws))
-
-    def get_cmap(self, cmap=None):
-        # colour map
-        if cmap is None:
-            return self.make_cmap()
-
-        from matplotlib.pyplot import get_cmap
-        return get_cmap(cmap)
-
-    def format_ansi(self, show_labels=True, frame=True, origin=0, cmap=None):
-
-        # colour map
-        im = motley.image.AnsiImage(self.data, self.get_cmap(cmap), origin).format(frame)
-
-        # get positions / str for labels
-        if show_labels:
-            "TODO"
-        #     for lbl, pos in self._label_positions().items():
-        #         # TODO: label text colour
-        #         label = '%-2i' % lbl
-        #         if origin == 0:
-        #             pos[:, 0] = nr - 1 - pos[:, 0]
-
-        #         for i in np.ravel_multi_index(
-        #                 np.round(pos).astype(int).T, self.shape):
-        #             if i in marks:
-        #                 marks[i] = marks[i].replace('  ', label)
-        #             else:
-        #                 marks[i] = markers[lbl].replace('  ', label)
-
-        return im
 
     def get_boundary(self, label, offset=-0.5):
         """
@@ -2408,49 +2146,6 @@ class SegmentedImage(SegmentationImage,     # base
     @lazyproperty
     def traced(self):
         return self.get_boundaries()
-
-    # TODO: SegmentedImageContours ??
-
-    # @lazyproperty
-
-    def get_contours(self, labels=None, **kws):
-        """
-        Get the collection of lines that trace the circumference of the
-        segments.
-
-        Parameters
-        ----------
-        labels
-        kws
-
-        Returns
-        -------
-        matplotlib.collections.LineCollection
-
-        """
-        from matplotlib.collections import LineCollection
-
-        # if not 'colors' in kws:
-        cmap = self.get_cmap(kws.pop('cmap', None))
-
-        # NOTE: use PathPatch if you want to be able to hatch the regions.
-        #  at the moment you cannot hatch individual paths in PathCollection.
-        boundaries = self.get_boundaries(labels)
-        contours, _ = zip(*boundaries.values())
-
-        #
-        colors = mit.flatten([b] * len(c) for b, c in zip(boundaries, contours))
-        colors = np.fromiter(colors, int)
-        kws.setdefault('colors', cmap(colors / colors.max()))
-        return LineCollection(list(mit.flatten(contours)), **kws)
-
-    def show_contours(self, ax, labels=None, **kws):
-        lines = self.get_contours(labels, **kws)
-        ax.add_collection(lines)
-        return lines
-
-    # alias
-    draw_contours = show_contours
 
     @lazyproperty
     def perimeter(self):
