@@ -1,5 +1,8 @@
 
-from scrawl.imagine import VideoDisplay
+# local
+from scrawl.video import VideoDisplay
+
+# relative
 from ..campaign import HDUExtra
 
 

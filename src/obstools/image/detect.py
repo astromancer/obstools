@@ -179,11 +179,11 @@ class DetectionBase(LoggingMixin):
         self.logger.opt(lazy=True).info(
             'Detected {0[0]:d} source{0[1]} covering {0[2]} pixels ({0[3]:.2%} '
             'of the image area).',
-            lambda: (seg.nlabels, 's' * (seg.nlabels > 1), seg.areas.sum(), 
+            lambda: (seg.nlabels, 's' * (seg.nlabels > 1), seg.areas.sum(),
                      sum(seg.fractional_areas))
         )
         self.logger.info('Source images:\n{}',
-                         seg.format_cutouts_console(image, **kws))
+                         seg.show.console.format_cutouts(image, **kws))
 
 
 class SigmaThreshold(DetectionBase):
@@ -618,8 +618,8 @@ class SourceDetectionMixin:
 
         # select source detection algorithm
         if isinstance(detect, dict):
-            detect = DEFAULT_ALGORITHM
             detect_opts = dict(detect, **detect_opts)
+            detect = DEFAULT_ALGORITHM
 
         if isinstance(detect, str) and cls.detection.algorithm != detect:
             # switch algorithms
@@ -644,3 +644,7 @@ class SourceDetectionMixin:
     def detect(self, image, *args, report=True, **kws):
         # subclasses to implement stuff by overwriting this method
         return self.detection(image, *args, report=report, **kws)
+
+
+# alias
+DetectionMixin = SourceDetectionMixin

@@ -2,13 +2,14 @@
 
 # std
 import logging
-from collections import namedtuple, defaultdict
+from collections import defaultdict, namedtuple
 
 # third-party
 import numpy as np
+from mpl_multitab import MplMultiTab2D
 from matplotlib.lines import Line2D
 from matplotlib._contour import QuadContourGenerator
-from matplotlib.widgets import RadioButtons, CheckButtons
+from matplotlib.widgets import CheckButtons, RadioButtons
 from matplotlib.patches import Rectangle, Ellipse as _Ellipse
 from matplotlib.collections import LineCollection, PatchCollection
 
@@ -16,13 +17,12 @@ from matplotlib.collections import LineCollection, PatchCollection
 from recipes.lists import flatten
 from recipes.dicts import AttrReadItem
 from recipes.logging import LoggingMixin
-from obstools.aps import ApertureCollection, SkyApertures
-from scrawl.imagine import VideoDisplay, VideoDisplayA, VideoDisplayX
+from scrawl.image import Image3D
+from scrawl.moves import CallbackManager, mpl_connect
+from scrawl.video import VideoApertureDisplay, VideoDisplay, VideoFeatureDisplay
 
 
-
-
-
+# from obstools.aps import ApertureCollection, SkyApertures
 
 # TODO: better spacing between legend entries
 # TODO: legend art being clipped
@@ -86,7 +86,7 @@ def linecol_picker(self, event):
 def binary_contours(b):
     """Image contour around mask pixels"""
 
-    f = lambda x, y: b[int(y), int(x)]
+    def f(x, y): return b[int(y), int(x)]
     g = np.vectorize(f)
 
     yd, xd = b.shape
@@ -112,16 +112,95 @@ class Ellipse(_Ellipse):
         return self.height / 2
 
 
-class TrackerGui(VideoDisplayX):
+class TrackerVideo(VideoFeatureDisplay):
 
-    def __init__(self, data, tracker, **kws):
-        VideoDisplayX.__init__(self, data, **kws)
+    default_marker_style = {**VideoFeatureDisplay.default_marker_style,
+                            **dict(cmap='rainbow',
+                                   emboss=2.5)}
+    default_marker_style.pop('edgecolor')
+    default_marker_style.pop('facecolor')
+
+    def __init__(self, tracker, data, **kws):
+
         self.tracker = tracker
 
+        # kws passed to ImageDisplay
+        kws.setdefault('clim_every', 0)
+        self.regions = None
+
+        # init video + feature marks
+        coords = tracker.measurements.mean(1)
+        marker_style = {**kws.pop('marker_style', {}),
+                        **self.default_marker_style}
+        #
+        VideoFeatureDisplay.__init__(self, data, coords[0], 'x',
+                                     marker_style={'c': tracker.seg.labels,
+                                                   **marker_style},
+                                     **kws)
+        self.coords = coords
+
+        # Source segments
+        contour_style = marker_style.copy()
+        contour_style.pop('s', None)
+        _, self.regions, self.label_texts = \
+            self.tracker.plot(None, self.ax, contours=contour_style)
+
+        self.update(0)
+        # tracker.measurements
+
+        # for stat, coo in zip(tracker.centrality, coords):
+        #     marks = self.mark(coo,
+        #                       **{**self.default_marker_style,
+        #                          **dict(marker=self.centroid_markers[stat],
+        #                                 label=stat)})
+        #     marks.set_color(colours)
+
+        # Link segment contours and labels to redraw upon slider move (since
+        # image redraws)
+        #self.sliders.add_art(self.regions, self.label_texts, self.marks)
+        self.sliders.link(self.regions, self.label_texts, self.marks)
+
     def get_coords(self, i):
-        return (self.tracker.shifts[i] + self.tracker.rcoo).T[::-1]
+        if np.isnan(self.coords[i]).any():
+            self.tracker(self.data[i], i)
+
+        return self.tracker.get_coords(i)
+
+    def update(self, i, draw=False):
+        return [*super().update(i, False), self.regions, self.label_texts]
 
 
+class SourceTrackerGUI(MplMultiTab2D):
+
+    centroid_markers = {
+        'com':              'x',
+        'com_bg':           '+',
+        'geometric_median': 'o',
+        'peak':             '.',
+        'upsample_max':     'd'
+    }
+
+    def __init__(self,  tracker, hdu, cmap=None, **kws):
+        super().__init__()
+
+        self.tracker = tracker
+        self.vid = TrackerVideo(tracker, hdu.calibrated)
+        self.im3 = []
+
+        self.add_tab('Image', hdu.file.name, fig=self.vid.figure)
+
+        image = hdu.calibrated[0]
+        for lbl, sec, img in tracker.seg.cutouts(image, labelled=True, with_slices=True):
+            ysec, xsec = sec
+
+            fig = self.add_tab('Sources', str(lbl))
+            self.im3.append(
+                Image3D(img, (ysec.start, xsec.start), figure=fig, cmap=cmap)
+            )
+            # im3.fig.tight_layout
+
+
+SourceTrackerGui = SourceTrackerGUI
 ApertureContainer = namedtuple('ApertureContainer', ('stars', 'sky'))
 
 
@@ -129,7 +208,9 @@ def update_aps(aps, coords, abc):
     aps.coords = coords
     aps.a, aps.b, aps.angles = abc
 
+
 update_aps_stars = update_aps
+
 
 def update_aps_sky(aps, coords, abc):
     aps.coords = coords
@@ -139,7 +220,7 @@ def update_aps_sky(aps, coords, abc):
     aps.b = b_sky_in, b_sky_out
 
 
-class ApertureVizGui0(VideoDisplayA):
+class ApertureVizGui0(VideoApertureDisplay):
     apPropsCommon = dict(fc='none', lw=1, picker=False)
     apPropsSky = dict(ec='c')
     # apCMap = cm.get_cmap('Reds)
@@ -184,18 +265,18 @@ class ApertureVizGui0(VideoDisplayA):
         return self.aps
 
 
-class ApertureVizBase(VideoDisplayA):
+class ApertureVizBase(VideoApertureDisplay):
     apPropsSky = dict(ec='b', fc='none', lw=1, picker=False)
 
     def __init__(self, data, coords, appars, skypars=None, **kws):
-        VideoDisplayA.__init__(self, data, coords, **kws)
+        VideoApertureDisplay.__init__(self, data, coords, **kws)
 
         self.appars = appars
         self.skypars = skypars
 
         self.aps = ApertureContainer(
-                self.aps,
-                SkyApertures(**self.apPropsSky)
+            self.aps,
+            SkyApertures(**self.apPropsSky)
         )
 
         self.aps.sky.add_to_axes(self.ax)
@@ -228,11 +309,11 @@ class ApertureVizBase(VideoDisplayA):
         return draw_list
 
 
-class ApertureVizGui(VideoDisplayA):
+class ApertureVizGui(VideoApertureDisplay):
     apPropsSky = dict(ec='b', fc='none', lw=1, picker=False)
 
     def __init__(self, data, tracker, appars, skypars=None, **kws):
-        VideoDisplayA.__init__(self, data, None, **kws)
+        VideoApertureDisplay.__init__(self, data, None, **kws)
 
         self.tracker = tracker
         self.appars = appars
@@ -247,8 +328,8 @@ class ApertureVizGui(VideoDisplayA):
         # b = np.zeros(tracker.nsegs * 2)
         θsky = np.zeros(tracker.nsegs * 2)
         self.aps = ApertureContainer(
-                ApertureCollection(coords=c0, r=r0, angles=θ, **self.apProps),
-                SkyApertures(coords=c0, r=a, angles=θsky, **self.apPropsSky)
+            ApertureCollection(coords=c0, r=r0, angles=θ, **self.apProps),
+            SkyApertures(coords=c0, r=a, angles=θsky, **self.apPropsSky)
         )
 
         # add ApertureCollection to axes
@@ -353,9 +434,9 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         c0 = tracker.rcoo_xy
         θ = np.zeros(tracker.nsegs)
         self.aps = Aps(
-                ApertureCollection(r=r0, coords=c0, angles=θ,
-                                   **self.apStarProp),
-                SkyApertures(r=r0, coords=c0, angles=θ, **self.apSkyProp))
+            ApertureCollection(r=r0, coords=c0, angles=θ,
+                               **self.apStarProp),
+            SkyApertures(r=r0, coords=c0, angles=θ, **self.apSkyProp))
 
         for aps in self.aps:
             aps.add_to_axes(self.ax)
@@ -463,14 +544,14 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         rax1 = self.figure.add_subplot(self._gs[1, 2], aspect='equal',
                                        frameon=False)
         self.image_selector = RadioButtons(  # FIXME: should be check buttons
-                rax1, ('Raw', 'Calibrated', 'BG subtracted'))
+            rax1, ('Raw', 'Calibrated', 'BG subtracted'))
         rax1.set_title('Image Data', **ttlprp)
         self.image_selector.on_clicked(self.image_button_action)
 
         rax2 = self.figure.add_subplot(self._gs[1, 3], aspect='equal',
                                        frameon=False)
         self.mask_selector = CheckButtons(
-                rax2, ('Bad pixels', 'Stars'), (False, False))
+            rax2, ('Bad pixels', 'Stars'), (False, False))
         # todo: right stars / faint stars
         rax2.set_title('Masks', **ttlprp)
         self.mask_selector.on_clicked(self.image_button_action)
@@ -483,13 +564,13 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
     def image_button_action(self, label):
         print('button i')
         image = self.get_image_data(self.frame)
-        self.imagePlot.set_data(image)  # FIXME: update histogram!
+        self.image.set_data(image)  # FIXME: update histogram!
         self.figure.canvas.draw()
 
     # def mask_button_action(self, label):
     #     print('button m')
     #     image = self.get_image_data(self.frame)
-    #     self.imagePlot.set_data(image)
+    #     self.image.set_data(image)
     #     self.figure.canvas.draw()
 
     def get_image_data(self, i):
@@ -744,7 +825,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
         for s in slices:
             sy, sx = s
             e = np.array([[sx.start - 1, sx.stop + 1],
-                            [sy.start - 1, sy.stop + 1]])
+                          [sy.start - 1, sy.stop + 1]])
             e = np.clip(e, 0, np.inf).astype(int)
             # print(e)
             im = data[e[1, 0]:e[1, 1], e[0, 0]:e[0, 1]]
@@ -752,7 +833,6 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
             contours = binary_contours(im)
             for c in contours:
                 outlines.append(c + e[:, 0] - 0.5)
-
 
         col = LineCollection(outlines, **kws)
         self.ax.add_collection(col)
@@ -845,9 +925,7 @@ class FrameProcessorGUI(VideoDisplay, LoggingMixin):
     # def
 
 
-
-
-class LegendGuiBase(ConnectionMixin):
+class LegendGuiBase(CallbackManager):
     """
     Enables toggling marker / bar / cap visibility by selecting on the legend.
     """
@@ -863,7 +941,7 @@ class LegendGuiBase(ConnectionMixin):
         assert len(art) == len(states), 'Unequal number of artists and states'
 
         # initialize auto-connect
-        ConnectionMixin.__init__(self, figure.canvas)
+        CallbackManager.__init__(self, figure.canvas)
 
         self.use_blit = use_blit
         if use_blit and self.canvas.supports_blit:
@@ -1116,14 +1194,14 @@ class LegendGuiBase(ConnectionMixin):
 #         return mxshift, maxImage, segImage
 
 
-# from scrawl.imagine import FitsCubeDisplay
+# from scrawl.image import FitsCubeDisplay
 
 
 # class FrameDisplay(FitsCubeDisplay):
 #     # TODO: blit
 #     # TODO: let the home button restore the original config
 #
-#     # TODO: enable scroll through - ie inherit from VideoDisplayA
+#     # TODO: enable scroll through - ie inherit from VideoApertureDisplay
 #     #     - middle mouse to switch between prePlot and current frame
 #     #     - toggle legend elements
 #
@@ -1309,7 +1387,7 @@ class LegendGuiBase(ConnectionMixin):
 #         fig.set_size_inches(figsize)
 #
 #
-# # from scrawl.imagine import FitsCubeDisplay
+# # from scrawl.image import FitsCubeDisplay
 #
 #
 # def displayCube(fitsfile, coords, rvec=None):

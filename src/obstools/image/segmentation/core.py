@@ -21,13 +21,14 @@ from photutils.segmentation import SegmentationImage, deblend_sources
 # local
 from pyxides.vectorize import vdict
 from recipes import api, dicts
-from recipes.functionals import echo
+from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.utils import duplicate_if_scalar
 
 # relative
 from ... import io
 from ...utils import prod
+from ...stats import geometric_median
 from ..utils import shift_combine
 from .trace import trace_boundary
 from .display import SegmentPlotter
@@ -48,7 +49,7 @@ def is_lazy(_):
 
 def image_sub(background_estimator):
     if background_estimator in (None, False):
-        return echo
+        return echo0
 
     def sub(image):
         return image - background_estimator(image)
@@ -172,10 +173,10 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     return seg_extended
 
 
-def select_rect_pad(segm, image, start, shape):
+def select_overlap(seg, image, origin, shape):
     """
-    Get data from a sub-region of dimension `shape` from `image`
-    beginning at index `start`. If the requested shape of the image
+    Get data from a sub-region of dimension `shape` from `image` data,
+    beginning at index `origin`. If the requested shape of the image
     is such that the image only partially overlaps with the data in the
     segmentation image, fill the non-overlapping parts with zeros (of
     the same dtype as the image)
@@ -183,25 +184,26 @@ def select_rect_pad(segm, image, start, shape):
     Parameters
     ----------
     image
-    start
+    origin
     shape
 
     Returns
     -------
 
     """
-    if np.ma.is_masked(start):
-        raise ValueError('Cannot select image subset for masked `start`')
+    if np.ma.is_masked(origin):
+        raise ValueError('Cannot select image sub-region when `origin` value has'
+                         ' masked elements.')
 
     hi = np.array(shape)
-    δtop = segm.shape - hi - start
+    δtop = seg.shape - hi - origin
     over_top = δtop < 0
     hi[over_top] += δtop[over_top]
-    low = -np.min([start, (0, 0)], 0)
+    low = -np.min([origin, (0, 0)], 0)
     oseg = tuple(map(slice, low, hi))
 
     # adjust if beyond limits of global segmentation
-    start = np.max([start, (0, 0)], 0)
+    start = np.max([origin, (0, 0)], 0)
     end = start + (hi - low)
     iseg = tuple(map(slice, start, end))
     if image.ndim > 2:
@@ -520,21 +522,23 @@ class MaskedStatsMixin:
     # define supported statistics
     _supported = ['sum',
                   'mean', 'median',
-                  'minimum', 'maximum',
-                  # 'minimum_position',
-                  # 'maximum_position',
+                  'minimum', 'minimum_position',
+                  'maximum', 'maximum_position',
                   # 'extrema',
                   # return signature is different, not currently supported
                   'variance', 'standard_deviation',
                   'center_of_mass']
 
-    _result_dims = {'center_of_mass': (2,)}
+    _result_dims = {'center_of_mass':   (2,),
+                    'minimum_position': (2,),
+                    'maximum_position': (2,)}
 
     # define some convenient aliases for the ndimage functions
     _aliases = {'minimum': 'min',
                 'maximum': 'max',
-                'minimum_position': 'argmin',  # minpos # minloc
-                'maximum_position': 'argmax',  # maxpos # maxloc
+                'minimum_position': 'argmin',
+                'maximum_position': 'argmax',
+                'maximum_position': 'peak',
                 'standard_deviation': 'std',
                 'center_of_mass': 'com'}
 
@@ -559,13 +563,13 @@ class MaskedStatistic:
         Parameters
         ----------
         image:  array-like, or masked array
-            Image for which to calculate statistic
+            Image for which to calculate statistic.
         labels: array-like
-            labels
+            Labels to use in calculation.
 
         Returns
         -------
-        float or 1d array or masked array
+        float or 1d array or masked array.
         """
 
     def __init__(self, func):
@@ -598,16 +602,17 @@ class MaskedStatistic:
         worker = (self.worker, self.worker_ma)[isma]
         # result shape
         shape = (len(labels), *seg._result_dims.get(self.__name__, ()))
+        dtype = 'i' if 'position' in self.__name__ else 'f'
 
         if data.ndim == 2:
-            result = np.empty(shape, data.dtype)
+            result = np.empty(shape, dtype)
             masked = np.zeros(shape, bool) if isma else None
             worker(data, seg, labels, result, masked)
             return result
 
         # create memmap
         shape = (len(data), *shape)
-        result = io.load_memmap(shape=shape)
+        result = io.load_memmap(shape=shape, dtype=dtype)
         masked = io.load_memmap(shape=shape, fill=False) if isma else None
 
         with Parallel(n_jobs=njobs, **kws) as parallel:
@@ -1060,7 +1065,7 @@ class SegmentedImage(SegmentationImage,     # base
             # allow passing integers for convenience
             labels = [labels]
 
-        if isinstance(labels, tuple):
+        if isinstance(labels, (tuple, set)):
             # interpret tuples as sequences of labels, not as a group name
             labels = list(labels)
 
@@ -1194,31 +1199,33 @@ class SegmentedImage(SegmentationImage,     # base
 
     # Data extraction
     # --------------------------------------------------------------------------
-    # TODO: cutout       better name?
-    def select_subset(self, start, shape, type_=None):
+    def select_overlap(self, origin, shape, type_=None):
         """
-        FIXME: this description not accurate - padding happens
-
-        Create a smaller version of the segmentation image starting at
-        yx-indices `start` and having shape `shape`
+        Select a sub-region of the segmented image starting at yx-indices
+        `origin` and having dimension `shape`. If `origin` and `shape` imply a
+        frame which only partialy overlaps the segmentation, zeroes are filled
+        in.
 
         Parameters
         ----------
-        start
+        origin
         shape
         type_:
-            The desired type of output. Can be any class (or callable) that
-            accepts an array as initializer, but will typically be a subclass of
-            `SegmentationImage`, or an `np.ndarray`. If None (default),
-            an instance of this class is returned.
+            Class of the returned object. Can be any callable that takes an
+            array as it's first argument, but will typically be a subclass of
+            `SegmentationImage`, or an `np.ndarray`. If None (default), an
+            instance of this class is returned.
 
         Returns
         -------
-
+        SegmentationImage
         """
         if type_ is None:
             type_ = self.__class__
-        return type_(select_rect_pad(self, self.data, start, shape))
+        return type_(select_overlap(self, self.data, origin, shape))
+
+    # alias
+    select_region = select_overlap
 
     @staticmethod
     def _mask_pixels(image, labels, mask0, masking_func):
@@ -1645,6 +1652,12 @@ class SegmentedImage(SegmentationImage,     # base
     #     labels = self.resolve_labels(labels)
     #     return np.array(ndimage.center_of_mass(image, self.data, labels))
 
+    def geometric_median(self, image, labels=None, mask=None):
+
+        block = np.dstack([*np.indices(image.shape)[::-1], image]).swapaxes(0, -1)
+        return np.array([geometric_median(xyz.T)
+                         for xyz in self.cutouts(block, labels=labels, compress=True)])
+
     def com_bg(self, image, labels=None, mask=None,
                background_estimator=np.ma.median, grid=None):
         """
@@ -1669,8 +1682,8 @@ class SegmentedImage(SegmentationImage,     # base
         # CoM...
 
         if self.shape != image.shape:
-            raise ValueError('Invalid image shape %s for segmentation of '
-                             'shape %s' % (image.shape, self.shape))
+            raise ValueError(f'Invalid image shape {image.shape} for '
+                             f' segmentation of shape {self.shape}.')
 
         # get background subtraction function
         bg_sub = image_sub(background_estimator)
@@ -1683,6 +1696,10 @@ class SegmentedImage(SegmentationImage,     # base
         # generalized for higher dimensional data
         axes_sum = tuple(range(1, image.ndim))
 
+        if np.ma.is_masked(image):
+            image = image.data
+            mask = image.mask
+
         counter = itt.count()
         com = np.empty((len(labels), image.ndim))
         # u  = np.empty((len(labels), image.ndim))  # uncertainty
@@ -1691,7 +1708,7 @@ class SegmentedImage(SegmentationImage,     # base
             #
             i = next(counter)
 
-            # ignore whatever is in this slice and is not same label as well
+            # ignore whatever is in this slice and is nmskot same label as well
             # as any external mask
             use = (seg == lbl)
             if msk is not None:
@@ -1719,6 +1736,20 @@ class SegmentedImage(SegmentationImage,     # base
 
     centroids = com_bg
 
+    
+    def upsample_max(self, image, labels=None, rescale=2):
+        from PIL import Image
+        from scipy import ndimage
+        
+        labels = self.resolve_labels(labels)
+        
+        im = Image.fromarray(image.astype('f'))
+        newsize =  np.multiply(im.size, rescale)
+        im1 = im.resize(newsize, Image.LANCZOS)
+        seg1 = Image.fromarray(self.data * 1.).resize(newsize)
+        peaks = ndimage.maximum_position(np.array(im1), seg1, labels)
+        return np.array(peaks) / rescale
+    
     # --------------------------------------------------------------------------
 
     def relabel_many(self, *label_sets):
@@ -2040,46 +2071,6 @@ class SegmentedImage(SegmentationImage,     # base
         return keep
 
     # def _dist_com_to_nearest(self):
-
-    def _label_positions(self):
-        # compute distance from centroid to nearest pixel of same label.
-
-        # If this distance is large, it means the segment potentially has a
-        # hole or is arc shaped, or is disjointed. For these we add the label
-        # multiple times, one label for each separate part of the segment.
-        # Decide on where to put the labels based on kmeans with 2 clusters.
-        # note. this will give bad positions for some shapes, but is good
-        #  enough for jazz
-
-        if self.nlabels == 0:
-            return {}
-
-        # noinspection PyUnresolvedReferences
-        yx = self.com(self.data)
-        # yx may contain nans if labels not sequential....
-        yx = yx[~np.isnan(yx).any(1)]
-        w = np.array(np.where(self.to_binary(expand=True)))
-        splix, = np.where(np.diff(w[0]) >= 1)
-        s = np.split(w[1:], splix + 1, 1)
-        gy, gx = (np.array(g, 'O')
-                  for g in zip(*s))  # each of these is a list of arrays
-        magic = [None, ...][bool(len(set(map(len, gy))) - 1)]
-        # explicit object arrays avoids DeprecationWarning
-        d = ((gy - yx[:, 0, magic]) ** 2 +
-             (gx - yx[:, 1, magic]) ** 2) ** 0.5
-        # d is an array of arrays!
-
-        pos = {}
-        for i, (label, dmin) in enumerate(zip(self.labels, map(min, d))):
-            if dmin > 1:
-                from scipy.cluster.vq import kmeans
-                # center of mass not close to any pixels. disjointed segment
-                # try cluster
-                # todo: could try dbscan here for unknown number of clusters
-                pos[label], _ = kmeans(np.array((gy[i], gx[i]), float).T, 2)
-            else:
-                pos[label] = yx[i][None]
-        return pos
 
     # ------------------------------------------------------------------------ #
     @lazyproperty

@@ -14,7 +14,7 @@ def test(hdu):
     im.ax.plot(*tracker.coords.T, 'rx')
 
     #
-    seg = self.seg.select_subset(-llc[::-1], image.shape)
+    seg = self.seg.select_region(-llc[::-1], image.shape)
     lines = seg.draw_contours(im.ax, color='g')
 
 

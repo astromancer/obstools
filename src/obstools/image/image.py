@@ -16,7 +16,7 @@ from pyxides.getitem import IndexerMixin
 from pyxides.vectorize import Vectorized, AttrVector
 
 # local
-from scrawl.imagine import ImageDisplay
+from scrawl.image import ImageDisplay
 from recipes.oo import SelfAware
 from recipes.pprint import qualname
 from recipes.utils import duplicate_if_scalar
@@ -99,7 +99,7 @@ class Image(SelfAware):
                                     cbar=False,
                                     interpolation='none'),
                              **kws})
-        self.art.image = im.imagePlot
+        self.art.image = im.image
         ax = im.ax
 
         # Add frame around image
