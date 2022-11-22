@@ -294,6 +294,17 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     return ma
 
 
+def radial_source_profile(image, seg, labels=None):
+    com = seg.com(image, labels)
+    grid = np.indices(image.shape)
+    profiles = []
+    for i, (sub, g) in enumerate(seg.cutouts(image, grid, flatten=True,
+                                             labels=labels)):
+        r = np.sqrt(np.square(g - com[i, None].T).sum(0))
+        profiles.append((r, sub))
+    return profiles
+
+
 # class ModelledSegment(Segment):
 #     def __init__(self, segment_img, label, slices, area, model=None):
 #         super().__init__(segment_img, label, slices, area)
@@ -509,7 +520,7 @@ class SliceDict(vdict):
 class MaskedStatsMixin:
     """
     This class gives inheritors access to methods for doing statistics on
-    segmented images (from `scipy.ndimage.measurements`)
+    segmented images (from `scipy.ndimage.measurements`).
     """
 
     # Each supported method is wrapped in the `MaskedStatistic` class upon
@@ -598,27 +609,48 @@ class MaskedStatistic:
 
     def _run(self, data, seg, labels, njobs=-1, **kws):
 
+        if (nd := data.ndim) < 2:
+            raise ValueError(f'Cannot compute image statistic for {nd}D data. '
+                             f'Data should be at least 2D.')
+
         isma = np.ma.is_masked(data)
         worker = (self.worker, self.worker_ma)[isma]
-        # result shape
-        shape = (len(labels), *seg._result_dims.get(self.__name__, ()))
+
+        # result shape and dtype
+        nlabels = len(labels)
+        shape = (nlabels, *seg._result_dims.get(self.__name__, ()))
         dtype = 'i' if 'position' in self.__name__ else 'f'
 
-        if data.ndim == 2:
+        if not (is2d := data.ndim == 2):
+            shape = (len(data), *shape)
+
+        if nlabels == 0:
+            return (np.ma.empty if isma else np.empty)(shape, bool)
+
+        # init_mem = np.empty if is2d else io.load_memmap
+
+        if is2d:
             result = np.empty(shape, dtype)
             masked = np.zeros(shape, bool) if isma else None
             worker(data, seg, labels, result, masked)
-            return result
+        else:
+            # create memmap
+            result = io.load_memmap(shape=shape, dtype=dtype)
+            masked = io.load_memmap(shape=shape, fill=False) if isma else None
+            self._run_concurrent(worker, njobs, data, seg, labels, result, masked, **kws)
 
-        # create memmap
-        shape = (len(data), *shape)
-        result = io.load_memmap(shape=shape, dtype=dtype)
-        masked = io.load_memmap(shape=shape, fill=False) if isma else None
+        if isma:
+            return np.ma.MaskedArray(result, masked)
 
+        return result
+
+    def _run_concurrent(self, worker, njobs, data, seg, labels, result, masked,
+                        **kws):
+
+        kws['backend'] = 'multiprocessing'  # faster serialization!
         with Parallel(n_jobs=njobs, **kws) as parallel:
             parallel(delayed(worker)(im, seg, labels, result, masked, i)
                      for i, im in enumerate(data))
-        return result
 
     def worker(self, image, seg, labels, output, _ignored_=None, index=...):
         output[index] = self.func(image, seg.data, labels)
@@ -635,32 +667,16 @@ class MaskedStatistic:
         # compute
         output[index] = self.func(image, seg_data, labels)
 
-        # now we have to check which labels may be completely masked in
-        # image data, so we can mask those in output
-        output_mask[index] = (ndimage.sum(~image.mask, seg_data, labels) == 0)
         # get output mask
+        # now we have to check which labels may be completely masked in
+        # image data, so we can mask those in output.
+        n_masked = ndimage.sum(~image.mask, seg_data, labels)
         # for functions that return array-like results per segment (eg.
         # center_of_mass), we have to up-cast the mask
-        # if mask.any():
-        #     result, mask = np.broadcast_arrays(result, mask[np.newaxis].T)
-        # else:
-        #     mask = False
+        if seg._result_dims.get(self.__name__, ()):
+            n_masked = n_masked[:, None]
+        output_mask[index] = (n_masked == 0)
 
-        # return np.ma.MaskedArray(result, mask)
-        # finally:
-        #     # restore the original labels of the masked pixels
-        #     seg.data[image.mask] = original
-
-
-def radial_source_profile(image, seg, labels=None):
-    com = seg.com(image, labels)
-    grid = np.indices(image.shape)
-    profiles = []
-    for i, (sub, g) in enumerate(seg.cutouts(image, grid, flatten=True,
-                                             labels=labels)):
-        r = np.sqrt(np.square(g - com[i, None].T).sum(0))
-        profiles.append((r, sub))
-    return profiles
 
 
 class SegmentMasks(defaultdict):  # SegmentMasks

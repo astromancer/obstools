@@ -1,17 +1,18 @@
-# third-party
+
+# std
 import pickle
+from collections import OrderedDict
+
+# third-party
+import pytest
 import numpy as np
+from photutils.datasets import (make_gaussian_sources_image,
+                                make_random_gaussians_table)
 
 # local
-from obstools.image.segmentation import SegmentedImage, \
-    MaskedStatsMixin, trace_boundary  # Sliced
+from obstools.image.segmentation import (MaskedStatsMixin, SegmentedImage,
+                                         trace_boundary)
 
-from collections import OrderedDict
-from photutils.datasets import (make_random_gaussians_table,
-                                make_gaussian_sources_image)
-
-
-import pytest
 
 np.random.seed(1234)
 
@@ -169,16 +170,18 @@ def test_stats(seg, sim_data, stat):
     # standard_deviation
     # data = request.getfixturevalue(data)
     # seg = request.getfixturevalue('seg')
+
     sd = seg.data.copy()
     result = getattr(seg, stat)(sim_data)
 
     # check shape of result
     is2d = (sim_data.ndim == 2)
-    assert result.shape[:2-is2d] == (len(sim_data), seg.nlabels)[is2d:]
+
+    assert result.shape[:2 - is2d] == (len(sim_data), seg.nlabels)[is2d:]
 
     # make sure we return masked arrays for input masked arrays
-    assert type(sim_data) is type(result)
+    if np.ma.isMA(sim_data):
+        assert np.ma.isMA(result)
 
     # make sure segmentation data has not been changed
     assert np.all(sd == seg.data)
-
