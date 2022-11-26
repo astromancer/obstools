@@ -3,74 +3,99 @@ Input / output helpers
 """
 
 # std
-import tempfile
-from pathlib import Path
+import io
+import mmap
 
 # third-party
-import numpy as np
 from loguru import logger
+from astropy.io import fits
 
-# relative
-from .utils import int2tup
+# local
+from recipes.oo.temp import temporarily
 
 
-def load_memmap(loc=None, shape=None, dtype=None, fill=None, clobber=False):
+def fileobj_open_picklable(filename, mode):
+
+    if 'r' in mode:
+        logger.debug('Injecting process-inheritable file wrapper.')
+        return FileIOPicklable(filename, mode)
+
+    return fits.util.fileobj_open(filename, mode)
+
+
+class _FilePicklable(fits.file._File):
+
+    def _open_filename(self, filename, mode, overwrite):
+        with temporarily(fits.file, fileobj_open=fileobj_open_picklable):
+            super()._open_filename(filename, mode, overwrite)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_mmap']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._mmap = mmap.mmap(self._file.fileno(), 0,
+                               access=fits.file.MEMMAP_MODES[self.mode],
+                               offset=0)
+
+
+class FileIOPicklable(io.FileIO):
     """
-    Pre-allocate a writeable shared memory map as a container for the
-    results of parallel computation. If file already exists and clobber is False
-    open in update mode and fill will be ignored. Data persistence ftw.
+    File object (read-only) that can be pickled.
+
+    This class provides a file-like object (as returned by :func:`open`,
+    namely :class:`io.FileIO`) that, unlike standard Python file objects,
+    can be pickled. Only read mode is supported.
+    When the file is pickled, filename and position of the open file handle in
+    the file are saved. On unpickling, the file is opened by filename,
+    and the file is seeked to the saved position.
+    This means that for a successful unpickle, the original file still has to
+    be accessible with its filename.
+
+    Note
+    ----
+    This class only supports reading files in binary mode. If you need to open
+    a file in text mode, use the :func:`pickle_open`.
+
+    Parameters
+    ----------
+    name : str
+        either a text or byte string giving the name (and the path
+        if the file isn't in the current working directory) of the file to
+        be opened.
+    mode : str
+        only reading ('r') mode works. It exists to be consistent
+        with a wider API.
+
+    Example
+    -------
+    ::
+        >>> file = FileIOPicklable(PDB)
+        >>> file.readline()
+        >>> file_pickled = pickle.loads(pickle.dumps(file))
+        >>> print(file.tell(), file_pickled.tell())
+            55 55
+
+    See Also
+    ---------
+    TextIOPicklable
+    BufferIOPicklable
+    .. versionadded:: 2.0.0
     """
 
-    # NOTE: Objects created by this function have no synchronization primitives
-    #  in place. Having concurrent workers write on overlapping shared memory
-    #  data segments, for instance by using inplace operators and assignments on
-    #  a numpy.memmap instance, can lead to data corruption as numpy does not
-    #  offer atomic operations. We do not risk that issue if each process is
-    #  updating an exclusive segment of the shared result array.
+    def __init__(self, name, mode='r'):
+        self._mode = mode
+        super().__init__(name, mode)
 
-    if loc is None:
-        fid, loc = tempfile.mkstemp('.npy')
-        clobber = True  # fixme. messages below will be inaccurate
+    def __getstate__(self):
+        if 'r' not in self._mode:
+            raise RuntimeError(f'Can only pickle files that were opened in'
+                               f' read mode, not {self._mode}')
+        return self.name, self.tell()
 
-    loc = Path(loc)
-    filename = str(loc)
-    folder = loc.parent
-
-    # create folder if needed
-    if not folder.exists():
-        logger.info('Creating folder: {!r:}', str(folder))
-        folder.mkdir(parents=True)
-
-    # update mode if existing file, else read
-    new = not loc.exists()
-    mode = 'w+' if (new or clobber) else 'r+'  # FIXME w+ r+ same??
-    if dtype is None:
-        dtype = 'f' if fill is None else type(fill)
-
-    # create memmap
-    shape = int2tup(shape)
-    if new:
-        logger.debug('Creating memmap of shape {!s} and dtype {!r:} at {!r:}.',
-                    shape, dtype, filename)
-    else:
-        logger.debug('Loading memmap at {!r:}.', filename)
-
-    # NOTE: using ` np.lib.format.open_memmap` here so that we get a small
-    #  amount of header info for easily loading the array
-    data = np.lib.format.open_memmap(filename, mode, dtype, shape)
-
-    if data.shape != shape:
-        logger.warning(f'Loaded memmap has shape {data.shape}, which is '
-                       f'different to that requested: {shape}. Overwrite: '
-                       f'{clobber}.')
-
-    # overwrite data
-    if (new or clobber) and (fill is not None):
-        logger.debug('Overwriting data with %g.', fill)
-        data[:] = fill
-
-    return data
-
-
-def load_memmap_nans(loc, shape=None, dtype=None, clobber=False):
-    return load_memmap(loc, shape, dtype, fill=np.nan, clobber=clobber)
+    def __setstate__(self, args):
+        name = args[0]
+        super().__init__(name, mode='r')
+        self.seek(args[1])

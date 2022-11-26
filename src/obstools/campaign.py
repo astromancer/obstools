@@ -37,6 +37,7 @@ from recipes.string.brackets import braces
 from recipes.string import pluralize, strings
 
 # relative
+from .io import _FilePicklable
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
@@ -111,14 +112,22 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         # multiple roots: return None
 
 
-class HDUExtra(PrimaryHDU,
+class ImageHDU(PrimaryHDU,
                ImageSamplerMixin,
                ImageCalibratorMixin,
-               LoggingMixin,
-               SourceDetectionMixin):
+               SourceDetectionMixin,
+               LoggingMixin):
     """
     Some extra methods and properties to support PhotCampaign features.
     """
+
+    @classmethod
+    def readfrom(cls, fileobj, checksum=False, ignore_missing_end=False, **kws):
+
+        if not isinstance(fileobj, _FilePicklable):
+            fileobj = _FilePicklable(fileobj)
+
+        return PrimaryHDU.readfrom(fileobj, checksum, ignore_missing_end, **kws)
 
     def detect(self, stat='median', depth=5, interval=..., report=True, **kws):
         """
@@ -385,7 +394,7 @@ class PhotCampaign(PPrintContainer,
         if not isinstance(files, (abc.Container, abc.Iterable)):
             raise TypeError(f'Invalid input type {type(files)} for `files`.')
 
-        loader = kws.pop('loader', _BaseHDU.readfrom)
+        loader = kws.pop('loader', None)
         allow_empty = kws.pop('allow_empty')
         obj = cls.load_files(files, loader, allow_empty=True, **kws)
 
@@ -400,8 +409,7 @@ class PhotCampaign(PPrintContainer,
         return obj
 
     @classmethod
-    def load_files(cls, filenames, loader=_BaseHDU.readfrom, allow_empty=False,
-                   **kws):
+    def load_files(cls, filenames, loader=None, allow_empty=False, **kws):
         """
         Load data from (list of) filename(s).
 
@@ -423,6 +431,10 @@ class PhotCampaign(PPrintContainer,
         filenames = files.get(True, ())
         if not (filenames or allow_empty):
             raise ValueError('No data found.')
+
+        if loader is None:
+            loaders = op.AttrVector('readfrom', default=None)(cls._allowed_types)
+            loader = next(filter(None, loaders))
 
         i = 0
         hdus = []
@@ -447,6 +459,7 @@ class PhotCampaign(PPrintContainer,
                     )
         if i:
             cls.logger.success('Loaded {:d} {:s}.', i, pluralize('file', hdus))
+
         return cls(hdus)
 
     def __init__(self, hdus=None):
