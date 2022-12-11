@@ -4,10 +4,12 @@ Extensions for segmentation images
 
 
 # std
+import os
 import types
 import inspect
 import numbers
 import itertools as itt
+import contextlib as ctx
 from collections import abc, defaultdict, namedtuple
 
 # third-party
@@ -27,10 +29,10 @@ from recipes.logging import LoggingMixin
 from recipes.utils import duplicate_if_scalar
 
 # relative
-from ... import io
 from ...utils import prod
 from ...stats import geometric_median
 from ..utils import shift_combine
+from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
 from .trace import trace_boundary
 from .display import SegmentPlotter
 from .groups import LabelGroupsMixin, auto_id
@@ -518,6 +520,10 @@ class SliceDict(vdict):
 #     'TODO: com / gmean / mean / argmax'  # maybe
 
 
+# def is2d(data):
+#     return (nd := data.ndim) == 2 or (nd == 3 and data.shape[0] == 1)
+
+
 class MaskedStatsMixin:
     """
     This class gives inheritors access to methods for doing statistics on
@@ -600,13 +606,21 @@ class MaskedStatistic:
         # below
         return types.MethodType(self, seg)
 
-    def __call__(self, seg, image, labels=None):
+    def __call__(self, seg, image, labels=None, njobs=-1):
         # handling of masked pixels for all statistical methods done here
         seg._check_input_data(image)
         labels = seg.resolve_labels(labels, allow_zero=True)
 
         # ensure return array or masked array and not list.
-        return self._run(image, seg, labels)
+        return self.run(image, seg, labels, njobs)
+
+    def run(self, data, seg, labels, njobs=-1, **kws):
+        result, mask = self._run(data, seg, labels, njobs, **kws)
+
+        if mask is None:
+            return np.array(result)
+
+        return np.ma.MaskedArray(result, mask)
 
     def _run(self, data, seg, labels, njobs=-1, **kws):
 
@@ -614,44 +628,67 @@ class MaskedStatistic:
             raise ValueError(f'Cannot compute image statistic for {nd}D data. '
                              f'Data should be at least 2D.')
 
-        isma = np.ma.is_masked(data)
-        worker = (self.worker, self.worker_ma)[isma]
-
         # result shape and dtype
         nlabels = len(labels)
         shape = (nlabels, *seg._result_dims.get(self.__name__, ()))
         dtype = 'i' if 'position' in self.__name__ else 'f'
 
-        if not (is2d := data.ndim == 2):
-            shape = (len(data), *shape)
+        if not (is2d := (data.ndim == 2)):
+            shape = ((n := len(data)), *shape)
+            if n == 1:
+                njobs = 1
 
+        isma = np.ma.is_masked(data)
         if nlabels == 0:
-            return (np.ma.empty if isma else np.empty)(shape, bool)
+            return np.empty(shape), (np.empty(shape, bool) if isma else None)
 
-        # init_mem = np.empty if is2d else io.load_memmap
+        # get worker
+        worker = self.worker_ma if isma else self.worker
 
         if is2d:
-            result = np.empty(shape, dtype)
+            result = np.empty(shape)
             masked = np.zeros(shape, bool) if isma else None
+            # run single task
             worker(data, seg, labels, result, masked)
+            return result, masked
+
+        #  3D data
+        if njobs == 1:
+            # sequential
+            context = ctx.nullcontext(list)
+            result = np.empty(shape)
+            masked = np.empty(shape, bool) if isma else None
+            to_close = ()
         else:
-            # create memmap
-            result = io.load_memmap(shape=shape, dtype=dtype)
-            masked = io.load_memmap(shape=shape, fill=False) if isma else None
-            self._run_concurrent(worker, njobs, data, seg, labels, result, masked, **kws)
+            # concurrent
+            # faster serialization with `backend='multiprocessing'`
+            context = Parallel(n_jobs=njobs,
+                               **{'backend': 'multiprocessing', **kws})
+            worker = delayed(worker)
+            # create memmap(s)
+            result = load_memmap(shape=shape, dtype=dtype)
+            to_close = [result._mmap]
+            
+            masked = None
+            if isma:
+                masked = load_memmap(shape=shape, fill=False)
+                to_close.append(masked._mmap)
 
-        if isma:
-            return np.ma.MaskedArray(result, masked)
+        # with ctx.ExitStack() as stack:
+        #     to_close = [stack.enter_context(ctx.closing(mm)) for mm in to_close]
+            # All opened files will automatically be closed at the end of
+            # the with statement, even if attempts to open files later
+            # in the list raise an exception
+            
+        with context as compute:
+        # compute = stack.enter_context(context)
+            compute(worker(im, seg, labels, result, masked, i)
+                        for i, im in enumerate(data))
 
-        return result
+        # for mm in to_close: # causes SEGFAULT??
+        #     mm.close()
 
-    def _run_concurrent(self, worker, njobs, data, seg, labels, result, masked,
-                        **kws):
-
-        kws['backend'] = 'multiprocessing'  # faster serialization!
-        with Parallel(n_jobs=njobs, **kws) as parallel:
-            parallel(delayed(worker)(im, seg, labels, result, masked, i)
-                     for i, im in enumerate(data))
+        return result, masked
 
     def worker(self, image, seg, labels, output, _ignored_=None, index=...):
         output[index] = self.func(image, seg.data, labels)
@@ -677,7 +714,6 @@ class MaskedStatistic:
         if seg._result_dims.get(self.__name__, ()):
             n_masked = n_masked[:, None]
         output_mask[index] = (n_masked == 0)
-
 
 
 class SegmentMasks(defaultdict):  # SegmentMasks
@@ -753,6 +789,10 @@ class SegmentedImage(SegmentationImage,     # base
 
     seed = None
 
+    # Source detection
+    # ------------------------------------------------------------------------ #
+    detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
+
     # Constructors
     # --------------------------------------------------------------------------
 
@@ -797,7 +837,7 @@ class SegmentedImage(SegmentationImage,     # base
     # def _detect(cls, algorithm, image, mask=False, **kws):
 
     @classmethod
-    def detect(cls, image, mask=False, dilate=0, **kws):
+    def detect(cls, image, mask=None, dilate=0, **kws):
         """
         Image object detection that returns a SegmentedImage instance
 
@@ -814,7 +854,7 @@ class SegmentedImage(SegmentationImage,     # base
         """
 
         # Initialize
-        seg = cls(cls.detection(image, mask, **kws))  # FIXME
+        seg = cls.detection(image, mask, **kws)
 
         # dilate
         if dilate != 'auto':
@@ -908,10 +948,10 @@ class SegmentedImage(SegmentationImage,     # base
         return dicts.pformat({p: getattr(self, p) for p in params},
                              self.__class__.__name__)
 
-    def __reduce__(self):
-        # for some reason default object.__reduce__ borks with TypeError when
-        # unpickling
-        return self.__class__, (self.data,)
+    # def __reduce__(self):
+    #     # for some reason default object.__reduce__ borks with TypeError when
+    #     # unpickling
+    #     return self.__class__, (self.data,)
 
     def __array__(self, *_):
         """
@@ -1455,7 +1495,7 @@ class SegmentedImage(SegmentationImage,     # base
         """
 
         # convert list etc to array, but keep masked arrays
-        data = np.asanyarray(data)
+        # data = np.asanyarray(data)
 
         # check shapes same
         shape = self.shape
@@ -1464,7 +1504,7 @@ class SegmentedImage(SegmentationImage,     # base
             raise ValueError('Arrays does not have the correct shape for '
                              'computation with segmentation data. Input data '
                              f'shape: {data.shape}, segmentation data shape '
-                             f'{shape}')
+                             f'{shape}.')
 
         # TODO: maybe use numpy.broadcast_arrays if you want to do stats on
         #  higher dimensional data sets using this class. You will have to
@@ -1669,11 +1709,10 @@ class SegmentedImage(SegmentationImage,     # base
     #     labels = self.resolve_labels(labels)
     #     return np.array(ndimage.center_of_mass(image, self.data, labels))
 
-    def geometric_median(self, image, labels=None, mask=None):
-
-        block = np.dstack([*np.indices(image.shape)[::-1], image]).swapaxes(0, -1)
+    def geometric_median(self, image, labels=None, mask=None, njobs='_ignored'):
+        data = np.dstack([*np.indices(image.shape)[::-1], image]).swapaxes(0, -1)
         return np.array([geometric_median(xyz.T)
-                         for xyz in self.cutouts(block, labels=labels, compress=True)])
+                         for xyz in self.cutouts(data, labels=labels, compress=True)])
 
     def com_bg(self, image, labels=None, mask=None,
                background_estimator=np.ma.median, grid=None):
@@ -1753,20 +1792,19 @@ class SegmentedImage(SegmentationImage,     # base
 
     centroids = com_bg
 
-    
     def upsample_max(self, image, labels=None, rescale=2):
         from PIL import Image
         from scipy import ndimage
-        
+
         labels = self.resolve_labels(labels)
-        
+
         im = Image.fromarray(image.astype('f'))
-        newsize =  np.multiply(im.size, rescale)
+        newsize = np.multiply(im.size, rescale)
         im1 = im.resize(newsize, Image.LANCZOS)
         seg1 = Image.fromarray(self.data * 1.).resize(newsize)
         peaks = ndimage.maximum_position(np.array(im1), seg1, labels)
         return np.array(peaks) / rescale
-    
+
     # --------------------------------------------------------------------------
 
     def relabel_many(self, *label_sets):
