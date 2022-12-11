@@ -20,7 +20,7 @@ from motley.table import Table
 
 # relative
 from ..modelling import UnconvergedOptimization
-from .segmentation import SegmentedImage, groups
+# from .segmentation.groups import auto_id
 
 # TODO: watershed segmentation on the negative image ?
 # TODO: detect_gmm():
@@ -62,6 +62,8 @@ class DetectionBase(LoggingMixin):
     """Base class for source detection."""
 
     members = {}
+    owner = None
+    # `SourceDetectionDescriptor.__set_name__` assigns the descriptor owner here
 
     @classproperty
     @classmethod
@@ -87,6 +89,15 @@ class DetectionBase(LoggingMixin):
         if not cls.__name__.startswith('_'):
             cls.members[cls.name] = cls
 
+    def _get_owner(self):
+        from obstools.image import SegmentedImage
+
+        #
+        kls = SegmentedImage
+        if self.owner and issubclass(self.owner, kls):
+            kls = self.owner
+        return kls
+    
     # def __init__(self, algorithm, *args, **kws):
     #     try:
     #         assert callable(algorithm)
@@ -148,17 +159,19 @@ class DetectionBase(LoggingMixin):
                                dilate=dilate,
                                deblend=deblend))
 
+        kls = self._get_owner()
+
         if monolithic:
             mask = seg_data.astype(bool)
             filled = ndimage.binary_fill_holes(mask)
             seg_data, _ = ndimage.label(filled)
-            seg = SegmentedImage(seg_data)
+            seg = kls(seg_data)
 
             remove_labels = set(seg_data[filled & ~mask]).union(
                 seg.labels[seg.areas < npixels])
             seg.remove_labels(list(remove_labels))
         else:
-            seg = SegmentedImage(seg_data)
+            seg = kls(seg_data)
 
         if edge_cutoff:
             border = make_border_mask(image, edge_cutoff)
@@ -171,8 +184,10 @@ class DetectionBase(LoggingMixin):
         # dilate
         if dilate:
             seg.dilate(iterations=dilate)
-
-        seg.relabel_consecutive()
+        
+        if seg.nlabels:
+            seg.relabel_consecutive()
+            
         return seg
 
     def report(self, image, seg, show=5, **kws):
@@ -346,14 +361,14 @@ class _SourceAggregator(DetectionBase):
         self.seg = None
         super().__init__(algorithm, model)
 
-    def __call__(self, image, mask=False, group_id=groups.auto_id, **kws):
+    def __call__(self, image, mask=False, group_id=None, **kws):
         # update mask
         if mask is None:
             mask = False
 
         if self.seg is None:
             # first round
-            self.seg = SegmentedImage.empty_like(image)
+            self.seg = self._get_owner().empty_like(image)
 
         # ignore previous detections
         new_seg = super().__call__(image, mask | self.seg.to_binary(), **kws)
@@ -542,26 +557,35 @@ class MultiThreshold(_SourceDetectionLoop):
                                 max_iter=max_iter)
 
 
-class SourceDetection:
-    """A descriptor object for managing source detection algorithms."""
+class SourceDetectionDescriptor:
+    """
+    A descriptor object for managing source detection algorithms.
+    """
 
     def __init__(self, algorithm=DEFAULT_ALGORITHM, *args, **kws):
         self.algorithm = algorithm
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
 
+    def __call__(self, image, *args, **kws):
+        return self._algorithm.detect(image, *args, **kws)
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.algorithm})'
+    
+    def __set_name__(self, owner, name):
+        # set the class th
+        # self.logger.debug('Assigned ownership of {!r} detection algorithm to {}.',
+        #                   self.algoritm, owner)
+        self._algorithm.owner = owner
+
     def __get__(self, obj, kls=None):
         self.parent = obj
         return self
 
-    # @caching.memoize(typed={'image': caching.hashers.array,
-    #                         'mask': caching.hashers.array})
-    def __call__(self, image, *args, **kws):
-        return self._algorithm.detect(image, *args, **kws)
-
     def __set__(self, obj, algorithm):
         """
         >>> class MyImage:
-        ...     detect = SourceDetection('gmm')
+        ...     detect = SourceDetectionDescriptor('gmm')
         ... img = MyImage().detect
 
         later to switch algorithms:
@@ -589,7 +613,7 @@ class SourceDetectionMixin:
     can be used to construct image models from images.
     """
 
-    detection = SourceDetection(DEFAULT_ALGORITHM)
+    detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
 
     @classmethod
     def from_image(cls, image, detect=True, **detect_opts):
@@ -615,7 +639,7 @@ class SourceDetectionMixin:
         -------
 
         """
-
+        
         # select source detection algorithm
         if isinstance(detect, dict):
             detect_opts = dict(detect, **detect_opts)
@@ -642,7 +666,7 @@ class SourceDetectionMixin:
         return cls.detection(image, **detect_opts)
 
     def detect(self, image, *args, report=True, **kws):
-        # subclasses to implement stuff by overwriting this method
+        # subclasses to implement specifics by overwriting this method
         return self.detection(image, *args, report=report, **kws)
 
 
