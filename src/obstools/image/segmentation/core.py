@@ -21,6 +21,7 @@ from photutils.segmentation import SegmentationImage, deblend_sources
 # local
 from pyxides.vectorize import vdict
 from recipes import api, dicts
+from recipes.io import load_memmap
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.utils import duplicate_if_scalar
