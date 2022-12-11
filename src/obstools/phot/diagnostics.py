@@ -13,13 +13,15 @@ from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # local
-from scrawl.scatter import scatter_density
-from recipes.misc import is_interactive
 from motley.table import Table
+from recipes.misc import is_interactive
+from scrawl.image import ImageDisplay
+from scrawl.scatter import scatter_density
+from scrawl.ticks import LinearRescaleFormatter
+
+
 # from motley.profiling.timers import timer
 # from obstools.aps import ApertureCollection
-from scrawl.imagine import ImageDisplay
-from scrawl.ticks import LinearRescaleFormatter
 
 # from obstools.psf.psf import GaussianPSF
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
@@ -388,8 +390,8 @@ def ap_opt_stat_map(optstat):
                       origin='upper', cmap='jet_r',
                       interval='minmax',
                       hist=False, sliders=False)
-    im.imagePlot.set_clim(-3, 1)
-    cmap = im.imagePlot.get_cmap()
+    im.image.set_clim(-3, 1)
+    cmap = im.image.get_cmap()
 
     # hack the yscale
     fmt = LinearRescaleFormatter(nf / nr)
@@ -702,7 +704,7 @@ def get_proxy_art(art):
 def plot_lc_psf(fpm, labels):
     # PSF photometry light curves
     fig, art, *rest = tsplt(fpm.T, title='psf flux',
-                            draggable=False,
+                            movable=False,
                             show_hist=True)
 
     # legend
@@ -761,7 +763,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
                                  timescale=timescale,
                                  errorbar=dict(errorevery=error_every),
                                  axlabels=('frame #', 'Flux (photons/pixel)'),
-                                 draggable=True,  # FIXME: labels not shown
+                                 movable=True,  # FIXME: labels not shown
                                  show_hist=False)  # FIXME: broken with axes
 
     art.connect()
@@ -775,7 +777,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
     #                              start=t[0].to_datetime(),
     #                              errorbar=dict(errorevery=errorevery),
     #                              axlabels=('t (s)', 'Flux (photons/pixel)'),
-    #                              draggable=False,
+    #                              movable=False,
     #                              show_hist=True)
     # legend
     hax = fig.axes[1]
@@ -799,7 +801,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 #     print('plotting lc aps', s)
 #     fig, art, *rest = tsplt.plot(data,
 #                                  title='aperture flux (%.1f*fwhm)' % s,
-#                                  draggable=False,
+#                                  movable=False,
 #                                  show_hist=True)
 #     # legend
 #     hax = fig.axes[1]
@@ -811,7 +813,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 
 # @timer
 def plot_lc_aps(apdata, labels):
-    # from scrawl.multitab import MplMultiTab
+    # from mpl_multitab import MplMultiTab
     ##ui = MplMultiTab()
     figs = []
 
@@ -823,7 +825,7 @@ def plot_lc_aps(apdata, labels):
     #     print('plotting lc aps', i, s)
     #     fig, art, *rest = tsplt.plot(apdata.flux[...,i].T,
     #                              title='aperture flux (%.1f*fwhm)' %s,
-    #                              draggable=False,
+    #                              movable=False,
     #                              show_hist=True)
     #     # legend
     #     hax = fig.axes[1]
@@ -837,7 +839,7 @@ def plot_lc_aps(apdata, labels):
     # Background light curves
     fig, art, *rest = tsplt.plot(apdata.bg.T,
                                  title='bg flux (per pix.)',
-                                 draggable=False,
+                                 movable=False,
                                  show_hist=True)
     # legend
     hax = fig.axes[1]

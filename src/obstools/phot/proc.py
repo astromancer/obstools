@@ -1,31 +1,20 @@
+
 # std
-import time
-import logging
-import tempfile
 import itertools as itt
 
 # third-party
 import numpy as np
 import astropy.units as u
 from scipy.optimize import minimize
-from photutils.aperture import (CircularAperture, CircularAnnulus,
-                                EllipticalAperture,
-                                EllipticalAnnulus)
+from photutils.aperture import (CircularAnnulus, CircularAperture,
+                                EllipticalAnnulus, EllipticalAperture)
 
 # local
-from recipes import pprint
-from recipes.string import Percentage
-from recipes.logging import LoggingMixin, ProgressLogger
-
-# relative
-from ..modelling.utils import load_memmap
+from recipes.io import load_memmap
+from recipes.logging import LoggingMixin
 
 
 OPT_SNR_THRESH = 10
-
-
-class AbortCompute(Exception):
-    pass
 
 
 # TODO: Flux upper limits for faint stars merging into bg
@@ -330,170 +319,6 @@ class EllipseOptimizer(ApertureOptimizer):
             ap_sky.a_out = ap_sky.a_in + sky_width
             ap_sky.b_out = ap_sky.b_in + sky_buf + sky_width
             ap_sky.theta = theta
-
-
-class TaskExecutor(LoggingMixin):
-    """
-    Decorator that catches and logs exceptions instead of actively raising.
-
-    Intended use is for data-parallel loops in which the same function will be
-    called many times with different parameters. For this class to work
-    properly, it requires the decorated function/method to have a call signature
-    in which the first parameter is an integer count corresponding to the
-    in-sequence number of the task.
-    """
-    SUCCESS = 1
-    FAIL = -1
-
-    def __init__(self, compute_size, counter, fail_counter, max_fail=None,
-                 time=False):
-        """
-
-
-        Parameters
-        ----------
-        compute_size
-        counter
-        fail_counter
-        max_fail:
-            percentage string eg: '1%' or an integer
-
-        """
-        # TODO: timer
-        # TODO: make progressbar optional
-
-        self.compute_size = n = int(compute_size)
-        self.loc = tempfile.mktemp()
-        self.status = load_memmap(self.loc, n, 'i', 0)
-        self.counter = counter
-        self.fail_counter = fail_counter
-        self.time = bool(time)
-        self.timings = None
-        if self.time:
-            self.loct = tempfile.mktemp()
-            self.timings = load_memmap(self.loct, n, 'f', 0)
-
-        # resolve `max_fail`
-        if max_fail is None:
-            # default is 1% or 50, whichever is smaller
-            max_fail = min(Percentage('1%')(n), 50)
-        else:
-            max_fail = Percentage(max_fail)(n)
-        self.max_fail = max_fail
-
-        # progress "bar"
-        self.progLog = ProgressLogger(width=10, symbol='', align='<')
-        self.progLog.create(n, None)
-
-    def __call__(self, func):
-
-        self.func = func
-        self.name = pprint.method(func, show_class=True, submodule_depth=1)
-        self.progLog.name = self.name
-
-        # optional timer
-        self.run = self._run_timed if self.time else self._run
-
-        # log
-        # if np.isfinite(max_fail):
-        n = self.compute_size
-
-        self.logger.info('Exception threshold is {:.2%} ({:d}/{:d})' % (
-            (self.max_fail / n), self.max_fail, n))
-
-        return self.catch
-
-    # @property  # making this a property avoids pickling errors for the logger
-    # def logger(self):
-    #     logger = logging.getLogger(self.name)
-    #     return logger
-
-    def reset(self):
-        self.counter.set_value(0)
-        self.fail_counter.set_value(0)
-
-    def _run(self, *args, **kws):
-        return self.func(*args, **kws)
-
-    def _run_timed(self, *args, **kws):
-        ts = time.time()
-        result = self.func(*args, **kws)
-        self.timings[args[0]] = time.time() - ts
-        return result
-
-    def catch(self, *args, **kws):
-        """
-        This is the decorated function
-
-        Parameters
-        ----------
-        args
-        kws
-
-        Returns
-        -------
-
-        """
-        # exceptions like moths to the flame
-        abort = self.fail_counter.get_value() >= self.max_fail
-        if abort:
-            # doing this here (instead of inside the except clause) avoids
-            # duplication by chained exception traceback when logging
-            raise AbortCompute(
-                'Number of exceptions greater than threshold of {self.max_fail}'
-            )
-
-        try:
-            result = self.run(*args, **kws)
-        except Exception as err:
-            # logs full trace by default
-            i = args[0]
-            self.status[i] = self.FAIL
-            nfail = self.fail_counter.inc()
-            self.logger.exception(
-                'Processing failed at frame {:d}. ({:d}/{:d})',
-                i, nfail, self.max_fail
-            )
-
-            # check if we are beyond exception threshold
-            if nfail >= self.max_fail:
-                logger.critical('Exception threshold reached!')
-                # self.logger.critical('Exception threshold reached!')
-        else:
-            i = args[0]
-            self.status[i] = self.SUCCESS
-            return result  # finally clause executes before this returns
-
-        finally:
-            # log progress
-            counter = self.counter
-            if counter:
-                n = counter.inc()
-                if self.progLog:
-                    self.progLog.update(n)
-
-    def report(self):
-        # not_done, = np.where(self.status == 0)
-        failures, = np.where(self.status == -1)
-        n_done = self.counter.get_value()
-        n_fail = self.fail_counter.get_value()
-
-        # TODO: one multi-line message better when multiprocessing
-
-        logger = logging.getLogger(self.name)
-        logger.info('Processed {:d}/{:d} frames. {:d} successful; {:d} failed.',
-                    n_done, self.compute_size, n_done - n_fail, n_fail)
-        if len(failures):
-            logger.info('The following frames failed: {:s}', list(failures))
-        elif n_done > 0:
-            logger.info('No failures in main compute!')
-
-        if self.time:
-            #  print timing info
-            logger.info('Timing results for {:s}: {:.3f} ± {:.3f} s',
-                        self.name, self.timings.mean(), self.timings.std())
-
-        return failures
 
 
 def _make_named_dtype(names, base_dtype=float):

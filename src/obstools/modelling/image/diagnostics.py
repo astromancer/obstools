@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 # local
 from recipes import pprint
-from scrawl.imagine import ImageDisplay
+from scrawl.image import ImageDisplay
 
 
 def plot_modelled_image(model, image, params, seg=None, residual_mask=False,

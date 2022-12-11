@@ -38,12 +38,6 @@ def prod(x):
     return 1 if (len(x) == 0) else ftl.reduce(op.mul, x)
 
 
-def int2tup(v):
-    """wrap integer in a tuple"""
-    return (v, ) if isinstance(v, numbers.Integral) else tuple(v)
-    # else:
-    #     raise ValueError('bad item %s of type %r' % (v, type(v)))
-
 
 @caching.to_file(cached.site)
 def get_site(name):

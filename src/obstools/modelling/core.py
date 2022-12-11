@@ -4,23 +4,31 @@
 # std
 import numbers
 import operator as op
-# import multiprocessing as mp
-from collections import abc, OrderedDict, defaultdict
+from collections import OrderedDict, abc, defaultdict
 
 # third-party
 import numpy as np
-from scipy.optimize import minimize, leastsq
+from scipy.optimize import leastsq, minimize
 
 # local
+from recipes.oo import coerce
 from recipes.lists import tally
+from recipes.io import load_memmap
 from recipes.logging import LoggingMixin
 
 # relative
-from ..io import load_memmap
-from ..utils import int2tup
 from .parameters import Parameters
 
+
+# import multiprocessing as mp
+
+
 LN2PI_2 = np.log(2 * np.pi) / 2
+
+
+def int2tup(obj):
+    return coerce(obj, tuple, numbers.Integral)
+    
 
 
 def _echo(*_):
@@ -153,11 +161,8 @@ class GaussianLikelihood(Likelihood):
         #               point
         #
 
-        if sigma is None:
-            sigma_term = 0
-        else:
-            sigma_term = np.log(sigma).sum()
-
+        sigma_term = 0 if sigma is None else np.log(sigma).sum()
+        
         return (- data.size * LN2PI_2
                 # # TODO: einsum here for mahalanobis distance term
                 - 0.5 * self.wrss(p, data, grid, stddev)
@@ -579,8 +584,7 @@ class Model(OptionallyNamed, LoggingMixin):
             msg = result.message
 
         if success:
-            unchanged = np.allclose(p, p0)
-            if unchanged:
+            if unchanged := np.allclose(p, p0):
                 self.logger.warning('"Converged" parameter vector is '
                                     'identical to initial guess: {}', p0)
                 msg = ''
@@ -960,12 +964,7 @@ class CompoundModel(Model):
         if keys is all:
             keys = self.models.keys()
 
-        dtype = []
-        for key in keys:
-            dtype.append(
-                self._adapt_dtype(self.models[key], ())
-            )
-        return dtype
+        return [self._adapt_dtype(self.models[key], ()) for key in keys]
 
     def _adapt_dtype(self, model, out_shape):
         # adapt the dtype of a component model so that it can be used with
@@ -974,20 +973,16 @@ class CompoundModel(Model):
         # used for more than one key (label) to be represented by a 2D array.
 
         # make sure size in a tuple
-        if out_shape == 1:
-            out_shape = ()
-        else:
-            out_shape = int2tup(out_shape)
-
+        out_shape = () if out_shape == 1 else int2tup(out_shape)
         dt = model.get_dtype()
-        if len(dt) == 1:  # simple model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, out_shape + dof
-        else:  # compound model
+        if len(dt) != 1: # simple model
             # structured dtype - nest!
             return model.name, dt, out_shape
+        
+        name, base, dof = dt[0]
+        dof = int2tup(dof)
+        # extend shape of dtype
+        return model.name, base, out_shape + dof
 
     def _results_container(self, keys=all, dtype=None, fill=np.nan,
                            shape=(), type_=Parameters):

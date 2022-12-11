@@ -1,4 +1,6 @@
-
+"""
+Photometry.
+"""
 
 # std
 import functools as ftl
@@ -44,7 +46,7 @@ def phot(hdu, fun, **kws):
 class PhotInterface:
     """Interface for photometry algorithms"""
 
-    filename_template = '{hdu.file.stem}-{fun.__name__}.phot'
+    filename_template = '{hdu.file.stem}.{fun.__name__}.txt'
 
     # def __get__(self, run, kls):
     #     if run is None:
@@ -94,13 +96,15 @@ class PhotInterface:
         target_label = 1
         cmp = ftl.reduce(set.intersection, map(set, labels)) - {target_label}
         cmp = np.array(list(cmp)) - 1
+        cmp = cmp[cmp < top]
+
         # logger.info('Light curves for {:d} sources will be extracted.', top)
         logger.info('Light curves for {:d} / {:d} detected sources with labels '
                     '{} will be extracted.', top, nstars, tuple(cmp))
 
         times = np.empty(n)
         # path = self.path / f'{basename}.dat'
-        results = io.load_memmap(basepath.with_suffix('.dat'), (2, n, top))
+        results = io.load_memmap(basepath.with_suffix('.npy'), (2, n, top))
         sections = split_slices(itt.accumulate(sizes))
         datagen = self._runner(fun, day, segs, top, save, **kws)
         for section, seg, (t, flx, std) in zip(sections, segs, datagen):
@@ -108,6 +112,7 @@ class PhotInterface:
 
             # rescale
             idx = np.argsort(seg.labels[:top])
+
             results[:, section, idx] = \
                 (flx, std) / np.ma.median(flx[:, cmp], 1, keepdims=True)
 
@@ -130,10 +135,10 @@ class PhotInterface:
         segs = split_like(segs, daily.values())
         for (date, sub), segs in zip(daily.items(), segs):
             logger.info('Starting photometry for {!r:} on {!r:}',
-                            sub[0].target, date)
+                        sub[0].target, date)
 
             ts.append(self.diff(fun, sub, segs, **kws))
-
+            break
         return ts
 
     def ragged(self, top=5, dilate=0):

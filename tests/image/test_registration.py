@@ -1,22 +1,19 @@
-from pytest import approx
-from obstools.image.registration import (
-    MultivariateGaussians, GaussianMixtureModel, CoherentPointDrift,
-    SkyImage, ImageRegister, rigid)
-from recipes.transforms import rotate
-from astropy.coordinates import SkyCoord
+# std
+import textwrap
 from pathlib import Path
+
+# third-party
 import numpy as np
 import pytest
+from pytest import approx
 
-import matplotlib.pyplot as plt
+# local
+from recipes.transforms import rotate
+from obstools.image.registration import (CoherentPointDrift, ImageRegister,
+                                         MultivariateGaussians, SkyImage, rigid)
 
 
 # from pytest_steps import test_steps as steps
-
-import itertools as itt
-
-
-import textwrap
 
 
 def load_test_data(filename):
@@ -33,6 +30,7 @@ def make_id(name, n):
 
 
 # dynamically generate some simple fixtures for combinatorial tests
+# sourcery skip: remove-dict-items
 for name, params in dict(
         xy=[((5, 10), (5, 6), (8, 2))],
         sigmas=[1,

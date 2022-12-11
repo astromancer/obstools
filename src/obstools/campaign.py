@@ -8,7 +8,6 @@ observation files.
 import glob
 import inspect
 import fnmatch as fnm
-import operator as op
 import warnings as wrn
 import itertools as itt
 from pathlib import Path
@@ -29,8 +28,8 @@ from pyxides.getitem import IndexerMixin
 from pyxides.grouping import AttrGrouper, Groups
 from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
+from recipes import bash, io, op
 from recipes.dicts import groupby
-from recipes import bash, caching, io
 from recipes.oo import SelfAware, null
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
@@ -109,6 +108,7 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         parents = {p.parent for p in self.paths}
         if (root := parents.pop()):  # single root
             return root
+
         # multiple roots: return None
 
 
@@ -153,10 +153,12 @@ class ImageHDU(PrimaryHDU,
         """
         # NOTE: `get_sample_image` and `detection` are both cached for performance
         image = self.get_sample_image(stat, depth, interval)
+        if report is True:
+            report = dict(title=self.file.name,
+                          title_props=('B', '_'),
+                          extend=2)
         return self.detection(image, **kws,
-                              report=dict(title=self.file.name,
-                                          title_props=('B', '_'),
-                                          extend=2))
+                              report=report)
 
     @property
     def file(self):
@@ -195,20 +197,21 @@ class ImageHDU(PrimaryHDU,
 
     # plotting
     def show(self, **kws):
-        """Display the data"""
+        """Display the data. """
 
-        if self.ndim == 2:
-            from scrawl.imagine import ImageDisplay
+        if (nd := self.ndim) == 2:
+            from scrawl.image import ImageDisplay
 
             im = ImageDisplay(self.data, **kws)
-            # `section` fails with 2d data
+            # Note: `self.section` fails with 2d data
 
-        elif self.ndim == 3:
+        elif nd == 3:
             from .image.display import FitsVideo
+
             im = FitsVideo(self, **kws)
 
         else:
-            raise TypeError('Data is not image or video.')
+            raise TypeError(f'Can only display 2D or 3D data. Your data is {nd}D.')
 
         im.figure.canvas.set_window_title(self.file.name)
         return im

@@ -30,7 +30,7 @@ def _hdu_hasher(hdu):
 
 
 # set hashing algorithm for HDU types
-# config(typed={HDUExtra: _hdu_hasher})
+# config(typed={ImageHDU: _hdu_hasher})
 
 # persistent caches for faster coordinate and image retrieval
 cachePath = _ = Path.home() / '.cache/obstools'  # NOTE only for linux!
