@@ -2,17 +2,25 @@
 Display segmented images and image cutouts.
 """
 
+# std
+import sys
+import numbers
+from collections.abc import MutableMapping
+
 # third-party
 import numpy as np
 import more_itertools as mit
 from astropy.utils import lazyproperty
+from matplotlib.lines import Line2D
+from matplotlib.collections import LineCollection
 
 # local
 import motley
 import motley.image
-from recipes import pprint, string
+from scrawl.utils import embossed
 from recipes.functionals import echo
 from recipes.pprint import formatters as fmt
+from recipes import api, duplicate_if_scalar, pprint, string
 
 
 STAT_FMT = {
@@ -87,7 +95,7 @@ class SegmentPlotter:
         -------
         im: `ImageDisplay` instance
         """
-        from scrawl.imagine import ImageDisplay
+        from scrawl.image import ImageDisplay
 
         # draw segment labels
         # draw_labels = kws.pop('draw_labels', True)
@@ -125,35 +133,83 @@ class SegmentPlotter:
         from matplotlib.pyplot import get_cmap
         return get_cmap(cmap)
 
-    def labels(self, ax, **kws):
-        import matplotlib.patheffects as path_effects
+    def labels(self, ax=None, offset=(0, 0), **kws):
+        # import matplotlib.patheffects as path_effects
 
+        offset = duplicate_if_scalar(offset)
+
+        if ax is None:
+            if plt := sys.modules.get('matplotlib.pyplot'):
+                ax = plt.gca()
+            else:
+                raise TypeError('Please proved axes parameter `ax`.')
         #
         kws = {**dict(va='center', ha='center'), **kws}
         texts = []
-        for lbl, pos in self.seg._label_positions().items():
-            for x, y in pos[:, ::-1]:
+        for lbl, pos in self._label_positions().items():
+            for x, y in pos[:, ::-1] + offset:
                 txt = ax.text(x, y, str(lbl), **kws)
 
                 # add border around text to make it stand out (like the arrows)
-                txt.set_path_effects([
-                    path_effects.Stroke(linewidth=1, foreground='black'),
-                    path_effects.Normal()
-                ])
-                texts.append(txt)
+                texts.append(embossed(txt, 1, 'k'))
 
         return texts
+
+    def _label_positions(self):
+        # compute distance from centroid to nearest pixel of same label.
+
+        # If this distance is large, it means the segment potentially has a
+        # hole or is arc shaped, or is disjointed. For these we add the label
+        # multiple times, one label for each separate part of the segment.
+        # Decide on where to put the labels based on kmeans with 2 clusters.
+        # note. this will give bad positions for some shapes, but is good
+        # enough for jazz...
+        seg = self.seg
+        if seg.nlabels == 0:
+            return {}
+
+        #
+        yx = seg.com(seg.data)
+        # yx may contain nans if labels not sequential....
+        yx = yx[~np.isnan(yx).any(1)]
+        w = np.array(np.where(seg.to_binary(expand=True)))
+        splix, = np.where(np.diff(w[0]) >= 1)
+        s = np.split(w[1:], splix + 1, 1)
+        gy, gx = (np.array(g, 'O')
+                  for g in zip(*s))  # each of these is a list of arrays
+        magic = [None, ...][bool(len(set(map(len, gy))) - 1)]
+        # explicit object arrays avoids DeprecationWarning
+        d = ((gy - yx[:, 0, magic]) ** 2 +
+             (gx - yx[:, 1, magic]) ** 2) ** 0.5
+        # d is an array of arrays!
+
+        pos = {}
+        for i, (label, dmin) in enumerate(zip(seg.labels, map(min, d))):
+            if dmin > 1:
+                from scipy.cluster.vq import kmeans
+                # center of mass not close to any pixels. disjointed segment
+                # try cluster
+                # todo: could try dbscan here for unknown number of clusters
+                pos[label], _ = kmeans(np.array((gy[i], gx[i]), float).T, 2)
+            else:
+                pos[label] = yx[i][None]
+        return pos
 
     # ------------------------------------------------------------------------ #
     # TODO: SegmentedImageContours ??
 
-    def contours(self, ax, labels=None, legend=False, **kws):
-        lines = self.get_contours(labels, **kws)
+    def contours(self, ax=None, labels=None, legend=False,
+                 linewidth=1.25, emboss=2.5, **kws):
+        if ax is None:
+            if plt := sys.modules.get('matplotlib.pyplot'):
+                ax = plt.gca()
+            else:
+                raise TypeError('Please proved axes parameter `ax`.')
+
+        lines = self.get_contours(labels, emboss, **kws)
         ax.add_collection(lines)
 
         if legend:
-            from matplotlib.lines import Line2D
-
             # legend defaults
             kws = dict(title='Segments',
                        title_fontproperties={'weight': 'bold'},
@@ -164,13 +220,16 @@ class SegmentPlotter:
                 kws.update(dict)
 
             labels = self.seg.resolve_labels(labels)
-            ax.legend(make_contour_legend_proxies(lines, linewidth=1.2),
+            ax.legend(make_contour_legend_proxies(lines, linewidth=linewidth),
                       map(str, labels),
                       **kws)
 
         return lines
 
-    def get_contours(self, labels=None, **kws):
+    # _default_shadow = dict(linewidth=2, foreground='k')
+
+    @api.synonyms({'shadow': 'emboss'})
+    def get_contours(self, labels=None, emboss=2.5, alpha=1, **kws):
         """
         Get the collection of lines that trace the circumference of the
         segments.
@@ -185,21 +244,31 @@ class SegmentPlotter:
         matplotlib.collections.LineCollection
 
         """
-        from matplotlib.collections import LineCollection
-
-        # if not 'colors' in kws:
-        cmap = self.get_cmap(kws.pop('cmap', None))
-
         # NOTE: use PathPatch if you want to be able to hatch the regions.
         #  at the moment you cannot hatch individual paths in PathCollection.
+
+        # boundaries maps labels to boundary line (points array, perimeter)
         boundaries = self.seg.get_boundaries(labels)
         contours, _ = zip(*boundaries.values())
 
-        #
-        colors = mit.flatten([b] * len(c) for b, c in zip(boundaries, contours))
-        colors = np.fromiter(colors, int)
-        kws.setdefault('colors', cmap(colors / colors.max()))
-        return LineCollection(list(mit.flatten(contours)), **kws)
+        lines = LineCollection(list(mit.flatten(contours)), alpha=alpha, **kws)
+        if 'cmap' in kws:
+            lines.set_array(list(mit.flatten(
+                [lbl] * len(c) for lbl, c in zip(boundaries, contours))))
+
+        if emboss:
+            return embossed(lines, emboss, alpha=alpha)
+
+        if isinstance(emboss, numbers.Real):
+            embossed(lines, emboss, alpha=alpha)
+            return
+
+        if isinstance(emboss, MutableMapping):
+            emboss.setdefault(alpha, alpha)
+            return embossed(lines, **emboss)
+
+        raise TypeError(f'Invalid type {type(emboss)} for parameter `emboss`,'
+                        f' should be either float of dict.')
 
 
 class ConsoleFormatter:

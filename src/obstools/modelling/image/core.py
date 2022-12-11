@@ -15,7 +15,7 @@ from photutils.segmentation import Segment
 # local
 from recipes.logging import LoggingMixin
 from recipes.dicts import Record, AttrDict
-from scrawl.imagine import VideoDisplay
+from scrawl.video import VideoDisplay
 
 # relative
 from ..utils import load_memmap
@@ -324,7 +324,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
         return ImageModelAnimation(self, shape)
 
     def plot_image(self, p, grid=None):
-        from scrawl.imagine import ImageDisplay
+        from scrawl.image import ImageDisplay
+        
         return ImageDisplay(self(p, grid))
 
     def plot_surface(self, r, grid=None, **kws):
