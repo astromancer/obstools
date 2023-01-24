@@ -30,13 +30,14 @@ from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
 from recipes import bash, io, op
 from recipes.dicts import groupby
-from recipes.oo import SelfAware, null
+from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 from recipes.string import pluralize, strings
 
 # relative
 from .io import _FilePicklable
+from .image.noise import CCDNoiseModel
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin
 from .image.calibration import ImageCalibratorMixin
@@ -58,13 +59,20 @@ def is_property(v):
 # ---------------------------------------------------------------------------- #
 
 
+class NoFile(Null):
+    pass
+
+
+NOFILE = NoFile()
+
+
 class FilenameHelper:
     """
     Helper class for working with filenames
     """
 
     def __init__(self, hdu):
-        self._path = Path(hdu._file.name) if hdu._file else null.NULL
+        self._path = Path(hdu._file.name) if hdu._file else NOFILE
 
     def __str__(self):
         return str(self.path)
@@ -194,6 +202,10 @@ class ImageHDU(PrimaryHDU,
         Get the instrument rotation (position angle) wrt the sky in radians
         """
         raise NotImplementedError
+
+    @lazyproperty
+    def noise_model(self):
+        return CCDNoiseModel(self.readout.noise, self.readout.preAmpGain)
 
     # plotting
     def show(self, **kws):
