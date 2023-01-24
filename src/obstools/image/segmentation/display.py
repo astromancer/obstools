@@ -452,25 +452,50 @@ class ConsoleFormatter:
                     j = k
             yield line[j:]
 
-        s = str(tbl).replace(x, f'{x} ')
+        # s = str(tbl).replace(x, f'{x} ')
 
-        top, *lines = s.splitlines(keepends=True)
+        # handle split tables!
+        o = ''
+        for i, s in enumerate(s.split('\n\n')):
+            top, *lines = s.splitlines(keepends=True)
 
-        if title := kws.get('title'):
-            title_line, *lines = lines
+            title = kws.get('title') + (motley.table.CONTINUED if i else '')
+            if title:
+                title_line, *lines = lines
 
-        header, ticks, first, *lines = lines
-        needs_fix = list(_needs_fix(first))[bool(statistics):]
-        extra_space = 2 * len(needs_fix)
-        o = top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
-        if title:
-            o += title_line.replace(f'{title:^{len(title) + extra_space}}', title)
+            header, ticks, first, *lines = lines
+            needs_fix = list(_needs_fix(first))[bool(statistics):]
+            extra_space = 2 * len(needs_fix)
+            o += top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
 
-        o += ''.join(_fix_line(header, needs_fix)) + ticks
-        for line in [first, *lines]:
-            o += ''.join(_fix_line(line, needs_fix))
+            if title and extra_space:
+                title_line = title_line.replace(' ' * extra_space, '')
+                
+                # title_props=','.join(kws['title_props'])
+                # old_title = motley.format(
+                #     '{title:{title_align}{width}|{style}}', **kws, 
+                #     width=len(title) + extra_space, style=','.join(title_props))
+                
+                # space0 = extra_space // 2
+                # space1 = space0 + extra_space % 2
+                # title_line.index(space0)
+                # title_align = kws.get('title_align', '<')
+                # oldtitle = f'{title:{title_align}{len(title) + extra_space}}'
+                # if old_title not in title_line:
+                #     from IPython import embed
+                #     embed(header="Embedded interpreter at 'src/obstools/image/segmentation/display.py':475")
+                
+                # title_line = title_line.replace(old_title, title)
+                
+            o += title_line
 
-        return o
+            o += ''.join(_fix_line(header, needs_fix)) + ticks
+            for line in [first, *lines]:
+                o += ''.join(_fix_line(line, needs_fix))
+
+            o += '\n\n'
+
+        return o.rstrip()
 
 
 # def source_thumbnails_terminal(image, seg, top,
