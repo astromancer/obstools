@@ -97,12 +97,6 @@ class DetectionBase(LoggingMixin):
         if self.owner and issubclass(self.owner, kls):
             kls = self.owner
         return kls
-    
-    # def __init__(self, algorithm, *args, **kws):
-    #     try:
-    #         assert callable(algorithm)
-
-    #     self.fit_predict = staticmethod(algorithm)
 
     def detect(self, image, mask=None, *args, report=False, **kws):
 
@@ -190,15 +184,17 @@ class DetectionBase(LoggingMixin):
             
         return seg
 
-    def report(self, image, seg, show=5, **kws):
+    def report(self, image, seg, cutouts=True, **kws):
         self.logger.opt(lazy=True).info(
             'Detected {0[0]:d} source{0[1]} covering {0[2]} pixels ({0[3]:.2%} '
             'of the image area).',
             lambda: (seg.nlabels, 's' * (seg.nlabels > 1), seg.areas.sum(),
                      sum(seg.fractional_areas))
         )
-        self.logger.info('Source images:\n{}',
-                         seg.show.console.format_cutouts(image, **kws))
+        
+        if cutouts:
+            self.logger.info('Source images:\n{}',
+                            seg.show.console.format_cutouts(image, **kws))
 
 
 class SigmaThreshold(DetectionBase):
