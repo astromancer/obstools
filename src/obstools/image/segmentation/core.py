@@ -4,7 +4,6 @@ Extensions for segmentation images
 
 
 # std
-import os
 import types
 import inspect
 import numbers
@@ -668,7 +667,7 @@ class MaskedStatistic:
             # create memmap(s)
             result = load_memmap(shape=shape, dtype=dtype)
             to_close = [result._mmap]
-            
+
             masked = None
             if isma:
                 masked = load_memmap(shape=shape, fill=False)
@@ -679,11 +678,11 @@ class MaskedStatistic:
             # All opened files will automatically be closed at the end of
             # the with statement, even if attempts to open files later
             # in the list raise an exception
-            
+
         with context as compute:
-        # compute = stack.enter_context(context)
+            # compute = stack.enter_context(context)
             compute(worker(im, seg, labels, result, masked, i)
-                        for i, im in enumerate(data))
+                    for i, im in enumerate(data))
 
         # for mm in to_close: # causes SEGFAULT??
         #     mm.close()
@@ -1714,12 +1713,36 @@ class SegmentedImage(SegmentationImage,     # base
         return np.array([geometric_median(xyz.T)
                          for xyz in self.cutouts(data, labels=labels, compress=True)])
 
+    def com_std(self, coms, image, std, labels=None):
+        """
+        Standard deviation uncertainty in center-of-mass measurement (x, y)
+        given the pixel values and their standard deviations. Uses linearized
+        propegation of uncertainty assuming gaussian noise models.
+        """
+        if labels is None:
+            labels = self.labels
+        elif len(coms) != self.nlabels:
+            labels = self.resolve_labels(labels)
+
+        if (n := len(coms)) != len(labels):
+            raise ValueError('Number of measurements in center-of-mass does not'
+                             ' match size of `labels` vector.')
+
+        sigmas = np.empty((n, 2))
+        R = coms[..., None, None]
+        for i, (xy, z, σ) in enumerate(
+                self.cutouts(np.indices(image.shape)[::-1], image, std)):
+            sigmas[i] = np.sqrt((((R[i] - xy) * σ) ** 2).sum((1, 2))) / z.sum()
+
+        return sigmas
+
     def com_bg(self, image, labels=None, mask=None,
                background_estimator=np.ma.median, grid=None):
         """
         Compute centre of mass of background subtracted (masked) image.
         Default is to use median statistic  as background estimator.
-        Pre-subtraction improves accuracy of measurements in presence of noise.
+        Pre-subtraction can sometimes improve accuracy of measurements in
+        presence of noise.
 
         Parameters
         ----------
@@ -2275,7 +2298,7 @@ class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
     def coord_grids(self):
         return self.get_coord_grids()
 
-    def get_coord_grids(self, labels):
+    def get_coord_grids(self, labels=None):
         return dict(self.cutouts(self.grid, labels=self.resolve_labels(labels),
                                  flatten=True, labelled=True))
 
