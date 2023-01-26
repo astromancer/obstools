@@ -20,12 +20,20 @@ from motley.table import Table
 
 # relative
 from ..modelling import UnconvergedOptimization
-# from .segmentation.groups import auto_id
 
 # TODO: watershed segmentation on the negative image ?
 # TODO: detect_gmm():
 
+# ---------------------------------------------------------------------------- #
+# defaults
 DEFAULT_ALGORITHM = 'sigma_threshold'
+NPIXELS = 7
+EDGE_CUTOFF = None
+MONOLITHIC = True
+ROUNDNESS = (0.5, 1.5)
+DILATE = 0
+DEBLEND = False
+
 # ---------------------------------------------------------------------------- #
 
 
@@ -112,8 +120,9 @@ class DetectionBase(LoggingMixin):
     @caching.cached(typed={'image': caching.hashers.array,
                            'mask': caching.hashers.array})
     def __call__(self, image, mask=None,
-                 npixels=7, edge_cutoff=None, monolithic=True,
-                 dilate=0, deblend=False,
+                 npixels=NPIXELS, edge_cutoff=EDGE_CUTOFF,
+                 monolithic=MONOLITHIC, roundness=ROUNDNESS,
+                 dilate=DILATE, deblend=DEBLEND,
                  **kws):
         """
         Image object detection that returns a `SegmentedImage` instance. Post
@@ -139,22 +148,33 @@ class DetectionBase(LoggingMixin):
         # Initialize
         seg_data = self.fit_predict(image, mask, npixels=npixels, **kws)
         return self.post_process(image, seg_data, npixels, edge_cutoff,
-                                 monolithic, dilate, deblend)
+                                 monolithic, roundness, dilate, deblend)
 
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
-    def post_process(self, image, seg_data, npixels, edge_cutoff=None,
-                     monolithic=True, dilate=0, deblend=False):
-        self.logger.debug('Post-processing detected sources with criteria: {}',
-                          dict(npixels=npixels,
-                               edge_cutoff=edge_cutoff,
-                               monolithic=monolithic,
-                               dilate=dilate,
-                               deblend=deblend))
+    def post_process(self, image, seg_data,
+                     npixels=NPIXELS, edge_cutoff=EDGE_CUTOFF,
+                     monolithic=MONOLITHIC, roundness=ROUNDNESS,
+                     dilate=DILATE, deblend=DEBLEND):
+        self.logger.info('Post-processing detected sources with criteria: {}',
+                         dict(npixels=npixels,
+                              edge_cutoff=edge_cutoff,
+                              monolithic=monolithic,
+                              roundness=roundness,
+                              dilate=dilate,
+                              deblend=deblend))
 
         kls = self._get_owner()
 
+        def msg(labels, criterion):
+            if len(labels):
+                self.logger.opt(depth=1).debug(
+                    'Removing {} segments failing {} criterion: {}',
+                    len(labels), criterion, labels
+                )
+
+        #  shape rejection
         if monolithic:
             mask = seg_data.astype(bool)
             filled = ndimage.binary_fill_holes(mask)
@@ -163,25 +183,35 @@ class DetectionBase(LoggingMixin):
 
             remove_labels = set(seg_data[filled & ~mask]).union(
                 seg.labels[seg.areas < npixels])
+            msg(remove_labels, 'monolithic')
             seg.remove_labels(list(remove_labels))
         else:
             seg = kls(seg_data)
 
         if edge_cutoff:
             border = make_border_mask(image, edge_cutoff)
-            # labels = np.unique(seg.data[border])
+            msg(np.unique(seg.data[border]), 'edge cutoff')
             seg.remove_masked_labels(border)
 
         if deblend:  # and not no_sources:
             seg = seg.deblend(image, npixels)
 
+        # shape rejection 2
+        if roundness:
+            lo, hi = roundness
+            r = seg.roundness
+            remove_labels = seg.labels[(lo > r) | (r >= hi)]
+            msg(remove_labels, 'roundness')
+            seg.remove_labels(remove_labels)
+
         # dilate
         if dilate:
             seg.dilate(iterations=dilate)
-        
+
+        # cleanup
         if seg.nlabels:
             seg.relabel_consecutive()
-            
+
         return seg
 
     def report(self, image, seg, cutouts=True, **kws):
@@ -191,10 +221,10 @@ class DetectionBase(LoggingMixin):
             lambda: (seg.nlabels, 's' * (seg.nlabels > 1), seg.areas.sum(),
                      sum(seg.fractional_areas))
         )
-        
+
         if cutouts:
             self.logger.info('Source images:\n{}',
-                            seg.show.console.format_cutouts(image, **kws))
+                             seg.show.console.format_cutouts(image, **kws))
 
 
 class SigmaThreshold(DetectionBase):
@@ -216,7 +246,7 @@ class SigmaThreshold(DetectionBase):
         """
 
         self.logger.info('Running detect with: {:s}',
-                         str(dict(snr=snr, npixels=npixels)))
+                         str(dict(snr=snr)))  # npixels=npixels
 
         if mask is None:
             mask = False  # need this for logical operators below to work
@@ -567,7 +597,7 @@ class SourceDetectionDescriptor:
 
     def __repr__(self):
         return f'{self.__class__.__name__}({self.algorithm})'
-    
+
     def __set_name__(self, owner, name):
         # set the class th
         # self.logger.debug('Assigned ownership of {!r} detection algorithm to {}.',
@@ -635,7 +665,7 @@ class SourceDetectionMixin:
         -------
 
         """
-        
+
         # select source detection algorithm
         if isinstance(detect, dict):
             detect_opts = dict(detect, **detect_opts)
