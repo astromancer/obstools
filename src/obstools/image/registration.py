@@ -67,6 +67,16 @@ from .image import SkyImage, ImageContainer
 #
 TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
 
+# ---------------------------------------------------------------------------- #
+# defaults
+HOP = True
+REFINE = True
+SAMPLE_STAT = 'median'
+DEPTH = 5
+PLOT = False
+
+# ---------------------------------------------------------------------------- #
+
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
     """Recenter and scale"""
@@ -216,8 +226,7 @@ class MultiGauss(Model):
         self.set_amplitudes(amplitudes)
 
     def set_amplitudes(self, amplitudes):
-        self._amplitudes = self._check_prop(
-            amplitudes, 'amplitudes', (self.n,))
+        self._amplitudes = self._check_prop(amplitudes, 'amplitudes', (self.n,))
 
     @property
     def flux(self):
@@ -245,7 +254,7 @@ class MultiGauss(Model):
 
         # absorb sigmas and amplitude into single exponent
         self._exp = -1 / 2 / self._sigmas ** 2
-        # pre-factors so the individual gaussians integrate to 1
+        # pre-factors so the individual gaussians integrate to 1 (probability)
         self._pre = np.sqrt((2 * np.pi) ** self.n_dims * self.sigmas.prod(-1))
 
     def _check_prop(self, a, name, shape):
@@ -463,7 +472,8 @@ class CoherentPointDrift(Model):
     Model that fits for the transformation parameters to match point clouds.
     This is a partial implementation of the full CPD algorithm since we
     generally know the scale of the feature coordinates (field-of-view) and
-    therefore don't need to fit for the scale parameters.
+    therefore don't need to fit for the scale parameters. Furthermore, if the 
+    frame to frame angle remains constant, set the `fit_angle` property to True.
     """
 
     # FIXME: this should be a GMM subclass. Need to tweak some of the `Model`
@@ -485,7 +495,7 @@ class CoherentPointDrift(Model):
 
     @property
     def transform(self):
-        return transform.rigid if self._fit_angle else np.add
+        return transform.rigid if self.fit_angle else np.add
 
     def __init__(self, xy, sigmas, weights=None):
         self.gmm = GaussianMixtureModel(xy, sigmas, weights)
@@ -510,7 +520,7 @@ class CoherentPointDrift(Model):
 
 
 # @timer
-def offset_disp_cluster(xy0, xy1, sigma=None, plot=False):
+def offset_disp_cluster(xy0, xy1, sigma=None, plot=PLOT):
     # NOTE: this method is disfavoured compared to the more stable
     # `ImageRegister._dxy_hop`
 
@@ -620,8 +630,6 @@ def gridsearch_alt(func, args, grid, axes=..., output=None):
     return output, (i, j), grid[:, i, j]
 
 
-
-
 def plot_coords_nrs(cooref, coords):
     fig, ax = plt.subplots()
 
@@ -670,7 +678,7 @@ def display_multitab(images, fovs, params, coords):
 
 
 # def register(clustering, coms, centre_distance_max=1,
-#                            f_detect_measure=0.5, plot=False, **plot_kws):
+#                            f_detect_measure=0.5, plot=PLOT, **plot_kws):
 #     #
 #     from collections import Callable
 #     if isinstance(plot, Callable):
@@ -880,7 +888,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     # incomplete sample. Only sources that are detected in at least
     # `detect_freq_min` fraction of the frames will be used to calculate
     # frame xy offset.
-    
+
     # Any measure of centrality for cluster centers is only a good estimator
     # of the relative positions of sources when the camera offsets are
     # taken into account.
@@ -937,7 +945,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
 
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
-    σxy = np.empty((n_sources, 2)) 
+    σxy = np.empty((n_sources, 2))
     # σxy = np.ma.masked_all((n_sources, 2))
 
     # compute positions of all sources with frame offsets measured from best
@@ -1076,14 +1084,28 @@ def group_features(labels, *features):
         g.mask = True
         grouped.append(g)
 
-    for i, j in enumerate(indices):
-        ok = (j != -1)
-        if ~ok.any():
-            # catches case in which f[i] is empty (eg. no object detections)
-            continue
+    try:
+        for i, j in enumerate(indices):
+            ok = (j != -1)
+            if ~ok.any():
+                # catches case in which f[i] is empty (eg. no object detections)
+                continue
 
-        for f, g in zip(features, grouped):
-            g[i, j[ok]] = f[i][ok, ...]
+            for f, g in zip(features, grouped):
+                g[i, j[ok]] = f[i][ok, ...]
+    except Exception as err:
+        import sys
+        import textwrap
+        from IPython import embed
+        from better_exceptions import format_exception
+        embed(header=textwrap.dedent(
+            f"""\
+                Caught the following {type(err).__name__} at 'registration.py':1093:
+                %s
+                Exception will be re-raised upon exiting this embedded interpreter.
+                """) % '\n'.join(format_exception(*sys.exc_info()))
+        )
+        raise
 
     return tuple(grouped)
 
@@ -1243,7 +1265,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     """Refine fitting by running gradient descent after basin-hopping search."""
 
     # Expansion factor for grid search
-    _search_area_stretch = 1.25
+    # _search_area_stretch = 1.25
 
     # Sigma for GMM as a fraction of minimal distance between sources
     _dmin_frac_sigma = 3
@@ -1253,34 +1275,34 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: uncertainty on center of mass from pixel noise!!!
 
     @classmethod
-    def from_hdus(cls, run, sample_stat='median', depth=5, primary=None,
-                  fit_angle=True, **find_kws):
+    def from_hdus(cls, run, sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
+                  fit_angle=True, **kws):
         # get sample images etc
         # `from_hdu` is used since the sample image and source detection results
         # are cached (persistantly), so this should be fast on repeated calls.
         images = [SkyImage.from_hdu(hdu, sample_stat, depth,
-                                    **{**cls.find_kws, **find_kws})
+                                    **{**cls.find_kws, **kws})
                   for hdu in run]
-        return cls(images, primary=primary, fit_angle=fit_angle, **find_kws)
+        return cls(images, primary=primary, fit_angle=fit_angle, **kws)
 
     # @classmethod                # p0 -----------
-    # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=False,
-    #                 fit_angle=True, **find_kws):
+    # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=PLOT,
+    #                 fit_angle=True, **kws):
 
     #     # initialize workers
     #     with Parallel(n_jobs=1) as parallel:
     #         # detect sources
     #         images = parallel(
-    #             delayed(SkyImage.from_image)(image, fov, **find_kws)
+    #             delayed(SkyImage.from_image)(image, fov, **kws)
     #             for image, fov in zip(images, fovs)
     #         )
 
     #     return cls._from_images(images, fovs, angles=0, primary=None,
-    #                             plot=False, fit_angle=True, **find_kws)
+    #                             plot=PLOT, fit_angle=True, **kws)
 
     # @classmethod                # p0 -----------
-    # def _from_images(cls, images, fovs, angles=0, primary=None, plot=False,
-    #                  fit_angle=True, **find_kws):
+    # def _from_images(cls, images, fovs, angles=0, primary=None, plot=PLOT,
+    #                  fit_angle=True, **kws):
 
     #     n = len(images)
     #     assert 0 < n == len(fovs)
@@ -1294,7 +1316,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #                fit_angle=fit_angle).fit(plot=plot)
 
     def __init__(self, images=(), fovs=(), params=(), fit_angle=True,
-                 primary=None, **find_kws):
+                 primary=None, **kws):
         """
         Initialize an image register. This class should generally be initialized
         without arguments. The model of the constellation of sources is built
@@ -1317,8 +1339,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         # TODO: init from single image???
 
-        if find_kws:
-            self.find_kws.update(find_kws)
+        if kws:
+            self.find_kws.update(kws)
 
         # init container
         ImageContainer.__init__(self, images, fovs)
@@ -1527,8 +1549,22 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # update minimal source seperation
         # self._min_dist = min(self._min_dist, dist_flat(xy).min())
 
-    def fit(self, obj=None, p0=None, hop=True, refine=None, plot=False,
-            **kws):
+    def check_has_labels(self):
+        if self.labels is None:
+            raise ValueError(
+                'No cluster labels available. Run `register` to fit '
+                'clustering model to the measured centre-of-mass points.'
+            )
+
+    def check_has_data(self):
+        if len(self):
+            return
+
+        raise ValueError('No data. Please add some images first. eg: '
+                         '{self.__class__.__name__}()(image, fov)')
+
+    # TODO: refine_mcmc
+    def fit(self, obj=None, p0=None, hop=HOP, refine=None, plot=PLOT, **kws):
         """
         Flexible fitting method that dispatches fitting method based on the
         type of `obj`, and aggregates results. If this is the first time
@@ -1548,17 +1584,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
             rotation angle in radians.
         """
 
-        if (obj is None) and (self.count == 0):
-            self.check_has_data()
-            # (re)fit all images
-            obj = self[self.order]
-            p0 = self.params[self.order]
-            hop = (self._xy is None)
-            refine = not hop
-
         # dispatch fit
         refine = refine or self.refining
-        fitters = {ImageRegister:           self.fit_register,
+        fitters = {type(None):              self._fit_internal,
+                   ImageRegister:           self.fit_register,
                    (np.ndarray, SkyImage):  self.fit_image,
                    abc.Collection:          self.fit_sequence,
                    ImageHDU:                self.fit_hdu}
@@ -1578,36 +1607,31 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.count += 1
         return result
 
-    def fit_sequence(self, items, p0=None, hop=True, refine=True,
-                     plot=False, njobs=1, **kws):
-        #
-        assert len(items)
+    def _fit_internal(self, obj, p0, hop, refine, plot, **kws):
+        # this method for api consistency
 
-        if p0 is None:
-            p0 = ()
-        else:
-            p0 = np.array(p0)
-            assert p0.shape == (len(items), self.dof)
+        assert obj is None
+        self.check_has_data()
 
-        # run fitting concurrently
-        # with Parallel(n_jobs=njobs) as parallel:
-        #     images = parallel(
-        #         delayed(self.fit)(image, p00, hop, refine, plot, **kws)
-        #         for image, p00 in itt.zip_longest(items, p0)
-        #     )
+        # (re)fit all images
+        # i = int(isinstance(self, ImageRegisterDSS)) and (self._xy is not None)
+        hop = (self._xy is None)
+        refine = refine or not hop
+        obj = self[self.order]
+        p0 = self.params[self.order]
 
-        return [self.fit(image, p00, hop, refine, plot, **kws)
-                  for image, p00 in itt.zip_longest(items, p0)]
+        return self.fit_sequence(obj, p0, hop, refine, plot, **kws)
 
-        # images.insert(primary, self[primary])
-        # self.data[:] = images
+        # i = int(isinstance(self, ImageRegisterDSS)) and (self._xy is not None)
+        # hop = (self._xy is None)
+        # refine = self.count and not hop
+        # obj = self[self.order[i:]]
+        # p0 = self.params[self.order[i:]] if p0 is None else p0
 
-        # fit clusters to points
-        # self.register()
-        # return images
+        # self[i:] = self.fit_sequence(obj, p0, hop, refine, plot, **kws)
+        # return self
 
-    def fit_register(self, reg, p0=None, hop=True, refine=True, plot=False,
-                     **kws):
+    def fit_register(self, reg, p0=None, hop=HOP, refine=REFINE, plot=PLOT, **kws):
         """
         cross match with another `ImageRegister` and aggregate points
         """
@@ -1631,8 +1655,36 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #     ax.plot(*xy.T, 'x')
         # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
 
-    def fit_hdu(self, hdu, p0=None, hop=True, refine=True,
-                plot=False, sample_stat='median', depth=5, **find_kws):
+    def fit_sequence(self, items, p0=None, hop=HOP, refine=REFINE,
+                     plot=PLOT, njobs=1, **kws):
+        #
+        assert len(items)
+
+        if p0 is None:
+            p0 = ()
+        else:
+            p0 = np.array(p0)
+            assert p0.shape == (len(items), self.dof)
+
+        # run fitting concurrently
+        # with Parallel(n_jobs=njobs) as parallel:
+        #     images = parallel(
+        #         delayed(self.fit)(image, p00, hop, refine, plot, **kws)
+        #         for image, p00 in itt.zip_longest(items, p0)
+        #     )
+
+        return [self.fit(image, p0, hop, refine, plot, **kws)
+                for image, p0 in itt.zip_longest(items, p0)]
+
+        # images.insert(primary, self[primary])
+        # self.data[:] = images
+
+        # fit clusters to points
+        # self.register()
+        # return images
+
+    def fit_hdu(self, hdu, p0=None, hop=HOP, refine=REFINE,
+                plot=PLOT, sample_stat=SAMPLE_STAT, depth=DEPTH, **kws):
         """
 
         Parameters
@@ -1647,12 +1699,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         return self.fit_image(
             SkyImage.from_hdu(hdu, sample_stat, depth,
-                              **{**self.find_kws, **find_kws}),
+                              **{**self.find_kws, **kws}),
             p0, None, hop, refine, plot
         )
 
-    def fit_image(self, image, p0=None, hop=True, refine=True,
-                  plot=False, fov=None, **find_kws):
+    def fit_image(self, image, p0=None, hop=HOP, refine=REFINE,
+                  plot=PLOT, fov=None, **kws):
         """
         If p0 is None:
             Search heuristic for image offset and rotation.
@@ -1680,7 +1732,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         image = SkyImage(image, fov)
         if image.xy is None:
             # source detection
-            image.detect(**{**self.find_kws, **find_kws})
+            image.detect(**{**self.find_kws, **kws})
 
         if self.count:
             # get xy in units of `primary` image pixels
@@ -1690,7 +1742,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return image
 
     # @timer
-    def fit_points(self, xy, p0=None, hop=True, refine=True, plot=False):
+    def fit_points(self, xy, p0=None, hop=HOP, refine=REFINE, plot=PLOT):
 
         if p0 is None:
             p0 = np.zeros(self.dof)
@@ -1719,7 +1771,121 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.model.fit_angle = self.fit_angle
         return self.model.fit(xy, p0=p0)
 
-    def register(self, clf=None, plot=False):
+    def _dxy_hop(self, xy, plot=PLOT):
+        # This is a strategic brute force search along all the offset values
+        # that will align pairs of points in the two fields for a known
+        # rotation. One of the test offsets is the true offset value. Each
+        # offset value represents a local basin in the parameter space, we are
+        # checking which one is deepest. This algorithm is N^2 with number of
+        # points, so will not be appropriate for dense fields with many points,
+        # but tends to be faster than a more general basin-hopping heuristic
+        # (such as `scipy.optimize.basin_hopping`) for moderate to low number of
+        # points, and more robust than other gradient decent methods since it
+        # avoids getting stuck in a local minimum. This search heuristic is only
+        # effective when the fields have roughly the same rotation.
+
+        # create search grid.
+        trials = (self.xy[None] - xy[:, None]).reshape(-1, 2)
+        # Ignore extremal points in grid search.  These represent single
+        # point matches at the edges of the frame which are almost certainly
+        # not the best match
+        # extrema = np.ravel([trials.argmin(0), trials.argmax(0)])
+        # trials = np.delete(trials, extrema, 0)
+
+        # This animates the search!
+        # line, = im.ax.plot((), (), 'rx')
+        # for i, po in enumerate(points.T):
+        #     line.set_data(*(xyr - po).T)
+        #     im.figure.canvas.draw()
+        #     input(i)
+        #     if i > 25:
+        #          break
+
+        # find minimum
+        state = self.model.fit_angle
+        self.model.fit_angle = False
+
+        # parallelize
+        # r = gridsearch_mp(self.model.loss_mle, trials.T, (xy, ))
+        r = [self.model.loss_mle(p, xy) for p in trials]
+        p = trials[np.argmin(r)]
+
+        logger.debug('Grid search optimum: {!s}', p)
+
+        if plot:
+            im = self.model.gmm.plot(show_peak=False)
+            im.ax.plot(*(xy + p).T, 'ro', ms=12, mfc='none')
+
+        # restore sigma
+        self.model.fit_angle = state
+        return np.array(p)
+
+    # TODO: relative brightness
+
+    def refine(self, fit_angle=True, plot=PLOT):
+        """
+        Refine alignment parameters by fitting transform parameters for each
+        image using maximum likelihood objective for gmm model with peaks
+        situated at cluster centers
+
+        """
+        if self.labels is None:
+            self.register()
+
+        params = self.params
+        # guess sigma:  needs to be larger than for brute search `_dxy_hop`
+        # since we are searching a smaller region of parameter space
+        # self.model.sigma = dist_flat(self.xy).min() / 3
+
+        failed = []
+        # TODO: multiprocess
+        self.model.fit_angle = fit_angle
+
+        n_jobs = 1  # make sure you can pickle everything before you change
+        # this value
+        with Parallel(n_jobs=n_jobs) as parallel:
+            for i, p in enumerate(parallel(
+                    delayed(self.model.fit)(xy, p0=(0, 0, 0))
+                    for xy in self.xyt)):
+                if p is None:
+                    failed.append(i)
+                else:
+                    params[i] += p
+
+        # for i in range(len(self.images)):
+        #     p = self.model.fit(xyt[i], p0=(0, 0, 0))
+        #     if p is None:
+        #         failed.append(i)
+        #     else:
+        #         params[i] += p
+        logger.log(('SUCCESS', 'INFO')[bool(failed)],
+                   'Fitting successful {:d} / {:d}', i - len(failed), i)
+
+        # likelihood ratio test
+        xyn = list(map(transform.affine, self.coms, params, self.rscale))
+        lhr = self.lh_ratio(np.vstack(self.xyt), np.vstack(xyn))
+        better = (lhr > 1)
+        # decide whether to accept new params!
+        if better:
+            # recompute cluster centers
+            self.params = params
+            self.update_centres()
+
+        if plot:
+            fig2, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+            ax.set_title(f'Refined Positions (CoM) {len(self)} frames')
+            plot_clusters(ax, np.vstack(self.xyt), self.labels,
+                          self._colour_sequence_cache)
+        return params, lhr
+
+    def lh_ratio(self, xy0, xy1):
+        ratio = self.model.lh_ratio(xy0, xy1)
+        logger.info('Likelihood ratio: {:.5f}\n\t'
+                    + ('Keeping same', 'Accepting new')[ratio > 1]
+                    + ' parameters.', ratio)
+        return ratio
+
+    def register(self, clf=None, plot=PLOT):
 
         self.check_has_data()
 
@@ -1740,6 +1906,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             cir = Circle(xy, clf.bandwidth, alpha=0.5)
             ax.add_artist(cir)
 
+    # ------------------------------------------------------------------------ #
     @property
     def labels_per_image(self):
         if self.labels is None:
@@ -1826,6 +1993,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         self.xy = self.get_centres()
 
+    # ------------------------------------------------------------------------ #
     @lazyproperty
     def clustering(self, *args, **kws):
         """
@@ -1895,48 +2063,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #                     '`register` to fit clustering model '
         #                     'to the measured centre-of-mass points')
 
-    def plot_clusters(self, show_bandwidth=True, **kws):
-        """
-        Plot the identified sources (clusters) in a single frame
-        """
-        self.check_has_data()
-        self.check_has_labels()
-
-        n = len(self)
-        fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
-        ax.set_title(f'Position Measurements (CoM) {n} frames')
-
-        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, **kws)
-        self._colour_sequence_cache = art.get_edgecolors()
-
-        # bandwidth size indicator.
-        # todo: get this to remain anchored lower left but scale with zoom..
-        xy = self.xy.min(0)  # - bw * 0.6
-        cir = Circle(xy, self.clustering.bandwidth, alpha=0.5)
-        ax.add_artist(cir)
-
-        # TODO: plot position error ellipses
-
-        # ax.set(**dict(zip(map('{}lim'.format, 'yx'),
-        #                   tuple(zip((0, 0), ishape)))))
-        return art
-
-    def check_has_labels(self):
-        if self.labels is None:
-            raise ValueError(
-                'No cluster labels available. Run `register` to fit '
-                'clustering model to the measured centre-of-mass points.'
-            )
-
-    def check_has_data(self):
-        if len(self):
-            return
-
-        raise ValueError('No data. Please add some images first. eg: '
-                         '{self.__class__.__name__}()(image, fov)')
-
     def recentre(self, centre_distance_cut=None, f_detect_measure=0.25,
-                 plot=False):
+                 plot=PLOT):
         """
         Measure frame dither, recenter, and recompute object positions.
         This re-centering algorithm can accurately measure the position of
@@ -2000,6 +2128,18 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return xy_offsets, outliers, xy
 
+    def reset(self):
+        """
+        Reset image container to empty list
+
+        Returns
+        -------
+
+        """
+
+        self.data = []
+        self.params = []
+
     def solve_rotation(self):
         # for point clouds that are already quite well aligned. Refine by
         # looking for rotation differences
@@ -2013,83 +2153,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         a = np.arctan2(*(xy - c).T[::-1])
         # angular offset
         return np.mean(a - aref[:, None], 0)
-
-    # TODO: refine_mcmc
-
-    def refine(self, fit_angle=True, plot=False):
-        """
-        Refine alignment parameters by fitting transform parameters for each
-        image using maximum likelihood objective for gmm model with peaks
-        situated at cluster centers
-
-        """
-        if self.labels is None:
-            self.register()
-
-        params = self.params
-        # guess sigma:  needs to be larger than for brute search `_dxy_hop`
-        # since we are searching a smaller region of parameter space
-        # self.model.sigma = dist_flat(self.xy).min() / 3
-
-        failed = []
-        # TODO: multiprocess
-        self.model.fit_angle = fit_angle
-
-        n_jobs = -1  # make sure you can pickle everything before you change
-        # this value
-        with Parallel(n_jobs=n_jobs) as parallel:
-            for i, p in enumerate(parallel(
-                    delayed(self.model.fit)(xy, p0=(0, 0, 0))
-                    for xy in self.xyt)):
-                if p is None:
-                    failed.append(i)
-                else:
-                    params[i] += p
-
-        # for i in range(len(self.images)):
-        #     p = self.model.fit(xyt[i], p0=(0, 0, 0))
-        #     if p is None:
-        #         failed.append(i)
-        #     else:
-        #         params[i] += p
-        logger.log(('SUCCESS', 'INFO')[bool(failed)],
-                   'Fitting successful {:d} / {:d}', i - len(failed), i)
-
-        # likelihood ratio test
-        xyn = list(map(transform.affine, self.coms, params, self.rscale))
-        lhr = self.lh_ratio(np.vstack(self.xyt), np.vstack(xyn))
-        better = (lhr > 1)
-        # decide whether to accept new params!
-        if better:
-            # recompute cluster centers
-            self.params = params
-            self.update_centres()
-
-        if plot:
-            fig2, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
-            ax.set_title(f'Refined Positions (CoM) {len(self)} frames')
-            plot_clusters(ax, np.vstack(self.xyt), self.labels,
-                          self._colour_sequence_cache)
-        return params, lhr
-
-    def lh_ratio(self, xy0, xy1):
-        ratio = self.model.lh_ratio(xy0, xy1)
-        logger.info('Likelihood ratio: {:.5f}\n\t'
-                    + ('Keeping same', 'Accepting new')[ratio > 1]
-                    + ' parameters.', ratio)
-        return ratio
-
-    def reset(self):
-        """
-        Reset image container to empty list
-
-        Returns
-        -------
-
-        """
-
-        self.data = []
-        self.params = []
 
     def _marginal_histograms(self):
 
@@ -2205,164 +2268,44 @@ class ImageRegister(ImageContainer, LoggingMixin):
             return seg.circularize()
         return seg
 
-    def _dxy_hop(self, xy, plot=False):
-        # This is a strategic brute force search along all the offset values
-        # that will align pairs of points in the two fields for a known
-        # rotation. One of the test offsets is the true offset value. Each
-        # offset value represents a local basin in the parameter space, we are
-        # checking which one is deepest. This algorithm is N^2 with number of
-        # points, so will not be appropriate for dense fields with many points,
-        # but tends to be faster than a more general basin-hopping heuristic
-        # (such as `scipy.optimize.basin_hopping`) for moderate to low number of
-        # points, and more robust than other gradient decent methods since it
-        # avoids getting stuck in a local minimum. This search heuristic is only
-        # effective when the fields have roughly the same rotation.
+    # def fit_pixels(self, index):
 
-        # create search grid.
-        trials = (self.xy[None] - xy[:, None]).reshape(-1, 2)
-        # Ignore extremal points in grid search.  These represent single
-        # point matches at the edges of the frame which are almost certainly
-        # not the best match
-        # extrema = np.ravel([trials.argmin(0), trials.argmax(0)])
-        # trials = np.delete(trials, extrema, 0)
+    #     indices = set(range(len(self.images))) - {index}
+    #     grid = []
+    #     pixels = []
+    #     for i in indices:
+    #         image = self.images[i]
+    #         r = np.divide(self.fovs[i], image.shape) / self.pixel_scale
+    #         p = self.params[i]
+    #         seg = self.detections[i].dilate(2, copy=True)
+    #         for sub, g in seg.cutouts(image, np.indices(image), flatten=True):
+    #             g = transform.rigid(g.reshape(-1, 2) * r, p)
+    #             grid.extend(g)
+    #             pixels.extend(sub.ravel())
 
-        # This animates the search!
-        # line, = im.ax.plot((), (), 'rx')
-        # for i, po in enumerate(points.T):
-        #     line.set_data(*(xyr - po).T)
-        #     im.figure.canvas.draw()
-        #     input(i)
-        #     if i > 25:
-        #          break
+    #     bs = binned_statistic_2d(*grid, pixels, 'mean', bins)
 
-        # find minimum
-        state = self.model.fit_angle
-        self.model.fit_angle = False
+    # def _fit_pixels(self, image, fov, p0):
+    #     """Match pixels directly"""
+    #     sy, sx = self.image.shape
+    #     dx, dy = self.fov
+    #     hx, hy = 0.5 * self.pixel_scale
+    #     by, bx = np.ogrid[-hx:(dx + hx):complex(sy + 1),
+    #                       -hy:(dy + hy):complex(sx + 1)]
+    #     bins = by.ravel(), bx.ravel()
 
-        # parallelize
-        # r = gridsearch_mp(self.model.loss_mle, trials.T, (xy, ))
-        r = [self.model.loss_mle(p, xy) for p in trials]
-        p = trials[np.argmin(r)]
+    #     sy, sx = image.shape
+    #     dx, dy = fov
+    #     yx = np.mgrid[:dx:complex(sy), :dy:complex(sx)].reshape(2, -1).T
 
-        logger.debug('Grid search optimum: {!s}', p)
+    #     return minimize(
+    #         ftl.partial(objective_pix,
+    #                     normalize_image(self.data),
+    #                     normalize_image(image).ravel(),
+    #                     yx, bins),
+    #         p0)
 
-        if plot:
-            im = self.model.gmm.plot(show_peak=False)
-            im.ax.plot(*(xy + p).T, 'ro', ms=12, mfc='none')
-
-        # restore sigma
-        self.model.fit_angle = state
-        return np.array(p)
-
-    # TODO: relative brightness
-
-    # @timer
-    def fit_points_brute(self, xy, rotation=0., gridsize=(50, 50),
-                         plot=False):
-        # grid search with gmm loglikelihood objective
-        g, r, ix, pGs = self._fit_points_brute(xy, gridsize, rotation, )
-        pGs[-1] = rotation
-
-        if plot:
-            from scrawl.image import ImageDisplay
-
-            # plot xy coords
-            # ggfig, ax = plt.subplots()
-            # sizes = self.counts[0] / self.counts[0].max() * 200
-            # ax.scatter(*self.xy.T, sizes)
-            # ax.plot(*roto_translate(xy, pGs).T, 'r*')
-
-            im, peak = self.model.gmm.plot(show_peak=False)
-            im.ax.plot(*transform.rigid(xy, pGs).T, 'rx')
-
-            extent = np.c_[g[:2, 0, 0], g[:2, -1, -1]].ravel()
-            im = ImageDisplay(r.T, extent=extent)
-            im.ax.plot(*pGs[:-1], 'ro', ms=15, mfc='none', mew=2)
-
-        return pGs
-
-    def _fit_points_brute(self, xy, size, rotation=0.):
-
-        # create grid
-        # shape = np.array(self.image.shape)
-        dmin = self.xy.min(0) - xy.min(0)
-        dmax = self.xy.max(0) - xy.max(0)
-        rng = np.sort(np.vstack([dmin, dmax]), 0)
-        step_size = rng.ptp(0) / size
-        steps = 1j * np.array(duplicate_if_scalar(size))
-        grid = np.mgrid[tuple(map(slice, *rng, steps))]
-
-        # span = (fov / self.pixel_scale)
-        # ovr = (span * (self._search_area_stretch - 1)) / 2
-        # y0, x0 = -ovr
-        # y1, x1 = shape + ovr
-        # xr, yr = duplicate_if_scalar(size)
-        # grid = np.mgrid[x0:x1:complex(xr), y0:y1:complex(yr)]
-
-        # add 0s for angle grid
-        z = np.full((1,) + grid.shape[1:], rotation)
-        grid = np.r_[grid, z]
-        logger.info(
-            '\nDoing grid search on ' """
-                δx = [{0:.1f} : {1:.1f} : {4:.1f}];
-                δy = [{2:.1f} : {3:.1f} : {5:.1f}]
-                ({6:d} x {6:d}) offset grid"""
-            ''.format(*rng.T.ravel(), *step_size, *grid.shape[-2:]))
-
-        # parallel
-
-        r = gridsearch_mp(self.model.objective_trans, grid, (xy,))
-        # r = gridsearch_mp(objective, grid, (self.xy, xy) + args, **kws)
-        ix = (i, j) = np.unravel_index(r.argmin(), r.shape)
-        pGs = grid[:, i, j]
-        logger.debug('Grid search optimum: {:s}', pGs)
-        return grid, r, ix, pGs
-
-    def fit_pixels(self, index):
-
-        indices = set(range(len(self.images))) - {index}
-        grid = []
-        pixels = []
-        for i in indices:
-            image = self.images[i]
-            r = np.divide(self.fovs[i], image.shape) / self.pixel_scale
-            p = self.params[i]
-            seg = self.detections[i].dilate(2, copy=True)
-            for sub, g in seg.cutouts(image, np.indices(image), flatten=True):
-                g = transform.rigid(g.reshape(-1, 2) * r, p)
-                grid.extend(g)
-                pixels.extend(sub.ravel())
-
-        bs = binned_statistic_2d(*grid, pixels, 'mean', bins)
-
-    def _fit_pixels(self, image, fov, p0):
-        """Match pixels directly"""
-        sy, sx = self.image.shape
-        dx, dy = self.fov
-        hx, hy = 0.5 * self.pixel_scale
-        by, bx = np.ogrid[-hx:(dx + hx):complex(sy + 1),
-                          -hy:(dy + hy):complex(sx + 1)]
-        bins = by.ravel(), bx.ravel()
-
-        sy, sx = image.shape
-        dx, dy = fov
-        yx = np.mgrid[:dx:complex(sy), :dy:complex(sx)].reshape(2, -1).T
-
-        return minimize(
-            ftl.partial(objective_pix,
-                        normalize_image(self.data),
-                        normalize_image(image).ravel(),
-                        yx, bins),
-            p0)
-
-    # def fit_image_brute(self, image, fov, rotation=0., step_size=0.05,
-    #                       return_coords=False, plot=False, sigma_gmm=0.03):
-    #
-    #     seg, yx, counts = self.find_sources(image, fov)
-    #     return self.fit_points_brute(yx, fov, rotation, step_size,
-    #                                    return_coords, plot, sigma_gmm)
-
-        # return im, s
+    # ------------------------------------------------------------------------ #
 
     def mosaic(self, axes=None, names=(), scale='sky',
                show_ref_image=True, number_sources=False,
@@ -2408,6 +2351,32 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return figures
 
+    def plot_clusters(self, show_bandwidth=True, **kws):
+        """
+        Plot the identified sources (clusters) in a single frame
+        """
+        self.check_has_data()
+        self.check_has_labels()
+
+        n = len(self)
+        fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+        ax.set_title(f'Position Measurements (CoM) {n} frames')
+
+        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, **kws)
+        self._colour_sequence_cache = art.get_edgecolors()
+
+        # bandwidth size indicator.
+        # todo: get this to remain anchored lower left but scale with zoom..
+        xy = self.xy.min(0)  # - bw * 0.6
+        cir = Circle(xy, self.clustering.bandwidth, alpha=0.5)
+        ax.add_artist(cir)
+
+        # TODO: plot position error ellipses
+
+        # ax.set(**dict(zip(map('{}lim'.format, 'yx'),
+        #                   tuple(zip((0, 0), ishape)))))
+        return art
+
 
 class ImageRegisterDSS(ImageRegister):
     """
@@ -2425,7 +2394,7 @@ class ImageRegisterDSS(ImageRegister):
     # TODO: can you warn users about this possibility if you only have access to
     # old DSS images
 
-    def __init__(self, name_or_coords, fov=(3, 3), **find_kws):
+    def __init__(self, name_or_coords, fov=(3, 3), **kws):
         """
 
         Parameters
@@ -2456,8 +2425,8 @@ class ImageRegisterDSS(ImageRegister):
 
         # DSS data array
         data = self.hdu[0].data.astype(float)
-        find_kws.setdefault('deblend', True)
-        ImageRegister.__init__(self, **find_kws)
+        kws.setdefault('deblend', True)
+        ImageRegister.__init__(self, **kws)
         self(data, fov=fov)
 
         # TODO: print some header info for DSS image - date!
@@ -2478,7 +2447,7 @@ class ImageRegisterDSS(ImageRegister):
             target, = self.clustering.predict([self.target_coords_pixels])
         return super().remap_labels(target, flux_sort)
 
-    def mosaic(self, axes=None, names=(), **kws):
+    def mosaic(self, names=(), **kws):
 
         header = self.hdu[0].header
         name = ' '.join(filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
@@ -2487,7 +2456,7 @@ class ImageRegisterDSS(ImageRegister):
         ff = apl.FITSFigure(self.hdu)
 
         # rescale images to DSS pixel scale
-        return super().mosaic(ff.ax, [name], 'pixels', **kws)
+        return super().mosaic(ff.ax, [name, *names], 'pixels', **kws)
 
         # for art, frame in mos.art
 
@@ -2513,7 +2482,7 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
-    def register(self, clf=None, plot=False):
+    def register(self, clf=None, plot=PLOT):
         super().register(clf, plot)
         self.relabel_segments()
 

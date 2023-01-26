@@ -50,6 +50,12 @@ from .image.calibration import ImageCalibratorMixin
 #  containing changes of observed brightness (etc ...) over time
 
 # ---------------------------------------------------------------------------- #
+# defaults
+SAMPLE_STAT = 'median'
+DEPTH = 5
+
+
+# ---------------------------------------------------------------------------- #
 get_msg = op.attrgetter('message')
 
 
@@ -137,7 +143,7 @@ class ImageHDU(PrimaryHDU,
 
         return PrimaryHDU.readfrom(fileobj, checksum, ignore_missing_end, **kws)
 
-    def detect(self, stat='median', depth=5, interval=..., report=True, **kws):
+    def detect(self, stat=SAMPLE_STAT, depth=DEPTH, interval=..., report=True, **kws):
         """
         Cached source detection for HDUs.
 
@@ -338,7 +344,7 @@ class PhotCampaign(PPrintContainer,
           the stacks with respect to each other via :meth:`coalign`
         * Basic Astrometry. Aligning sample images from the stacks with
           respect to some survey image (eg DSS, SkyMapper) and infering WCS via
-          the :meth:`coalign_sky` method
+          the :meth:`coalign_survey` method
 
     """
     # init helpers
@@ -516,7 +522,7 @@ class PhotCampaign(PPrintContainer,
 
         return self.__class__(np.hstack((self.data, other.data)))
 
-    def coalign(self, sample_stat='median', depth=5, plot=False, **find_kws):
+    def coalign(self, sample_stat=SAMPLE_STAT, depth=DEPTH, plot=False, **kws):
         """
         Perform image alignment internally for sample images from all stacks in
         this campaign by the method of point set registration.  This is
@@ -560,7 +566,7 @@ class PhotCampaign(PPrintContainer,
         # For each telescope, align images wrt each other
         for i in order:
             registers[i] = groups[keys[i]]._coalign(
-                sample_stat, depth, plot=plot, **find_kws)
+                sample_stat, depth, plot=plot, **kws)
 
         # match coordinates of registers against each other
         reg = registers[order[0]]
@@ -582,8 +588,8 @@ class PhotCampaign(PPrintContainer,
         # reg.data, _ = cosort(reg.order, reg.data)
         return reg
 
-    def _coalign(self, sample_stat='median', depth=5, primary=None,
-                 plot=False, **find_kws):
+    def _coalign(self, sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
+                 plot=False, **kws):
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
@@ -594,8 +600,7 @@ class PhotCampaign(PPrintContainer,
         # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
 
         # self.logger.debug('PRIMARY = {}', primary)
-        reg = ImageRegister.from_hdus(self, sample_stat, depth, primary,
-                                      **find_kws)
+        reg = ImageRegister.from_hdus(self, sample_stat, depth, primary, **kws)
         reg.fit()
 
         # first = self[primary or 0]
@@ -619,14 +624,25 @@ class PhotCampaign(PPrintContainer,
         # register constellation of stars by fitting clusters to center-of-mass
         # measurements. Refine the fit, by ...
         reg.register(plot=plot)
-        reg.refine(plot=plot)
-        reg.recentre(plot=plot)
+        
+        # refine alignment
+        # refine = 5
+        for _ in range(5):
+            # likelihood ratio for gmm model before and and after refine
+            _, lhr = reg.refine()
+            if lhr < 1.01:
+                break
+
+            reg.recentre()
+        
+        # reg.refine(plot=plot)
+        # reg.recentre(plot=plot)
         return reg
 
     @doc.splice(coalign, 'Parameters')
     def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
-                       sample_stat='median', depth=5, primary=None,
-                       plot=False, **find_kws):
+                       sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
+                       plot=False, **kws):
         """
         Align all the image stacks in this campaign with a survey image centred
         on the same field. In astronomical parlance, this is a first order wcs /
@@ -667,14 +683,14 @@ class PhotCampaign(PPrintContainer,
 
         # coalign images with each other
         reg = self.coalign(sample_stat, depth, plot,
-                           primary=primary, **find_kws)
+                           primary=primary, **kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
         if fov is None:
             fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
 
         #
-        dss = ImageRegisterDSS(self[reg.primary].coords, fov, **find_kws)
+        dss = ImageRegisterDSS(self[reg.primary].coords, fov, **kws)
         dss.fit_register(reg, refine=False)
         dss.register()
         dss.order = reg.order
@@ -685,10 +701,10 @@ class PhotCampaign(PPrintContainer,
         return dss
 
     def coalign_dss(self, fov=None, fov_stretch=1.2,
-                    sample_stat='median', depth=5, primary=None,
-                    plot=False, **find_kws):
+                    sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
+                    plot=False, **kws):
         return self.coalign_survey('dss', fov, fov_stretch, sample_stat, depth,
-                                   primary, plot, **find_kws)
+                                   primary, plot, **kws)
 
     def close(self):
         # close all files
