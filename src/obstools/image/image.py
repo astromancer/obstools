@@ -61,9 +61,13 @@ class Image(SelfAware):
 
     def __repr__(self):
         return pformat(attr_dict(self, self._repr_keys),
-                       self.__class__.__name__,
+                       self.__class__.__name__, lhs=str,
                        brackets='<>',
                        hang=True)
+        
+    def __getstate__(self):
+        # remove artists that can't be pickled
+        return {**self.__dict__, 'art': ArtistContainer(image=None, frame=None)}
 
     def copy(self):
         return copy(self)
