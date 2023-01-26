@@ -1461,16 +1461,20 @@ class SegmentedImage(SegmentationImage,     # base
 
         if extend := int(extend):
             labels = self.resolve_labels(labels)
-            itr = zip(labels, self.slices.extend(labels, extend, clip=self.shape))
+            sections = self.slices.extend(labels, extend, clip=self.shape)
+            itr = zip(labels, sections)
+            masks = {l: (self.data[s] != l) for l, s in zip(labels, sections)}
         else:
             itr = self.enum_slices(labels)
+            masks = self.masks
 
         for label, section in itr:
             # NOTE this propagates values that are `None` in `arrays` tuple
-            cutouts = (_2d_slicer(_, section,
-                                  self.masks[label] if flag else None,
+            cutouts = (_2d_slicer(_, section, 
+                                  masks[label] if flag else None,
                                   compress)
                        for _, flag in zip(arrays, flags))
+            
             yield yielder(label, section, unpack, cutouts)
 
     # alias
