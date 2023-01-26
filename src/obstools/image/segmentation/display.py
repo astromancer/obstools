@@ -133,7 +133,7 @@ class SegmentPlotter:
         from matplotlib.pyplot import get_cmap
         return get_cmap(cmap)
 
-    def labels(self, ax=None, offset=(0, 0), **kws):
+    def labels(self, ax=None, offset=(0, 0), emboss=(1, 'k'), **kws):
         # import matplotlib.patheffects as path_effects
 
         offset = duplicate_if_scalar(offset)
@@ -151,7 +151,7 @@ class SegmentPlotter:
                 txt = ax.text(x, y, str(lbl), **kws)
 
                 # add border around text to make it stand out (like the arrows)
-                texts.append(embossed(txt, 1, 'k'))
+                texts.append(embossed(txt, *emboss))
 
         return texts
 
@@ -388,16 +388,15 @@ class ConsoleFormatter:
                        statistics=(), **kws):
 
         labels, sections, cutouts = zip(
-            *self.seg.cutouts(image, self.seg.to_binary(),
+            *self.seg.cutouts(image,
                               labelled=True, with_slices=True,
-                              extend=extend)
+                              extend=extend, masked=True)
         )
-        thumbs = []
-        for img, (ys, xs) in zip(
-            motley.image.thumbnails(*zip(*cutouts), cmap, contour_color),
-            sections
-        ):
 
+        thumbs = []
+        cutouts, masks = zip(*((im.data, ~im.mask) for im in cutouts))
+        cutouts = motley.image.thumbnails(cutouts, masks, cmap, contour_color)
+        for (ys, xs), img in zip(sections, cutouts):
             # Tick labels
             y0, y1 = ys.start, ys.stop
             x0, x1 = xs.start, xs.stop
@@ -469,13 +468,13 @@ class ConsoleFormatter:
             o += top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
 
             if title and extra_space:
-                title_line = title_line.replace(' ' * extra_space, '')
-                
+                title_line = title_line.replace(' ' * extra_space, '', 1)
+
                 # title_props=','.join(kws['title_props'])
                 # old_title = motley.format(
-                #     '{title:{title_align}{width}|{style}}', **kws, 
+                #     '{title:{title_align}{width}|{style}}', **kws,
                 #     width=len(title) + extra_space, style=','.join(title_props))
-                
+
                 # space0 = extra_space // 2
                 # space1 = space0 + extra_space % 2
                 # title_line.index(space0)
@@ -484,9 +483,9 @@ class ConsoleFormatter:
                 # if old_title not in title_line:
                 #     from IPython import embed
                 #     embed(header="Embedded interpreter at 'src/obstools/image/segmentation/display.py':475")
-                
+
                 # title_line = title_line.replace(old_title, title)
-                
+
             o += title_line
 
             o += ''.join(_fix_line(header, needs_fix)) + ticks

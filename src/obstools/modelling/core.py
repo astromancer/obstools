@@ -599,7 +599,7 @@ class Model(OptionallyNamed, LoggingMixin):
 
         # objective_repr =
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
-                    f'{pprint.method(loss, show_defining_class=True)!r} '
+                    f'{pprint.caller(loss)!r} '
                     f'failed to converge: {msg}')
 
         # bork if needed

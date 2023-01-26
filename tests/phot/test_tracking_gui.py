@@ -9,8 +9,8 @@ from mpl_multitab import QtWidgets
 # local
 from pyxides.vectorize import repeat
 from obstools.phot import SourceTracker
-from shoc import shocCampaign
-from shoc.pipeline.calibrate import calibrate
+from pyshoc import shocCampaign
+from pyshoc.pipeline.calibrate import calibrate
 
 
 # import matplotlib.pyplot as plt

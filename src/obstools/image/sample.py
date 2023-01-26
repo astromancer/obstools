@@ -194,9 +194,9 @@ class ImageSamplerMixin:
 
         n = int(np.ceil(min_depth // self.timing.exp)) or 1
 
-        self.logger.info('Computing {stat} of {n} images (exposure depth of '
-                         '{min_depth:.1f} seconds) for sample image from '
-                         '{name!r} for the data interval {subset}.',
+        self.logger.info('Computing {stat} of {n} images (simulated exposure '
+                         'depth of {min_depth:.1f} seconds) for sample image '
+                         'from {name!r} for the data interval {subset}.',
                          **locals(), name=self.file.name)
 
         sampler = getattr(self.sampler, stat)

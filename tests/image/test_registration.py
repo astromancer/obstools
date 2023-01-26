@@ -306,8 +306,8 @@ class TestImageRegister:
 # #from outliers import WindowOutlierDetection, generalizedESD
 # from recipes.io import parse
 
-# from shoc.image.registration import *
-# from shoc.core import shocRun
+# from pyshoc.image.registration import *
+# from pyshoc.core import shocRun
 
 # # exit_register(embed)
 
