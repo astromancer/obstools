@@ -17,7 +17,6 @@ import re
 import numbers
 import warnings
 import operator as op
-import functools as ftl
 import itertools as itt
 import multiprocessing as mp
 from collections import abc
@@ -30,12 +29,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from loguru import logger
 from joblib import Parallel, delayed
-from astropy import wcs
 from astropy.utils import lazyproperty
 from scipy.cluster.vq import kmeans
-from scipy.optimize import minimize
 from scipy.spatial.distance import cdist
-from scipy.spatial.ckdtree import cKDTree
 from scipy.stats import binned_statistic_2d, mode
 from scipy.interpolate import NearestNDInterpolator
 
@@ -50,21 +46,17 @@ from scrawl.image import ImageDisplay
 
 # relative
 from .. import transforms as transform
-from ..modelling import Model
 from ..campaign import ImageHDU
 from ..stats import geometric_median
-from ..utils import get_coordinates, get_dss, STScIServerError
+from ..modelling import UnconvergedOptimization
+from ..utils import STScIServerError, get_coordinates, get_dss
 from .mosaic import MosaicPlotter
+from .gmm import CoherentPointDrift
 from .segmentation import SegmentedImage
-from .image import SkyImage, ImageContainer
+from .image import ImageContainer, SkyImage
 
 
-# from motley.profiling.timers import timer
-# from sklearn.cluster import MeanShift
-# from motley.profiling import profile
-
-
-#
+# ---------------------------------------------------------------------------- #
 TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
 
 # ---------------------------------------------------------------------------- #
@@ -127,449 +119,6 @@ def interpolate_nn(a, where):
 #     result = minimize(ftl.partial(objective_pix, target, values, yx, bins),
 #                       p0)
 #     return result
-
-
-class MultiGauss(Model):
-    """
-    This class implements a model that consists of the sum of multivariate
-    Gaussian distributions
-    """
-
-    dof = 0  # TODO: maybe expand so this is more dynamic
-
-    def __init__(self, xy, sigmas, amplitudes=1.):
-        """
-        Create a Gaussian "mixture" with components at locations `xy` with
-        standard deviations `sigmas` and relative amplitudes `amplitudes`. The
-        locations, stdandard deviations and amplitudes are hyperparameters.
-        This is different from the classic Gaussian Mixture Model in that we are
-        not imposing any constraints on the mixture weights. Values returned by
-        the `eval` method are therefore not probabilities, but that's OK for
-        optimization using maximum likelihood.
-
-        Parameters
-        ----------
-        xy : array-like
-            The locations of the component Gaussians. The expected shape is
-            (n, n_dims) where `n` is the number of sources and `n_dims` the
-            number of spatial dimensions in the problem.
-            (eg. Modelling an image n_dims =2:
-                n=1 in the case of a point source model
-                n=2 in the case of modelling a field of sources
-        sigmas : float or array-like
-            The standard deviation of the gaussians in the model. If array-like,
-            it must have the same size in (at least) the first dimension as
-            `xy`.
-        amplitudes : array-like
-            The relative amplitude of each of the Gaussians components. Must
-            have the same size as locations parameter `xy`
-
-        Note that the `amplitudes` are degenerate with the `sigmas` parameter
-        since σ² :-> σ² / len(A) expresses an identical equation. The amplitudes
-        will be absorbed in the sigmas in the internal representation, but are
-        allowed here as a parameter for convenience.
-        """
-
-        # TODO: equations in docstring
-
-        # TODO: full covariance matrices
-
-        # cast the xy points to 3d here to avoid doing so every time during the
-        # call. Shaves a few microseconds off the call run time :)).  Also make
-        # sure we remove all masked data and have a plain np.ndarray object.
-        self.xy = non_masked(xy)
-        self.n, self.n_dims = (n, k) = self.xy.shape
-
-        # set hyper parameters
-        self._exp = None  # the exponential pre-factor
-        # TODO: will need to change for full covariance implementation
-        self._amplitudes = np.broadcast_to(amplitudes, n).astype(float)
-        self.sigmas = sigmas
-        self.amplitudes = amplitudes
-        self._pre = np.sqrt((2 * np.pi) ** k * self.sigmas.prod(-1))
-
-    def __repr__(self):
-        return f'{self.__class__.__name__}: {self.n} sources'
-
-    def pprint(self, **kws):
-        """
-        Pretty print a tabular representation of the Gaussians
-
-        Returns
-        -------
-        str
-            Tabulated representation of the point sources like
-                __________________________
-                ⎪_______MultiGauss_______⎪
-                ⎪x ⎪ y ⎪  σₓ  ⎪ σᵥ  ⎪  A  ⎪
-                ⎪——⎪———⎪—————⎪—————⎪—————⎪
-                ⎪ 5⎪ 10⎪ 1   ⎪ 1   ⎪ 1   ⎪
-                ⎪ 5⎪  6⎪ 2   ⎪ 2   ⎪ 2   ⎪
-                ⎪ 8⎪  2⎪ 3   ⎪ 3   ⎪ 3   ⎪
-                ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-        """
-        from motley.table import Table
-        tbl = Table.from_columns(self.xy, self.sigmas, self.amplitudes,
-                                 title=self.__class__.__name__,
-                                 chead='x y σₓ σᵥ A'.split(),
-                                 # unicode subscript y doesn't exist!!
-                                 minimalist=True,
-                                 **kws)
-        return str(tbl)
-
-    @property
-    def amplitudes(self):
-        return self._amplitudes.squeeze()
-
-    @amplitudes.setter
-    def amplitudes(self, amplitudes):
-        self.set_amplitudes(amplitudes)
-
-    def set_amplitudes(self, amplitudes):
-        self._amplitudes = self._check_prop(amplitudes, 'amplitudes', (self.n,))
-
-    @property
-    def flux(self):
-        """
-        Flux is an alternative parameterization for amplitude and corresponds to
-        the volumne under the surface in two dimension. This computes the
-        corresponding amplitude and sets that. The sigma terms remain unchanged
-        by setting the fluxes.
-        """
-        return self.amplitudes * self._pre
-
-    @flux.setter
-    def flux(self, flux):
-        self._amplitudes = flux / self._pre
-
-    @property
-    def sigmas(self):
-        return self._sigmas
-
-    @sigmas.setter
-    def sigmas(self, sigmas):
-        # TODO: full covariance matices
-        self._sigmas = self._check_prop(
-            sigmas, 'sigmas', (self.n, self.n_dims))
-
-        # absorb sigmas and amplitude into single exponent
-        self._exp = -1 / 2 / self._sigmas ** 2
-        # pre-factors so the individual gaussians integrate to 1 (probability)
-        self._pre = np.sqrt((2 * np.pi) ** self.n_dims * self.sigmas.prod(-1))
-
-    def _check_prop(self, a, name, shape):
-        # check if masked
-        if np.ma.is_masked(a):
-            raise ValueError(f'{name!r} cannot be masked')
-
-        # make vanilla array
-        a = np.array(a, float, ndmin=len(shape))
-
-        if not np.isfinite(a).all():
-            raise ValueError(f'{name!r} must be finite.')
-
-        # check positive definite
-        if (a <= 0).any():
-            raise ValueError(f'{name!r} must be positive non-zero.')
-
-        # check shape
-        if a.ndim > 1:
-            r, c = a.shape
-            # allows easy setting like >>> self.sigmas = [1, 2, 3]
-            if (c == self.n) and (c != self.n_dims) and (r in (1, self.n_dims)):
-                a = a.T
-
-        # broadcast
-        try:
-            a = np.broadcast_to(a, shape)
-        except ValueError:
-            raise ValueError(
-                f'{name!r} parameter has incorrect shape: {np.shape(a)}'
-            ) from None
-
-        return a.copy()
-
-    # def __call__(self, p, xy=None):
-    #     # just setting the default which is a cheat
-    #     return super().__call__(p, xy)
-
-    def _checks(self, p, xy=None, *args, **kws):
-        return self._check_params(p), (self._check_grid(xy), *args)
-
-    def _check_params(self, p):
-        # default parameter values for evaluation
-        return np.zeros(self.dof) if (p is None) or (p == ()) else p
-
-    def _check_grid(self, grid):
-        #
-        grid = non_masked(grid)
-        shape = grid.shape
-        # make sure last dimension is same as model dimension
-        if (grid.ndim < 2) and (shape[-1] != self.n_dims):
-            raise ValueError(
-                'Compute grid has incorrect size in last dimension: shape is '
-                f'{shape}, last axis should have size {self.n_dims}.'
-            )
-        return grid.reshape(np.insert(shape, -1, 1))
-
-    def eval(self, p, xy, *args, **kws):
-        """
-        Compute the model values at points `xy`. Parameter `p` is ignored.
-
-        Parameters
-        ----------
-        xy: np.ndarray
-            (n, n_dims)
-
-        Returns
-        -------
-        np.ndarray
-            shape (n, ) for n points
-
-
-        """
-        return (self._amplitudes * np.exp(
-            (self._exp * np.square(self.xy - xy)).sum(-1)
-        )).sum(-1)
-
-    def _auto_grid(self, size, dsigma=3.):
-        """
-        Create a evaluation grid for the model that encompasses all components
-        of the model up to `dsigma` in Mahalanobis distance from the extremal
-        points
-
-        Parameters
-        ----------
-        size : float or array-like
-            Size of the grid array.  If float, number will be duplicated to be
-            the size along each axis. If array-like, the size aling each
-            dimension and it must have the same number of dimensions as the
-            model
-        dsigma : float, optional
-            Controls the coverage (range) of the grid by specifying the maximal
-            Mahalanobis distance from extremal points (component locations), by
-            default 3
-
-        Returns
-        -------
-        np.ndarray
-            compute grid of size (nx, ny, n_dims)
-        """
-        xyl, xyu = self.xy + dsigma * self.sigmas * \
-            np.array([-1, 1], ndmin=3).T
-        size = duplicate_if_scalar(size, self.n_dims)
-        slices = map(slice, xyl.min(0), xyu.max(0), size * 1j)
-        return np.moveaxis(np.mgrid[tuple(slices)], 0, -1)
-
-    def plot(self, grid=None, size=100, show_xy=True, show_peak=True, **kws):
-        """Image the model"""
-
-        ndims = self.n_dims
-        if ndims != 2:
-            raise ValueError(f'Can only image 2D models. Model is {ndims}D.')
-
-        if grid is None:
-            size = duplicate_if_scalar(size, ndims, raises=False)
-            grid = self._auto_grid(size)
-
-        # compute model values
-        z = self((), grid)
-
-        # plot an image
-        kws_ = dict(cmap='Blues', alpha=0.5)  # defaults
-        kws_.update(**kws)
-        im = ImageDisplay(z.T,
-                          extent=grid[[0, -1], [0, -1]].T.ravel(),
-                          **kws_)
-
-        # plot locations
-        if show_xy:
-            im.ax.plot(*self.xy.T, '.')
-
-        # mark peak
-        if show_peak:
-            xy_peak = grid[np.unravel_index(z.argmax(), z.shape)]
-            im.ax.plot(*xy_peak, 'rx')
-        return im
-
-
-class GaussianMixtureModel(MultiGauss):
-
-    def __init__(self, xy, sigmas, weights=1):
-        if np.all(weights == 1) or (weights is None):
-            # shortcut to equal weights. avoid warnings
-            amplitudes = 1 / len(xy)
-        else:
-            amplitudes = weights
-
-        super().__init__(xy, sigmas, amplitudes)
-
-    def set_amplitudes(self, amplitudes):
-        super().set_amplitudes(amplitudes)
-
-        # normalize mixture weights so we have a probability distribution not
-        # just a field of gaussians
-        t = self._amplitudes.sum()
-        if not np.allclose(t, 1):
-            warnings.warn('Normalizing mixture weights')
-            self._amplitudes /= t
-
-    def llh(self, p, xy, data=None, stddev=None):
-        """
-        Log likelihood of independently drawn observations `xy`. ie.
-        Sum of log-likelihoods
-        """
-        # sum of gmm log likelihood ignoring incoming masked points
-        prob = np.atleast_1d(self(p, xy).sum(-1))
-        # NOTE THIS OBVIATES ANY OPTIMIZATION through eval but is needed for
-        # direct call to this method
-
-        # :           substitute 0 --> 1e-300      to avoid warnings and infs
-        prob[(prob == 0)] = 1e-300
-        return np.log(prob).squeeze()
-
-
-# class CoherentPointDrift(GaussianMixtureModel):
-#     """
-#     Model that fits for the transformation parameters to match point clouds.
-#     This is a partial implementation of the full CPD algorithm since we
-#     generally know the scale of the feature coordinates (field-of-view) and
-#     therefore don't need to fit for the scale parameters.
-#     """
-
-#     _fit_angle = True  # default
-
-#     @property
-#     def dof(self):
-#         return 2 + self._fit_angle
-
-#     @property
-#     def fit_angle(self):
-#         return self._fit_angle
-
-#     @fit_angle.setter
-#     def fit_angle(self, tf):
-#         self._fit_angle = tf
-
-#     @property
-#     def transform(self):
-#         return transforms.rigid if self._fit_angle else np.add
-
-#     def eval(self, p, xy, stddev=None):
-#         return super().eval((), self.transform(xy, p))
-
-#     def p0guess(self, data, *args):
-#         # starting values for parameter optimization
-#         return np.zeros(self.dof)
-
-#     def fit(self, xy, p0=None):
-#         # This will evaluate the
-#         return super().fit(None, None, self.loss_mle, (xy,))
-
-
-class CoherentPointDrift(Model):
-    """
-    Model that fits for the transformation parameters to match point clouds.
-    This is a partial implementation of the full CPD algorithm since we
-    generally know the scale of the feature coordinates (field-of-view) and
-    therefore don't need to fit for the scale parameters. Furthermore, if the 
-    frame to frame angle remains constant, set the `fit_angle` property to True.
-    """
-
-    # FIXME: this should be a GMM subclass. Need to tweak some of the `Model`
-    # features to get that to work
-
-    _fit_angle = True  # default
-
-    @property
-    def dof(self):
-        return 2 + self._fit_angle
-
-    @property
-    def fit_angle(self):
-        return self._fit_angle
-
-    @fit_angle.setter
-    def fit_angle(self, tf):
-        self._fit_angle = tf
-
-    @property
-    def transform(self):
-        return transform.rigid if self.fit_angle else np.add
-
-    def __init__(self, xy, sigmas, weights=None):
-        self.gmm = GaussianMixtureModel(xy, sigmas, weights)
-
-    def __call__(self, p, xy):
-        return self.gmm((), self.transform(xy, p))
-
-    def llh(self, p, xy, stddev=None):
-        return self.gmm.llh((), self.transform(xy, p))
-
-    def p0guess(self, data, *args):
-        # starting values for parameter optimization
-        return np.zeros(self.dof)
-
-    def fit(self, xy, stddev=None, p0=None):
-        # This will evaluate the
-        return super().fit(xy, p0, loss=self.loss_mle)
-
-    def lh_ratio(self, xy0, xy1):
-        # likelihood ratio
-        return np.exp(self.gmm.llh((), xy0) - self.gmm.llh((), xy1))
-
-
-# @timer
-def offset_disp_cluster(xy0, xy1, sigma=None, plot=PLOT):
-    # NOTE: this method is disfavoured compared to the more stable
-    # `ImageRegister._dxy_hop`
-
-    # find offset (translation) between frames by looking for the dense
-    # cluster of inter-frame point-to-point displacements that represent the
-    # xy offset between the two images. Cannot handle rotations.
-
-    # Finding density peak in inter-frame distances is fast and accurate
-    # under certain conditions only.
-    #  - Images have the same rotation
-    #  - Images have large overlap. There should be more shared points
-    #    than points that are in one frame only
-    #  - Images are roughly to the same depth (i.e roughly the same point
-    #    density (this is done by `hdu.sampler.to_depth`)
-
-    # NOTE: also not good for large number of points in terms of performance and
-    #   accuracy...
-
-    points = (xy0[None] - xy1[:, None]).reshape(-1, 2).T
-
-    if sigma is None:
-        # size of gaussians a third of closest distance between sources
-        sigma = min(dist_flat(xy0).min(), dist_flat(xy1).min()) / 3
-
-    gmm = GaussianSourceField(points.T, sigma)
-    grid = gmm._auto_grid(100)
-    peak = grid[np.unravel_index(gmm(grid).argmax())]
-
-    tree = cKDTree(points.T)
-    idx_nn = tree.query_ball_point(peak, 2 * sigma)
-    off = points[:, idx_nn].mean(1)
-
-    if plot:
-        from matplotlib.patches import Rectangle
-        im, _ = gmm.plot()
-        im.ax.plot(*points[:, idx_nn], 'o', ms=7, mfc='none')
-
-    # old algorithm using histogram. Not robust since bins may cut dense
-    # clusters of points
-    # vals, xe, ye = np.histogram2d(*points, bins)
-    # # todo probably raise if there is no significantly dense cluster
-    # i, j = np.unravel_index(vals.argmax(), vals.shape)
-    # l = ((xe[i] < points[0]) & (points[0] <= xe[i + 1]) &
-    #      (ye[j] < points[1]) & (points[1] <= ye[j + 1]))
-    # sub = points[:, l].T
-    # yay = sub[np.sum(cdist(sub, sub) > dmax, 0) < (len(sub) // 2)]
-    # off = np.mean(yay, 0)
-
-    return off
 
 
 def dist_flat(coo):
@@ -654,90 +203,6 @@ def display_multitab(images, fovs, params, coords):
         im.ax.plot(*xy.T, 'kx', ms=5)
         ui.add_tab(im.figure)
     return ui
-
-
-# todo: move to diagnostics
-
-
-# def measure_positions_dbscan(xy):
-#     # DBSCAN clustering
-#     db, n_clusters, n_noise = id_sources_dbscan(xy)
-#     xy, = group_features(db, xy)
-#
-#     # Compute cluster centres as geometric median
-#     centres = np.empty((n_clusters, 2))
-#     for j in range(n_clusters):
-#         centres[j] = geometric_median(xy[:, j])
-#
-#     xy_offsets = (xy - centres).mean(1)
-#     xy_shifted = xy - xy_offsets[:, None]
-#     # position_residuals = xy_shifted - centres
-#     centres = xy_shifted.mean(0)
-#     σ_pos = xy_shifted.std(0)
-#     return centres, σ_pos, xy_offsets
-
-
-# def register(clustering, coms, centre_distance_max=1,
-#                            f_detect_measure=0.5, plot=PLOT, **plot_kws):
-#     #
-#     from collections import Callable
-#     if isinstance(plot, Callable):
-#         display = plot
-#         plot = True
-#     else:
-#         plot = bool(plot)
-#
-#         def display(*_):
-#             pass
-#     #  🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#
-#     # clustering + relative position measurement
-#     logger.info('Identifying sources')
-#     n_clusters, n_noise = cluster_points(clustering, coms)
-#     xy, = group_features(clustering, coms)
-#
-#     if plot:
-#         import matplotlib.pyplot as plt
-#
-#         fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
-#         ax.set_title(f'Position Measurements (CoM) {len(coms)} frames')
-#
-#         # TODO: plot boxes on this image corresponding to those below
-#         cmap = plot_clusters(ax, np.vstack(coms)[:, ::-1], clustering)
-#         # ax.set(**dict(zip(map('{}lim'.format, 'yx'),
-#         #                   tuple(zip((0, 0), ishape)))))
-#         display(fig0)
-#
-#     #
-#     logger.info('Measuring relative positions')
-#     _, centres, σ_xy, xy_offsets, outliers = \
-#         measure_positions_offsets(xy, centre_distance_max, f_detect_measure)
-#
-#     # zero point for tracker (slices of the extended frame) correspond
-#     # to minimum offset
-#     # xy_off_min = xy_offsets.min(0)
-#     # zero_point = np.floor(xy_off_min)
-#
-#     # 🎨🖌~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-#     if plot:
-#         # diagnostic for source location measurements
-#         from obstools.phot.diagnostics import plot_position_measures
-#
-#         # plot CoMs
-#         fig1, axes = plot_position_measures(xy, centres, xy_offsets, **plot_kws)
-#         fig1.suptitle('Raw Positions (CoM)')  # , fontweight='bold'
-#         display(fig1)
-#
-#         fig2, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
-#         ax.set_title(f'Re-centred Positions (CoM) {len(coms)} frames')
-#         rcx = np.vstack([c - o for c, o in zip(coms, xy_offsets)])
-#         plot_clusters(ax, rcx[:, ::-1], clustering, cmap=cmap)
-#
-#         # ax.set(**dict(zip(map('{}lim'.format, 'yx'),
-#         #                   tuple(zip((0, 0), ishape)))))
-#         display(fig0)
-#
-#     return centres, σ_xy, xy_offsets, outliers, xy
 
 
 def id_sources_kmeans(images, segmentations):
@@ -1520,8 +985,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return self.min_dist / self._dmin_frac_sigma
 
     @lazyproperty
+    def sigma(self):
+        return self.guess_sigma()
+
+    @lazyproperty
     def model(self):
-        model = CoherentPointDrift(self.xy, self.guess_sigma())
+        model = CoherentPointDrift(self.xy, self.sigma)
         model.fit_angle = self.fit_angle
         return model
 
@@ -1758,7 +1227,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             dxy = self._dxy_hop(xyr, plot)
             p = p0 + [*dxy, 0]
 
-        if not refine or hop:
+        if (not refine) and hop:
             return p
 
         if len(xy) == 1:
@@ -1769,7 +1238,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.logger.debug('Refining fit via gradient descent.')
         # do mle via gradient decent
         self.model.fit_angle = self.fit_angle
-        return self.model.fit(xy, p0=p0)
+        pr = self.model.fit(xy, p0=p if hop else p0)
+
+        if (pr is not None):
+            return pr
+
+        if hop:
+            self.logger.debug('Gradient descent failed, falling back to previous result.')
+            return p
+
+        raise UnconvergedOptimization()
 
     def _dxy_hop(self, xy, plot=PLOT):
         # This is a strategic brute force search along all the offset values
