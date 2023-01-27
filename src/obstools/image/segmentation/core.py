@@ -4,25 +4,21 @@ Extensions for segmentation images
 
 
 # std
-import types
 import inspect
 import numbers
 import itertools as itt
-import contextlib as ctx
 from collections import abc, defaultdict, namedtuple
 
 # third-party
 import numpy as np
 from scipy import ndimage
 from loguru import logger
-from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage, deblend_sources
 
 # local
 from pyxides.vectorize import vdict
 from recipes import api, dicts
-from recipes.io import load_memmap
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.utils import duplicate_if_scalar
@@ -34,6 +30,7 @@ from ..utils import shift_combine
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
 from .trace import trace_boundary
 from .display import SegmentPlotter
+from .stats import MaskedStatsMixin
 from .groups import LabelGroupsMixin, auto_id
 
 
@@ -521,198 +518,6 @@ class SliceDict(vdict):
 
 # def is2d(data):
 #     return (nd := data.ndim) == 2 or (nd == 3 and data.shape[0] == 1)
-
-
-class MaskedStatsMixin:
-    """
-    This class gives inheritors access to methods for doing statistics on
-    segmented images (from `scipy.ndimage.measurements`).
-    """
-
-    # Each supported method is wrapped in the `MaskedStatistic` class upon
-    # construction.  `MaskedStatistic` is a descriptor and will dynamically
-    # attach to inheritors of this class that invoke the method via attribute
-    # lookup eg:
-    # >>> obj.sum(image)
-    #
-
-    # define supported statistics
-    _supported = ['sum',
-                  'mean', 'median',
-                  'minimum', 'minimum_position',
-                  'maximum', 'maximum_position',
-                  # 'extrema',
-                  # return signature is different, not currently supported
-                  'variance', 'standard_deviation',
-                  'center_of_mass']
-
-    _result_dims = {'center_of_mass':   (2,),
-                    'minimum_position': (2,),
-                    'maximum_position': (2,)}
-
-    # define some convenient aliases for the ndimage functions
-    _aliases = {'minimum': 'min',
-                'maximum': 'max',
-                'minimum_position': 'argmin',
-                'maximum_position': 'argmax',
-                'maximum_position': 'peak',
-                'standard_deviation': 'std',
-                'center_of_mass': 'com'}
-
-    def __init_subclass__(cls, **kws):
-        super().__init_subclass__(**kws)
-        # add methods for statistics on masked image to inheritors
-        for stat in cls._supported:
-            method = MaskedStatistic(getattr(ndimage, stat))
-            setattr(cls, stat, method)
-            # also add aliases for convenience
-            if alias := cls._aliases.get(stat):
-                setattr(cls, alias, method)
-
-
-class MaskedStatistic:
-    # Descriptor class that enables statistical computation on masked
-    # input data with segmented images
-    _doc_template = \
-        """
-        %s pixel values in each segment ignoring any masked pixels.
-
-        Parameters
-        ----------
-        image:  array-like, or masked array
-            Image for which to calculate statistic.
-        labels: array-like
-            Labels to use in calculation.
-
-        Returns
-        -------
-        float or 1d array or masked array.
-        """
-
-    def __init__(self, func):
-        self.func = func
-        self.__name__ = name = func.__name__
-        self.__doc__ = self._doc_template % name.title().replace('_', ' ')
-
-    def __get__(self, seg, kls=None):
-        # sourcery skip: assign-if-exp, reintroduce-else
-
-        if seg is None:  # called from class
-            return self
-
-        # Dynamically bind this class to the seg instance from whence the lookup
-        # came. Essentially this binds the first argument `seg` in `__call__`
-        # below
-        return types.MethodType(self, seg)
-
-    def __call__(self, seg, image, labels=None, njobs=-1):
-        # handling of masked pixels for all statistical methods done here
-        seg._check_input_data(image)
-        labels = seg.resolve_labels(labels, allow_zero=True)
-
-        # ensure return array or masked array and not list.
-        return self.run(image, seg, labels, njobs)
-
-    def run(self, data, seg, labels, njobs=-1, **kws):
-        result, mask = self._run(data, seg, labels, njobs, **kws)
-
-        if mask is None:
-            return np.array(result)
-
-        return np.ma.MaskedArray(result, mask)
-
-    def _run(self, data, seg, labels, njobs=-1, **kws):
-
-        if (nd := data.ndim) < 2:
-            raise ValueError(f'Cannot compute image statistic for {nd}D data. '
-                             f'Data should be at least 2D.')
-
-        # result shape and dtype
-        nlabels = len(labels)
-        shape = (nlabels, *seg._result_dims.get(self.__name__, ()))
-        dtype = 'i' if 'position' in self.__name__ else 'f'
-
-        if not (is2d := (data.ndim == 2)):
-            shape = ((n := len(data)), *shape)
-            if n == 1:
-                njobs = 1
-
-        isma = np.ma.is_masked(data)
-        if nlabels == 0:
-            return np.empty(shape), (np.empty(shape, bool) if isma else None)
-
-        # get worker
-        worker = self.worker_ma if isma else self.worker
-
-        if is2d:
-            result = np.empty(shape)
-            masked = np.zeros(shape, bool) if isma else None
-            # run single task
-            worker(data, seg, labels, result, masked)
-            return result, masked
-
-        #  3D data
-        if njobs == 1:
-            # sequential
-            context = ctx.nullcontext(list)
-            result = np.empty(shape)
-            masked = np.empty(shape, bool) if isma else None
-            to_close = ()
-        else:
-            # concurrent
-            # faster serialization with `backend='multiprocessing'`
-            context = Parallel(n_jobs=njobs,
-                               **{'backend': 'multiprocessing', **kws})
-            worker = delayed(worker)
-            # create memmap(s)
-            result = load_memmap(shape=shape, dtype=dtype)
-            to_close = [result._mmap]
-
-            masked = None
-            if isma:
-                masked = load_memmap(shape=shape, fill=False)
-                to_close.append(masked._mmap)
-
-        # with ctx.ExitStack() as stack:
-        #     to_close = [stack.enter_context(ctx.closing(mm)) for mm in to_close]
-            # All opened files will automatically be closed at the end of
-            # the with statement, even if attempts to open files later
-            # in the list raise an exception
-
-        with context as compute:
-            # compute = stack.enter_context(context)
-            compute(worker(im, seg, labels, result, masked, i)
-                    for i, im in enumerate(data))
-
-        # for mm in to_close: # causes SEGFAULT??
-        #     mm.close()
-
-        return result, masked
-
-    def worker(self, image, seg, labels, output, _ignored_=None, index=...):
-        output[index] = self.func(image, seg.data, labels)
-
-    def worker_ma(self, image, seg, labels, output, output_mask, index=...):
-        # ignore masked pixels
-        seg_data = seg.data.copy()
-        # original = seg_data[image.mask]
-        seg_data[image.mask] = seg.max_label + 1
-        # this label will not be used for statistic computation.
-        # NOTE: intentionally not using 0 here since that may be one of the
-        # labels for which we are computing the statistic.
-
-        # compute
-        output[index] = self.func(image, seg_data, labels)
-
-        # get output mask
-        # now we have to check which labels may be completely masked in
-        # image data, so we can mask those in output.
-        n_masked = ndimage.sum(~image.mask, seg_data, labels)
-        # for functions that return array-like results per segment (eg.
-        # center_of_mass), we have to up-cast the mask
-        if seg._result_dims.get(self.__name__, ()):
-            n_masked = n_masked[:, None]
-        output_mask[index] = (n_masked == 0)
 
 
 class SegmentMasks(defaultdict):  # SegmentMasks
@@ -2254,7 +2059,7 @@ class SegmentedImage(SegmentationImage,     # base
             np.indices(self.shape)[:, None] - self.com(self.data).T[x]
         ).sum(0)
         return self.__class__(
-            np.sum((np.sqrt(d) < r) * np.arange(1, self.nlabels + 1)[x], 0)
+            np.sum((np.sqrt(d) <= r) * self.labels[x], 0)
         )
 
 
