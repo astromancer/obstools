@@ -45,7 +45,7 @@ class MaskedStatistic(LoggingMixin):
 
         # Dynamically bind this class to the seg instance from whence the lookup
         # came. Essentially this binds the first argument `seg` in `__call__`
-        # below
+        # below.
         return types.MethodType(self, seg)
 
     def __call__(self, seg, image, labels=None, njobs=-1, *results):
@@ -64,7 +64,7 @@ class MaskedStatistic(LoggingMixin):
 
         result, mask = self._run(data, seg, labels, njobs, *results, **kws)
 
-        if mask is None or mask is ():
+        if mask is None:
             return np.array(result)
 
         return np.ma.MaskedArray(result, mask)
@@ -88,7 +88,7 @@ class MaskedStatistic(LoggingMixin):
             return np.empty(shape), (np.empty(shape, bool) if isma else None)
 
         #
-        self.logger.info(
+        self.logger.trace(
             'Computing {} with {} jobs on input data with shape {} using '
             'labels: {}. Output array{} shape: {}.',
             self.__name__, njobs, data.shape, labels, ' is masked of' * isma, shape
@@ -109,7 +109,7 @@ class MaskedStatistic(LoggingMixin):
                 masked = load_memmap(shape=shape, fill=False)
 
         self._runner(data, seg, labels, worker, njobs, results, masked)
-        return results, masked
+        return results, (masked if isma else None)
 
     def _runner(self, data, seg, labels, worker, njobs, results, *masked):
         is2d = (data.ndim == 2)
@@ -127,7 +127,7 @@ class MaskedStatistic(LoggingMixin):
         #  3D data
         if njobs == 1:
             # sequential
-            context = ctx.nullcontext(list)
+            context = ctx.nullcontext(tuple)
             # to_close = ()
         else:
             # concurrent
@@ -141,18 +141,8 @@ class MaskedStatistic(LoggingMixin):
             compute(worker(im, seg, labels, results, *masked, i)
                     for i, im in enumerate(data))
 
-        # if results:
-        # create memmap(s)
-        # to_close.append(masked._mmap)
-
-        # with ctx.ExitStack() as stack:
-        #     to_close = [stack.enter_context(ctx.closing(mm)) for mm in to_close]
-            # All opened files will automatically be closed at the end of
-            # the with statement, even if attempts to open files later
-            # in the list raise an exception
-
-        # for mm in to_close: # causes SEGFAULT??
-        #     mm.close()
+        if njobs > 1:
+            self.logger.debug('{} Processes successfully shut down.', n_jobs)
 
         return results, masked
 

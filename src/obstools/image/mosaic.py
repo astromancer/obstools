@@ -278,7 +278,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
     def mark_target(self, name='', xy=None, colour='forestgreen',
                     arrow_size=10, arrow_head_distance=2.5, arrow_offset=(0, 0),
-                    text_offset=3, **text_props):
+                    text_offset=3, text_props=(), **kws):
 
         # TODO: determine arrow_offset automatically by looking for peak
         """
@@ -340,12 +340,11 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             # quick and easy way to create arrows with annotation
             xy = xy_target + arrow_head_distance * i
             ann = self.ax.annotate('', xy, xy + arrow_size * i,
-                                   arrowprops=dict(arrowstyle='simple',
-                                                   fc=colour)
-                                   )
+                                   arrowprops=dict(**kws, fc=colour))
             arrows.append(ann.arrow_patch)
 
         # text
+        text_props = text_props or {}
         txt = self.ax.text(*(xy_target + text_offset), name,
                            color=colour, **text_props)
         # add border around text to make it stand out (like the arrows)
@@ -401,7 +400,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         i = self._idx_active
         image = self[i]
         if self.image_label is None:
-            self.image_label = image.label_image(self.ax)
+            self.image_label = image.add_label(self.ax)
 
         self.image_label.set_text(f'{i}: {self.names[i]}')
         xy = ulc(self.params[i], 0.98 * self.fovs[i])

@@ -1,8 +1,18 @@
-import motley
+# third-party
 import numpy as np
-from motley.table import Table
 from numpy.lib.stride_tricks import as_strided
 from scipy.stats import binned_statistic_2d
+
+# local
+import motley
+from motley.table import Table
+
+
+def non_masked(xy):
+    xy = np.asanyarray(xy)
+    if np.ma.is_masked(xy):
+        return xy[~xy.mask.any(-1)].data
+    return np.array(xy)
 
 
 def table_coords(coo, ix_fit, ix_scale, ix_loc):
@@ -225,7 +235,7 @@ def scale_combine(images, stat='mean'):
 
 def deep_sky(images, fovs, params, resolution=None, statistic='mean',
              masked=True):
-    # todo rename 
+    # todo rename
     from obstools.image.registration import roto_translate_yx
 
     data = []

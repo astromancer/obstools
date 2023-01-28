@@ -13,12 +13,13 @@ from astropy.io.fits.hdu import PrimaryHDU
 
 # local
 from recipes.dicts import pformat
+from recipes.oo.property import ForwardProperty
+
 
 # ---------------------------------------------------------------------------- #
 
-
-class keep:
-    pass
+# API flag
+keep = object()
 
 
 class IndexHelper:
@@ -41,9 +42,9 @@ _s = IndexHelper()
 
 
 class CalibrationImageDescriptor:
-    """Descriptor class for calibration images"""
-
-    # Orientation = ImageOrientBase
+    """
+    Descriptor class for calibration images (flat/dark).
+    """
 
     def __init__(self, name):
         self.name = f'_{name}'
@@ -70,6 +71,9 @@ class CalibrationImageDescriptor:
 
 
 def get_array(hdu):
+    # used when setting a calibration data (hdu) on the science hdu to retrieve
+    # the data array
+
     if hdu is None:
         return
 
@@ -78,13 +82,14 @@ def get_array(hdu):
         # ensure consistent orientation between image - and calibration data
         # NOTE: The flat fields will get debiased here. An array is returned
         img = hdu.calibrated  # [instance.hdu.oriented.orient]
-    elif isinstance(img, PrimaryHDU):
+    elif isinstance(hdu, PrimaryHDU):
         img = img.data
+    else:
+        raise NotImplementedError
 
     img = np.asanyarray(img)
     if img.ndim != 2:
-        raise ValueError(f'Calibration image must be 2d, not '
-                         f'{img.ndim}d.')
+        raise ValueError(f'Calibration image must be 2D, not {img.ndim}D.')
 
     return img
 
@@ -95,9 +100,13 @@ class ImageOrienter:
     upon item access.
     """
 
+    # forward array-like properties to hdu
+    ndim = ForwardProperty('hdu.ndim')
+    shape = ForwardProperty('hdu.shape')
+
     def __init__(self, hdu, flip='', x=False, y=False):
         """
-        Image orientation helper
+        Image orientation helper.
 
         Parameters
         ----------
@@ -118,11 +127,7 @@ class ImageOrienter:
         self.hdu = hdu
 
         # set item getter for dimensionality
-        self.getitem = (self._getitem3d, self._getitem2d)[hdu.ndim == 2]
-
-        # set some array-like attributes
-        self.ndim = self.hdu.ndim
-        self.shape = self.hdu.shape
+        self.getitem = self._getitem2d if hdu.ndim == 2 else self._getitem3d
 
         # setup tuple of slices for array
         orient = list(_s[..., :, :])
@@ -138,6 +143,9 @@ class ImageOrienter:
     def __call__(self, data):
         return data[self.orient]
 
+    def __array__(self):
+        return self.hdu.data[self.orient]
+
     def __getitem__(self, key):
         return self.getitem(key)
 
@@ -148,9 +156,6 @@ class ImageOrienter:
     def _getitem3d(self, key):
         # reading section for performance
         return self.hdu.section[key][self.orient]
-
-    def __array__(self):
-        return self.hdu.data[self.orient]
 
 
 class ImageCalibrator(ImageOrienter):

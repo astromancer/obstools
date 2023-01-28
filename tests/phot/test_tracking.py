@@ -1,19 +1,16 @@
 
 # std
-import itertools
-import multiprocessing
 from pathlib import Path
 
 # third-party
 import numpy as np
-import more_itertools
 from loguru import logger
+from pyshoc import calDB, shocCampaign
+from pyshoc.pipeline.calibrate import calibrate
 
 # local
 from pyxides.vectorize import repeat
 from obstools.phot import SourceTracker
-from shoc import shocCampaign
-from shoc.pipeline.calibrate import calibrate
 
 
 # logger.add(sys.stderr, level='INFO')

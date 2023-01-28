@@ -42,7 +42,7 @@ class BootstrapResample(LoggingMixin):
         self.data = data
         self.axis = axis
         self.sample_size = sample_size
-        self.subset = subset
+        self.subset = subset or ...
 
     def draw(self, n=None, subset=...):
         """
@@ -69,6 +69,7 @@ class BootstrapResample(LoggingMixin):
                              'class with a sample size).')
 
         size = len(self.data)
+        subset = subset or ...
         if subset is ...:
             subset = size
 

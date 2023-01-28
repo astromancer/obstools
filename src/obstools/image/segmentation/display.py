@@ -142,7 +142,7 @@ class SegmentPlotter:
             if plt := sys.modules.get('matplotlib.pyplot'):
                 ax = plt.gca()
             else:
-                raise TypeError('Please proved axes parameter `ax`.')
+                raise TypeError('Please provide axes parameter `ax`.')
         #
         kws = {**dict(va='center', ha='center'), **kws}
         texts = []
@@ -279,7 +279,7 @@ class ConsoleFormatter:
     def __init__(self, seg):
         self.seg = seg
 
-    def console(self, label=True, frame=True, origin=0):
+    def __call__(self, label=True, frame=True, origin=0):
         """
         A lightweight visualization of the segmented image for display in the
         console. This creates a string with colourised "pixels" using ANSI
@@ -332,7 +332,18 @@ class ConsoleFormatter:
         im = self.format(label, frame, origin)
         print(im)
         return im
+    
+    # alias
+    console = __call__
 
+    def get_cmap(self, cmap=None):
+        # colour map
+        if cmap is None:
+            return self.seg.make_cmap()
+
+        from matplotlib.pyplot import get_cmap
+        return get_cmap(cmap)
+    
     def format(self, label=True, frame=True, origin=0, cmap=None):
 
         # colour map
@@ -458,7 +469,8 @@ class ConsoleFormatter:
         for i, s in enumerate(s.split('\n\n')):
             top, *lines = s.splitlines(keepends=True)
 
-            title = kws.get('title') + (motley.table.CONTINUED if i else '')
+            title = kws.get('title', '') + (motley.table.CONTINUED if i else '')
+            title_line = ''
             if title:
                 title_line, *lines = lines
 
@@ -486,9 +498,7 @@ class ConsoleFormatter:
 
                 # title_line = title_line.replace(old_title, title)
 
-            o += title_line
-
-            o += ''.join(_fix_line(header, needs_fix)) + ticks
+            o += ''.join((title_line, *_fix_line(header, needs_fix), ticks))
             for line in [first, *lines]:
                 o += ''.join(_fix_line(line, needs_fix))
 

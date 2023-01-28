@@ -18,7 +18,6 @@ import numbers
 import warnings
 import operator as op
 import itertools as itt
-import multiprocessing as mp
 from collections import abc
 
 # third-party
@@ -26,6 +25,7 @@ import numpy as np
 import aplpy as apl
 import cmasher as cmr
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from loguru import logger
 from joblib import Parallel, delayed
@@ -50,6 +50,7 @@ from ..campaign import ImageHDU
 from ..stats import geometric_median
 from ..modelling import UnconvergedOptimization
 from ..utils import STScIServerError, get_coordinates, get_dss
+from .utils import non_masked
 from .mosaic import MosaicPlotter
 from .gmm import CoherentPointDrift
 from .segmentation import SegmentedImage
@@ -76,13 +77,6 @@ def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
     if scale:
         return image / scale(image)
     return image
-
-
-def non_masked(xy):
-    xy = np.asanyarray(xy)
-    if np.ma.is_masked(xy):
-        return xy[~xy.mask.any(-1)].data
-    return np.array(xy)
 
 
 def objective_pix(target, values, xy, bins, p):
@@ -127,82 +121,6 @@ def dist_flat(coo):
     sdist = cdist(coo, coo)  # pixel distance between sources
     # since the distance matrix is symmetric, ignore lower half
     return sdist[np.tril_indices(len(coo), -1)]
-
-
-# @timer
-
-
-def gridsearch_mp(objective, grid, args=(), **kws):
-    # grid search
-
-    # f = ftl.partial(objective, *args, **kws)
-    ndim, *rshape = grid.shape
-
-    n_jobs = 1  # make sure you can pickle everything before you change
-    # this value
-    with Parallel(n_jobs=n_jobs) as parallel:
-        results = parallel(delayed(objective)(p, *args, **kws)
-                           for p in grid.reshape(ndim, -1).T)
-
-    return np.reshape(results, rshape)
-
-
-def worker(func, args, input_, output, i, indexer, axes):
-    indexer[axes] = i
-    output[i] = func(*args, input_[tuple(indexer)])
-
-
-def gridsearch_alt(func, args, grid, axes=..., output=None):
-    # from joblib import Parallel, delayed
-
-    # grid search
-    if axes is not ...:
-        axes = list(axes)
-        out_shape = tuple(np.take(grid.shape, axes))
-        indexer = np.full(grid.ndim, slice(None))
-
-    if output is None:
-        output = np.empty(out_shape)
-
-    indices = np.ndindex(out_shape)
-    # with Parallel(max_nbytes=1e3, prefer='threads') as parallel:
-    #     parallel(delayed(worker)(func, args, grid, output, ix, indexer, axes)
-    #              for ix in indices)
-    # note: seems about twice as slow when testing for small datasets due to
-    #  additional overheads
-
-    with mp.Pool() as pool:
-        pool.starmap(worker, ((func, args, grid, output, ix, indexer, axes)
-                              for ix in indices))
-
-    i, j = np.unravel_index(output.argmax(), out_shape)
-    return output, (i, j), grid[:, i, j]
-
-
-def plot_coords_nrs(cooref, coords):
-    fig, ax = plt.subplots()
-
-    for i, yx in enumerate(cooref):
-        ax.plot(*yx[::-1], marker='$%i$' % i, color='r')
-
-    for i, yx in enumerate(coords):
-        ax.plot(*yx[::-1], marker='$%i$' % i, color='g')
-
-
-def display_multitab(images, fovs, params, coords):
-    from mpl_multitab import MplMultiTab
-    from scrawl.image import ImageDisplay
-
-    import more_itertools as mit
-
-    ui = MplMultiTab()
-    for image, fov, p, yx in zip(images, fovs, params, coords):
-        xy = yx[:, ::-1]  # roto_translate_yx(yx, np.r_[-p[:2], 0])[:, ::-1]
-        ex = mit.interleave((0, 0), fov)
-        im = ImageDisplay(image, extent=list(ex))
-        im.ax.plot(*xy.T, 'kx', ms=5)
-        ui.add_tab(im.figure)
-    return ui
 
 
 def id_sources_kmeans(images, segmentations):
@@ -562,28 +480,14 @@ def group_features(labels, *features):
         g.mask = True
         grouped.append(g)
 
-    try:
-        for i, j in enumerate(indices):
-            ok = (j != -1)
-            if ~ok.any():
-                # catches case in which f[i] is empty (eg. no object detections)
-                continue
+    for i, j in enumerate(indices):
+        ok = (j != -1)
+        if ~ok.any():
+            # catches case in which f[i] is empty (eg. no object detections)
+            continue
 
-            for f, g in zip(features, grouped):
-                g[i, j[ok]] = f[i][ok, ...]
-    except Exception as err:
-        import sys
-        import textwrap
-        from IPython import embed
-        from better_exceptions import format_exception
-        embed(header=textwrap.dedent(
-            f"""\
-                Caught the following {type(err).__name__} at 'registration.py':1093:
-                %s
-                Exception will be re-raised upon exiting this embedded interpreter.
-                """) % '\n'.join(format_exception(*sys.exc_info()))
-        )
-        raise
+        for f, g in zip(features, grouped):
+            g[i, j[ok]] = f[i][ok, ...]
 
     return tuple(grouped)
 
@@ -709,10 +613,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
     Typical usage pattern is as follows:
 
     >>> reg = ImageRegister()
-    # add a refernce image
+    # add a reference image
     >>> reg(image, fov)
     # match a new (partially overlapping) image to the reference image:
-    >>> xy_offset, rotation = reg(new_image, new_fov)
+    >>> *xy_offset, rotation = reg(new_image, new_fov)
     # cross identify sources across images
     >>> reg.register()
     # plot a mosaic of the overlapping, images
@@ -1238,7 +1142,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # get coords.
             xyr = transform.rigid(xy, p0)
             dxy = self._dxy_hop(xyr, plot)
-            p = p0 + [*dxy, 0]
+            p = np.add(p0, [*dxy, 0])
 
         if (not refine) and hop:
             return p
@@ -1406,26 +1310,33 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # group_features(self.labels, self.labels)[0]
         return split_like(self.labels, self.coms)
 
+    @property
+    def xy_per_label(self):
+        xy = np.vstack(self.xyt)
+        # np.unique(self.labels)[None].T == self.labels
+        return [xy[self.labels == i] for i in sorted(set(self.labels))]
+
     def remap_labels(self, target, flux_sort=True):
         """
         Re-order the *cluster* labels so that our target is 0, the rest follow
         in descending order of brightness first listing those that occur within
         our science images, then those in the survey image.
         """
+        assert isinstance(target, numbers.Integral)
 
         # get cluster labels bright to faint
         counts, = group_features(self.labels, self.attrs.counts)
 
         # get the labels of sources that are detected in at least one of the
         # science frames
-        detected = ~counts[1:].mask
-        nb, = np.where(detected.any(0))
+        in_sci = ~counts[1:].mask
+        nb, = np.where(in_sci.any(0))
         old = [target,
                *np.setdiff1d(nb, target),
-               *np.setdiff1d(np.where(detected.all(0)), nb)]
+               *np.setdiff1d(np.where(in_sci.all(0)), nb)]
 
         if flux_sort:
-            # measure relative brightness (scale by one of the frames, to account for
+            # measure relative brightness (scale by one of the stars, to account for
             # gain differences between instrumental setups)
             bright2faint = list(np.ma.median(
                 counts / counts[:, [old[0]]], 0).argsort()[::-1])
@@ -1542,7 +1453,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if n_sources > n_sources_most * 1.5:
             warnings.warn("Looks like we're overfitting clusters. Image with "
                           f'most sources has {n_sources_most}, while clustering'
-                          f' produced {n_sources} clusters. Reduce bandwidth.')
+                          f' produced {n_sources} clusters. Maybe reduce bandwidth.')
 
     # def check_labelled(self):
         # if not len(self):
@@ -1901,6 +1812,12 @@ class ImageRegisterDSS(ImageRegister):
     # TODO: more modern sky images
     # TODO: can you warn users about this possibility if you only have access to
     # old DSS images
+
+    def __new__(cls, maybe_images=None, *stuff, **kws):
+        # for slice support
+        if isinstance(maybe_images, str):
+            cls = ImageRegister
+        return super().__new__(cls)
 
     def __init__(self, name_or_coords, fov=(3, 3), **kws):
         """
