@@ -2043,8 +2043,10 @@ class SegmentedImage(SegmentationImage,     # base
 
         """
         # segments, perimeter
-        _, perimeter = zip(*self.traced.values())
-        return list(perimeter)
+        if self.nlabels:
+            _, perimeter = zip(*self.traced.values())
+            return list(perimeter)
+        return []
 
     @lazyproperty
     def roundness(self):
