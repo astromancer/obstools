@@ -9,14 +9,15 @@ from copy import copy
 
 # third-party
 import numpy as np
+import more_itertools as mit
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
-from pyxides import ListOf
-from pyxides.getitem import IndexerMixin
-from pyxides.vectorize import Vectorized, AttrVector
 
 # local
 from scrawl.image import ImageDisplay
+from pyxides import ListOf
+from pyxides.getitem import IndexerMixin
+from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.pprint import qualname
 from recipes.utils import duplicate_if_scalar
@@ -30,6 +31,30 @@ UNIT_CORNERS = np.array([[0., 0.],
                          [1., 0.],
                          [1., 1.],
                          [0., 1.]])
+
+IMAGE_STYLE = dict(hist=False,
+                   sliders=False,
+                   cbar=False,
+                   interpolation='none')
+
+CONTOUR_STYLE = dict(cmap='cmr.pride')
+
+FRAME_STYLE = dict(fc='none',
+                   lw=1,
+                   ec='0.5')
+
+MARKER_STYLE = dict(marker='x',
+                    color='w',
+                    ls='none')
+
+TEXT_STYLE = dict(size=8,
+                  color='w',
+                  weight='heavy',
+                  offset=5)
+
+
+def isdict(obj):
+    return isinstance(obj, dict)
 
 
 def attr_dict(obj, keys):
@@ -64,7 +89,7 @@ class Image(SelfAware):
                        self.__class__.__name__, lhs=str,
                        brackets='<>',
                        hang=True)
-        
+
     def __getstate__(self):
         # remove artists that can't be pickled
         return {**self.__dict__, 'art': ArtistContainer(image=None, frame=None)}
@@ -83,36 +108,28 @@ class Image(SelfAware):
     @property
     def corners(self):
         """
-        xy coords of image corners anti-clockwise from lower left
+        xy coords of image corners anti-clockwise from lower left.
         """
         return self.transform.transform(UNIT_CORNERS * self.shape - 0.5)
 
     def __array__(self):
         return self.data
 
-    def show(self, ax=None, frame=True, set_lims=True, **kws):
+    def show(self, ax=None, image=True, frame=True, set_lims=True, **kws):
         #  ,
         """
         Display the image in the axes
         """
 
         # logger.debug(f'{corners=}')
-        im = ImageDisplay(self.data, ax=ax,
-                          **{**dict(hist=False,
-                                    sliders=False,
-                                    cbar=False,
-                                    interpolation='none'),
-                             **kws})
+        im = ImageDisplay(self.data, ax=ax, **{**IMAGE_STYLE, **kws})
         self.art.image = im.image
         ax = im.ax
 
         # Add frame around image
         if frame:
-            frame_kws = dict(fc='none',
-                             lw=1,
-                             ec='0.5',
-                             alpha=kws.get('alpha'))
-            if isinstance(frame, dict):
+            frame_kws = dict(**FRAME_STYLE, alpha=kws.get('alpha'))
+            if isdict(frame):
                 frame_kws.update(frame)
 
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
@@ -201,18 +218,19 @@ class TransformedImage(Image):
     def transform(self):
         return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.offset)
 
-    def show(self, ax=None, frame=True, set_lims=True, **kws):
+    def show(self, ax=None, image=True, frame=True, set_lims=None, coords='world', **kws):
 
-        art = super().show(ax, frame, set_lims, **kws)
+        art = super().show(ax, image, frame, set_lims, **kws)
         ax = art.image.axes
 
         # Rotate + offset the image by setting the transform
-        art_trans = self.transform + ax.transData
-        for artist in art.values():
-            artist.set_transform(art_trans)
+        if coords == 'world':
+            art_trans = self.transform + ax.transData
+            for artist in mit.collapse(art.values()):
+                artist.set_transform(art_trans)
 
         # update axes limits
-        if set_lims:
+        if set_lims := (set_lims or (coords == 'world')):
             corners = self.corners
             xlim, ylim = np.sort([corners.min(0), corners.max(0)]).T
             ax.set(xlim=xlim, ylim=ylim)
@@ -223,12 +241,11 @@ class TransformedImage(Image):
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
-    associated meta data like pixel scale as well as detected sources and their
-    counts.
+    associated meta data like pixel scale and segmented image of detected
+    sources, their coordinates and integrated counts.
     """
     # @doc.inherit('Parameters')
 
-    # _repr_keys = 'shape', 'scale' #, 'offset', 'angle'
     # filename = None
 
     @classmethod
@@ -278,7 +295,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
     @classmethod
     def from_image(cls, image, fov=None, scale=None, **kws):
-        return cls(image, fov, scale=scale, 
+        return cls(image, fov, scale=scale,
                    segmentation=super().from_image(image, **kws))
 
     def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None,
@@ -345,49 +362,49 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         # return xy coordinates in pixels
         return self.seg, self.xy
 
-    def show(self, ax=None, frame=True, positions=False, regions=False,
-             labels=False, set_lims=True, **kws):
-        #  ,
+    def show(self, ax=None, image=True, frame=True, positions=False, regions=False,
+             labels=False, set_lims=None, coords='world', **kws):
         """
         Display the image in the axes, applying the affine transformation for
         parameters `p`
         """
-        art = super().show(ax, frame, set_lims, **kws)
+        assert coords in {'pixel', 'world'}
+
+        art = super().show(ax, image, frame, set_lims, coords, **kws)
         ax = art.image.axes
 
         # add xy position markers (centre of mass)
-        if positions:
-            art.points, = ax.plot(
-                *self.transform.transform(self.xy).T,
-                **{**dict(marker='x', color='w', ls='none'),
-                   **(positions if isinstance(positions, dict) else{})}
-            )
+        if positions is not False:
+            if (positions is True):
+                xy = self.xy if coords == 'pixel' else self.transform.transform(self.xy)
+            else:
+                xy = np.asanyarray(positions)
+
+            art.points, = ax.plot(*xy.T,
+                                  **{**MARKER_STYLE,
+                                     **(positions if isdict(positions) else {})})
 
         # add segmentation contours
-        transform = self.transform + ax.transData
+        transform = ax.transData if coords == 'pixel' else self.transform + ax.transData
         if regions:
-            regions = regions if isinstance(regions, dict) else {}
+            regions = regions if isdict(regions) else {}
             regions.setdefault('alpha', kws.get('alpha'))
-            art.seg = self.seg.draw_contours(ax, transform=transform, **kws)
+            art.seg = self.seg.show.contours(ax, transform=transform,
+                                             **{**CONTOUR_STYLE, **regions, **kws})
 
         if labels:
-            art.texts = self.seg.draw_labels(
-                ax, **{**dict(size=8,
-                              color='w',
-                              weight='heavy',
-                              transform=transform),
-                       **(labels if isinstance(labels, dict) else {})}
+            art.texts = self.seg.show.labels(
+                ax, **{**TEXT_STYLE, 'transform': transform,
+                       **(labels if isdict(labels) else {})}
             )
         return art
 
     plot = show
 
-    def label_image(self, ax, name='', **kws):
+    def add_label(self, ax, name='', **kws):
         return ax.text(*self.corners[-1], name,
-                       rotation=np.degrees(self.angle),
-                       rotation_mode='anchor',
-                       va='top',
-                       **kws)
+                       rotation=np.degrees(self.angle), rotation_mode='anchor',
+                       va='top', **kws)
 
 
 class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorized):
