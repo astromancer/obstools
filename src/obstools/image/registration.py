@@ -253,7 +253,8 @@ def id_sources_kmeans(images, segmentations):
     return cx, centroids, np.asarray(shifts)
 
 
-def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
+def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
+                  **scatter_kws):
     """
 
     Parameters
@@ -273,7 +274,8 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
     n = labels_xy.max() + 1
 
     # plot
-    if not len(colours):
+    dflt = dict(s=25, marker='.')
+    if colours is None:
         if cmap is None:
             from photutils.utils.colormaps import make_random_cmap
             cmap = make_random_cmap(n)
@@ -284,20 +286,31 @@ def plot_clusters(ax, features, labels, colours=(), cmap=None, **scatter_kws):
             cmap = get_cmap(cmap)
 
         colours = cmap(np.linspace(0, 1, n))[labels[core_sample_indices_]]
+        # colours = labels[core_sample_indices_]
 
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
-    for k, v in dict(s=25,
-                     marker='.').items():
-        scatter_kws.setdefault(k, v)
 
-    if scatter_kws.get('marker') in '.o':
+    if scatter_kws.get('marker') in '.o*':
+        scatter_kws.setdefault('edgecolors', colours)
         scatter_kws.setdefault('facecolors', 'none')
     else:
         scatter_kws.setdefault('facecolors', colours)
-    #
+
     art = ax.scatter(*features[core_sample_indices_].T,
-                     edgecolors=colours, **scatter_kws)
+                     **{**dflt, **scatter_kws})
+
     ax.plot(*features[labels == -1].T, 'kx', alpha=0.3)
+
+    if nrs:
+        from scrawl.utils import emboss
+
+        for l, i in zip(*np.unique(labels[labels != -1], return_index=True)):
+            xy = features[labels == l]
+
+            # print(i, xy, colours[i])
+            nr, = ax.plot(*(xy.max(0) + 4), marker=f'${i}$', color=colours[i])
+            emboss(nr)
+
     ax.grid()
     return art
 
@@ -1829,30 +1842,47 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return figures
 
-    def plot_clusters(self, show_bandwidth=True, **kws):
+    def plot_clusters(self, centres='kx', frames=False, nrs=False,
+                      show_bandwidth=True, **kws):
         """
-        Plot the identified sources (clusters) in a single frame
+        Plot the identified sources (clusters) in a single frame.
         """
+        from matplotlib.patches import Rectangle
+
         self.check_has_data()
         self.check_has_labels()
 
         n = len(self)
-        fig0, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
-        ax.set_title(f'Position Measurements (CoM) {n} frames')
+        fig, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+        # ax.set_title(f'Position Measurements (CoM) {n} frames')
 
-        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, **kws)
+        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, nrs=nrs,
+                            label=f'Centroids ({n} images)', **kws)
         self._colour_sequence_cache = art.get_edgecolors()
 
+        if frames:
+            for img in self:
+                frame = Rectangle(img.offset, *img.shape[::-1],
+                                  angle=np.degrees(img.angle),
+                                  fc='none', lw=1, ec='0.5')
+                ax.add_artist(frame)
+
+        if centres:
+            ax.plot(*self.xy.T, centres, ms=2.5, alpha=0.7)
+
         # bandwidth size indicator.
-        # todo: get this to remain anchored lower left but scale with zoom..
-        xy = self.xy.min(0)  # - bw * 0.6
-        cir = Circle(xy, self.clustering.bandwidth, alpha=0.5)
-        ax.add_artist(cir)
+        if show_bandwidth:
+            # todo: get this to remain anchored lower left but scale with zoom..
+            xy = self.xy.min(0)  # - bw * 0.6
+            cir = Circle(xy, self.clustering.bandwidth, ec='0.2', alpha=0.75)
+            ax.add_artist(cir)
+
+            fig.subplots_adjust(top=0.82)
+            proxy = Line2D([], [], marker='o', ls='', ms=10, color=cir.get_fc(), mec='0.2',
+                           label=f'clustering bandwidth = {self.clustering.bandwidth:.3f}')
+            ax.legend(loc='lower left', bbox_to_anchor=(0, 1.01), handles=[art, proxy])
 
         # TODO: plot position error ellipses
-
-        # ax.set(**dict(zip(map('{}lim'.format, 'yx'),
-        #                   tuple(zip((0, 0), ishape)))))
         return art
 
 
@@ -2019,16 +2049,6 @@ class ImageRegisterDSS(ImageRegister):
         w.wcs.ctype = ["RA---TAN", "DEC--TAN"]  # axis type
 
         return w
-
-    def plot_coords_nrs(self, ax=None,  color='c', ms=10, **kws):
-        if ax is None:
-            fig, ax = plt.subplots()
-
-        for i, xy in enumerate(self.xy):
-            ax.plot(*xy, marker='$%i$' % i, color=color, ms=ms, **kws)
-
-        # for i, yx in enumerate(coords):
-        #     ax.plot(*yx[::-1], marker='$%i$' % i, color='g')
 
 
 # class TransformedImage():
