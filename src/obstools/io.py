@@ -4,7 +4,7 @@ Input / output helpers
 
 # std
 import io
-import mmap
+import mmap,os
 
 # third-party
 from loguru import logger
@@ -14,20 +14,41 @@ from astropy.io import fits
 from recipes.oo.temp import temporarily
 
 
-def fileobj_open_picklable(filename, mode):
-
-    if 'r' in mode:
-        logger.debug('Injecting process-inheritable file wrapper.')
-        return FileIOPicklable(filename, mode)
-
-    return fits.util.fileobj_open(filename, mode)
-
-
 class _FilePicklable(fits.file._File):
 
     def _open_filename(self, filename, mode, overwrite):
-        with temporarily(fits.file, fileobj_open=fileobj_open_picklable):
-            super()._open_filename(filename, mode, overwrite)
+        """Open a FITS file from a filename string."""
+        if mode == "ostream":
+            self._overwrite_existing(overwrite, None, True)
+
+        if os.path.exists(self.name):
+            with open(self.name, "rb") as f:
+                magic = f.read(4)
+        else:
+            magic = b""
+
+        ext = os.path.splitext(self.name)[1]
+
+        if not self._try_read_compressed(self.name, magic, mode, ext=ext):
+            mode = fits.file.IO_FITS_MODES[mode]
+            if 'r' in mode:
+                self._file = FileIOPicklable(filename, mode)
+            else:
+                self._file = open(self.name, mode)
+            self.close_on_error = True
+
+        # Make certain we're back at the beginning of the file
+        # BZ2File does not support seek when the file is open for writing, but
+        # when opening a file for write, bz2.BZ2File always truncates anyway.
+        if not (fits.file._is_bz2file(self._file) and mode == "ostream"):
+            self._file.seek(0)
+    
+    # def _open_filename(self, filename, mode, overwrite):
+    #     if 'r' in mode:
+    #         logger.debug('Injecting process-inheritable file wrapper.')
+    #         self._file = FileIOPicklable(filename, fits.file.IO_FITS_MODES[mode])
+
+    #     super()._open_filename(filename, mode, overwrite)
 
     def __getstate__(self):
         state = self.__dict__.copy()
