@@ -192,7 +192,7 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
     n = labels_xy.max() + 1
 
     # plot
-    dflt = dict(s=25, marker='.')
+
     if colours is None:
         if cmap is None:
             from photutils.utils.colormaps import make_random_cmap
@@ -207,27 +207,36 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
         # colours = labels[core_sample_indices_]
 
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
-
+    dflt = dict(s=25, marker='*')
+    scatter_kws = {**dflt, **scatter_kws}
     if scatter_kws.get('marker') in '.o*':
         scatter_kws.setdefault('edgecolors', colours)
         scatter_kws.setdefault('facecolors', 'none')
     else:
         scatter_kws.setdefault('facecolors', colours)
+        scatter_kws.setdefault('edgecolors', 'face')
 
     art = ax.scatter(*features[core_sample_indices_].T,
                      **{**dflt, **scatter_kws})
 
-    ax.plot(*features[labels == -1].T, 'kx', alpha=0.3)
+    ax.plot(*features[labels == -1].T, 'rx', alpha=0.5)
 
     if nrs:
         from scrawl.utils import emboss
 
-        for l, i in zip(*np.unique(labels[labels != -1], return_index=True)):
-            xy = features[labels == l]
+        o = 3
+        # alpha = 0.75
+        for lbl, i in zip(*np.unique(labels[labels != -1], return_index=True)):
+            xy = features[labels == lbl]
 
             # print(i, xy, colours[i])
-            nr, = ax.plot(*(xy.max(0) + 4), marker=f'${i}$', color=colours[i])
-            emboss(nr)
+            nr = ax.annotate(f'${lbl}$', xy.mean(0), (o, o),
+                             textcoords='offset points', size=6,
+                             color=colours[i])
+
+            # nr, = ax.plot(*(xy.max(0) + offset), marker=f'${i}$', ms=7,
+            #               color=colours[i])
+            emboss(nr, 1.5, color='0.2')
 
     ax.grid()
     return art
@@ -1311,10 +1320,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return split_like(self.labels, self.coms)
 
     @property
+    def images_per_label(self):
+        lpi = self.labels_per_image
+        return [[i for i, iml in enumerate(lpi) if (lbl in iml)]
+                for lbl in sorted(set(self.labels) - {-1})]
+
+    @property
     def xy_per_label(self):
         xy = np.vstack(self.xyt)
         # np.unique(self.labels)[None].T == self.labels
-        return [xy[self.labels == i] for i in sorted(set(self.labels))]
+        return [xy[self.labels == i] for i in sorted(set(self.labels) - {-1})]
 
     def remap_labels(self, target, flux_sort=True):
         """
@@ -1331,27 +1346,49 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # science frames
         in_sci = ~counts[1:].mask
         nb, = np.where(in_sci.any(0))
-        old = [target,
-               *np.setdiff1d(nb, target),
-               *np.setdiff1d(np.where(in_sci.all(0)), nb)]
+        xb = np.setdiff1d(np.where(in_sci.all(0)), nb)
+
+        old = [target, *np.setdiff1d(nb, target), *xb]
 
         if flux_sort:
             # measure relative brightness (scale by one of the stars, to account for
             # gain differences between instrumental setups)
+
             bright2faint = list(np.ma.median(
-                counts / counts[:, [old[0]]], 0).argsort()[::-1])
+                counts / counts[:, [target]], 0).argsort()[::-1])
             list(map(bright2faint.remove, old))
             old += bright2faint
-        return np.argsort(old)  # these are the new labels!
+
+        # return old
+        # forward_map = np.zeros(self.labels.max())
+        # forward_map[old] = new
+        return np.argsort(old)   # these are the new labels!
 
     def relabel_segments(self, target=None, flux_sort=True):
-        # desired new cluster labels
-        new_labels = self.remap_labels(target, flux_sort)
-
+        # new desired segment labels
+        #  +1 ensure non-zero labels for SegmentedImage
+        new_image_labels = self.remap_labels(target, flux_sort)
+        new_labels = []
+        # cluster_to_segment = {}
         # relabel all segmentedImages for cross image consistency
+        i = 0
         for cluster_labels, image in zip(self.labels_per_image, self):
-            # we want non-zero labels for SegmentedImage
-            image.seg.relabel_many(new_labels[cluster_labels] + 1)
+            # relabel image segments
+            labels = new_image_labels[cluster_labels]
+            image.seg.relabel_many(labels + 1)
+            # have to reorder the features
+            reorder = labels.argsort()
+            image.xy = image.xy[reorder]
+            image.counts = image.counts[reorder]
+            new_labels.extend(cluster_labels[reorder])
+
+        self.labels = np.array(new_labels)
+        # self.labels[self.labels != -1] = new_image_labels[self.labels]
+        # self.labels = new_cluster_labels
+        return new_image_labels
+
+    # def relabel_clusters(self):
+        # match cluster labels to segment labels
 
     # def to_pixel_coords(self, xy):
     #     # internal coordinates are in arcmin origin at (0,0) for image
@@ -1730,7 +1767,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
                         label=dict(color='w', size='xx-small'),
                         tabbed=True):
 
-        reorder = op.itemgetter(*(self.order + isinstance(self, ImageRegisterDSS)))
+        # *(self.order + isinstance(self, ImageRegisterDSS))
+        reorder = op.itemgetter(*self.order)
         segments = reorder(self.detections)
         images = reorder(self.images)
 
@@ -1753,7 +1791,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return figures
 
-    def plot_clusters(self, centres='kx', frames=False, nrs=False,
+    def plot_clusters(self, centres='k+', frames=False, nrs=False,
                       show_bandwidth=True, **kws):
         """
         Plot the identified sources (clusters) in a single frame.
@@ -1813,11 +1851,12 @@ class ImageRegisterDSS(ImageRegister):
     # TODO: can you warn users about this possibility if you only have access to
     # old DSS images
 
-    def __new__(cls, maybe_images=None, *stuff, **kws):
-        # for slice support
-        if isinstance(maybe_images, str):
-            cls = ImageRegister
-        return super().__new__(cls)
+    # def __new__(cls, maybe_images=(), *stuff, **kws):
+    #     # for slice support
+    #     if isinstance(maybe_images, str):
+    #         return super().__new__(cls)
+    #       # NOTE: BAD UNPICKLE WRONG CLASS
+    #     return ImageRegister(maybe_images, *stuff, **kws)
 
     def __init__(self, name_or_coords, fov=(3, 3), **kws):
         """

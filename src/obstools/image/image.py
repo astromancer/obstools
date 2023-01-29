@@ -118,7 +118,7 @@ class Image(SelfAware):
     def show(self, ax=None, image=True, frame=True, set_lims=True, **kws):
         #  ,
         """
-        Display the image in the axes
+        Display the image in the axes.
         """
 
         # logger.debug(f'{corners=}')
@@ -349,7 +349,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             self.seg = super().detect(self.data, snr=snr, **kws)
 
         # centre of mass, counts
-        yx = self.seg.com_bg(self.data)
+        yx = self.seg.com(self.data)
         counts, noise = self.seg.flux(self.data)
 
         # sometimes, we get nans from the center-of-mass calculation
@@ -361,6 +361,11 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         self.counts = counts[ok]
         # return xy coordinates in pixels
         return self.seg, self.xy
+    
+    def remove_segment(self, label):
+        self.seg.remove_label(label)
+        self.xy = np.delete(self.xy, label - 1, 0)
+        self.counts = np.delete(self.counts, label - 1)
 
     def show(self, ax=None, image=True, frame=True, positions=False, regions=False,
              labels=False, set_lims=None, coords='world', **kws):
