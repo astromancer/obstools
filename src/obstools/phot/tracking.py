@@ -3,8 +3,8 @@ Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
 # std
-import sys
 import math
+import numbers
 import tempfile
 import functools as ftl
 import itertools as itt
@@ -34,11 +34,12 @@ from recipes.logging import LoggingMixin
 from recipes.parallel.joblib import initialized
 
 # relative
+from ..image.noise import CCDNoiseModel
 from ..image.detect import SourceDetectionMixin, make_border_mask
+from ..image.registration import (ImageRegister, compute_centres_offsets,
+                                  report_measurements)
 from ..image.segmentation import (LabelGroupsMixin, SegmentedImage,
                                   SegmentsModelHelper, merge_segmentations)
-from ..image.registration import (ImageRegister, _measure_positions_offsets,
-                                  compute_centres_offsets, report_measurements)
 from .gui import SourceTrackerGUI
 
 
@@ -59,10 +60,13 @@ from .gui import SourceTrackerGUI
 # ---------------------------------------------------------------------------- #
 
 
-FILENAMES = dict(measurements='coord-coms.dat',
-                 measure_mean='coord-mean.dat',
-                 xy_offsets='coord-delta.dat',
-                 sigma_pos='coords-sigma.dat',
+FILENAMES = dict(measurements='centroids.dat',
+                 measure_avg='centroids-mean.dat',
+                 measure_std='centroids-std.dat',
+                 delta_xy='coords-delta.dat',
+                 sigma_xy='coords-std.dat',
+                 flux='flux.dat',
+                 flux_std='flux-std.dat',
                  snr='snr.dat')
 
 TABLE_STYLE = dict(txt='bold', bg='g')
@@ -113,6 +117,13 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
                       for (xs, ys) in segImx.slices], 0)
     return mxshift, maxImage, segImx
 
+
+def boundary_proximity(seg, points, labels=None):
+    labels = seg.resolve_labels(labels)
+    return np.array([np.sqrt(np.square(xy - seg.traced[l][0][0]).sum(1).min())
+                     for l, xy in zip(labels, points)])
+    # return np.array([np.sqrt(np.square(xy - boundary).sum(1).min())
+    #                  for ((boundary,), _), xy in zip(seg.traced.values(), points)])
 
 # class NullSlice():
 #     """Null object pattern for getitem"""
@@ -271,35 +282,35 @@ class SegmentsMasksHelper(SegmentsModelHelper, LabelGroupsMixin):
 
 class GlobalSegmentation(SegmentsMasksHelper):
     @classmethod
-    def merge(cls, segmentations, xy_offsets, extend=True, f_accept=0.5,
+    def merge(cls, segmentations, delta_xy, extend=True, f_accept=0.5,
               post_dilate=1):
         # zero point correspond to minimum offset from initializer and serves as
         # coordinate reference
         # make int type to avoid `Cannot cast with casting rule 'same_kind'
         # downstream
-        return cls(merge_segmentations(segmentations, xy_offsets,
+        return cls(merge_segmentations(segmentations, delta_xy,
                                        extend, f_accept, post_dilate),
-                   zero_point=np.floor(xy_offsets.min(0)).astype(int))
+                   zero_point=np.floor(delta_xy.min(0)).astype(int))
 
     def __init__(self, data, zero_point):
         super().__init__(data)
         self.zero_point = zero_point
 
-    def get_start_indices(self, xy_offsets):
-        if np.ma.is_masked(xy_offsets):
+    def get_start_indices(self, delta_xy):
+        if np.ma.is_masked(delta_xy):
             raise ValueError('Cannot get start indices for masked offsets.')
 
-        return np.abs((xy_offsets + self.zero_point).round().astype(int))
+        return np.abs((delta_xy + self.zero_point).round().astype(int))
 
     def select_overlap(self, start, shape, type_=SegmentedImage):
         return super().select_overlap(start, shape, type_)
 
-    def for_offset(self, xy_offsets, shape, type_=SegmentedImage):
-        if np.ma.is_masked(xy_offsets):
+    def for_offset(self, delta_xy, shape, type_=SegmentedImage):
+        if np.ma.is_masked(delta_xy):
             raise ValueError('Cannot get segmented image for masked offsets.')
 
         return self.select_overlap(
-            self.get_start_indices(xy_offsets), shape, type_)
+            self.get_start_indices(delta_xy), shape, type_)
 
     def flux(self, image, origin, labels=None, labels_bg=(0,), bg_stat='median'):
         sub = self.select_overlap(origin, image.shape)
@@ -319,7 +330,7 @@ class GlobalSegmentation(SegmentsMasksHelper):
 
 class SourceTracker(LabelUser,
                     LabelGroupsMixin,
-                    SourceDetectionMixin,
+                    # SourceDetectionMixin,
                     LoggingMixin):
     """
     A class to track sources in a CCD image frame to aid in doing time series
@@ -341,8 +352,8 @@ class SourceTracker(LabelUser,
     centrality = {
         'com':              1,
         # 'com_bg':           0,
-        'geometric_median': 1,
-        'peak':             0,
+        'geometric_median': 0,
+        'peak':             1,
         # 'upsample_max':     0
     }
 
@@ -359,228 +370,16 @@ class SourceTracker(LabelUser,
     # If we know the saturation value of the chip, we discard source
     # measurements with saturated pixels.
 
-    @classmethod
-    def from_image(cls, image, mask=None, top: int = None, detect=True, **kws):
-        """Initialize the tracker from an image."""
-
-        # Detect sources
-        assert detect
-        seg = super().from_image(image, detect)
-
-        labels = None
-        if top:
-            flux, sigma = seg.flux(np.ma.MaskedArray(image, mask))
-            labels = np.argsort(flux)[:top] + 1
-
-        # Centroid
-        xy = seg.com_bg(image, mask)[:, ::-1]
-
-        # cls.best_for_tracking(image)
-        obj = cls(xy, seg, labels, bad_pixel_mask=mask, **kws)
-
-        # log nice table with what's been found.
-        obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
-
-        return obj
-
-    @classmethod
-    def from_hdu(cls, hdu, sample_exposure_depth=5, **detect_kws):
-
-        # get image and info from the hdu
-        image = hdu.get_sample_image(min_depth=sample_exposure_depth)
-        # precision is used to decice when our measurement of the object
-        # positions are accurate enough. Look for the telescope info in the fits
-        # headers so we can compute the diffraction limit, and use that as a
-        # guide.
-        kws = {}
-        if dl := getattr(hdu, 'diffraction_limit', None):
-            kws['precision'] = dl
-
-        tracker = SourceTracker.from_image(image, detect=detect_kws, **kws)
-        return tracker, image
-
-        # idx = np.ogrid[0:hdu.nframes - 1:n*1j].astype(int)
-        # reg = ImageRegister.from_images(hdu.calibrated[idx],
-        #                                 np.tile(hdu.get_fov(), (n, 1)),
-        #                                 fit_rotation=False)
-        # clf = reg.get_clf(bin_seeding=True, min_bin_freq=3)
-        # reg.register(clf, plot=True)
-        # # seg = reg.global_seg()
-
-        # origin = np.floor(reg.xy_offsets.min(0)).astype(int)
-        # # seg = GlobalSegmentation(reg.global_seg(), zero_point)
-
-        # tracker = cls(reg.xy, reg.global_seg(), origin=origin)
-        # tracker.init_memory(hdu.nframes)
-
-    # TODO:
-    # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
-    #                flux_sort=True, dilate=1, bad_pixel_mask=None, edge_mask=None)
-
-    @classmethod
-    def from_images(cls, images, mask=None,
-                    required_positional_accuracy=0.5, centre_distance_max=1,
-                    f_detect_measure=0.5, f_detect_merge=0.2, post_merge_dilate=1,
-                    flux_sort=True, worker_pool=itt, report=None, plot=False,
-                    **detect_kws):
-        """
-
-        Parameters
-        ----------
-        images
-        mask
-        required_positional_accuracy
-        centre_distance_max
-        f_detect_measure
-        f_detect_merge
-        post_merge_dilate
-        flux_sort
-        worker_pool
-        report
-        plot
-        detect_kws
-
-        Returns
-        -------
-
-        """
-
-        reg = ImageRegister(images)
-
-        from obstools.image.segmentation import detect_measure
-
-        #
-        # n, *ishape = np.shape(images)
-        # detect sources, measure locations
-        segmentations, coms = zip(*map(
-            ftl.partial(detect_measure, **detect_kws), images))
-
-        # register constellation of sources
-        centres, σ_xy, xy_offsets, outliers, xy = register(
-            cls.clustering, coms, centre_distance_max, f_detect_measure,
-            plot)
-
-        # combine segmentation images
-        seg_glb = GlobalSegmentation.merge(segmentations, xy_offsets,
-                                           True,  # extend
-                                           f_detect_merge,
-                                           post_merge_dilate)
-
-        # since the merge process re-labels the sources, we have to ensure the
-        # order of the labels correspond to the order of the clusters.
-        # Do this by taking the label of the pixel nearest measured centers
-        # This is also a useful metric for the success of the clustering
-        # step: Sometimes multiple sources are put in the same cluster,
-        # in which case the centroid will likely be outside the labelled
-        # regions in the segmented image (label 0). These sources will then
-        # fortuitously be ignored below.
-
-        # clustering algorithm may also identify more sources than in `seg_glb`
-        # whether this happens will depend on the `f_detect_merge` parameter.
-        # The sources that are not in the segmentation image will get the
-        # label 0 in `cluster_labels`
-        cxx = np.ma.getdata(centres - seg_glb.zero_point)
-        indices = cxx.round().astype(int)
-        cluster_labels = seg_glb.data[tuple(indices.T)]
-        seg_lbl_omit = (cluster_labels == 0)
-        if seg_lbl_omit.any():
-            cls.logger.info('{} sources omitted from merged segmentation.',
-                            seg_lbl_omit.sum())
-
-        # return seg_glb, xy, centres, σ_xy, xy_offsets, outliers, cluster_labels
-
-        # may also happen that sources that are close together get grouped in
-        # the same cluster by clustering algorithm.  This is bad, but can be
-        # probably be detected by checking labels in individual segmented images
-        # if n_clusters != seg_glb.nlabels:
-
-        # return seg_glb, xy, centres, xy_offsets  # , counts, counts_med
-        if flux_sort:
-            # Measure fluxes here. bright objects near edges of the slot
-            # have lower detection probability and usually only partially
-            # detected merged segmentation usually more complete for these
-            # sources which leads to more accurate flux measurement and
-            # therefore better change of flagging bright partial sources for
-            # photon bleed
-            origins = seg_glb.get_start_indices(xy_offsets)
-
-            # ======================================================================
-            counts = np.ma.empty(xy.shape[:-1])
-            ok = np.logical_not(seg_lbl_omit)
-
-            counts[:, ok] = list(worker_pool.starmap(
-                seg_glb.flux, ((image, ij0)
-                               for ij0, image in
-                               zip(origins, images))))
-
-            counts[:, ~ok] = np.ma.masked
-            counts_med = np.ma.median(counts, 0)
-
-            # ======================================================================
-            # reorder source labels for descending brightness
-            order = np.ma.argsort(counts_med, endwith=False)[::-1]
-            # order = seg_glb.sort(np.ma.compressed(counts_med), descend=True)
-            seg_glb.relabel_many(order[ok] + 1, seg_glb.labels)
-
-            # reorder measurements
-            counts = counts[:, order]
-            counts_med = counts_med[order]
-
-        # `cluster_labels` maps cluster nr to label in image
-        # reorder measurements to match order of labels in image
-        cluster_labels = seg_glb.data[tuple(indices.T)]
-        order = np.ma.MaskedArray(
-            cluster_labels, cluster_labels == 0).argsort()
-        centres = centres[order]
-        xy = xy[:, order]
-        σ_xy = σ_xy[order]
-
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-        if plot:
-            im = seg_glb.display()
-            im.ax.set_title('Global segmentation 0')
-            display(im.figure)
-
-        # initialize tracker
-        use_source = (σ_xy < required_positional_accuracy).all(1)
-        use_source = np.ma.getdata(use_source) & ~np.ma.getmask(use_source)
-        if use_source.sum() < 2:
-            cls.logger.warning(
-                'Measured positions not accurate enough: σ_xy = {} > {:f}',
-                σ_xy, required_positional_accuracy
-            )
-            # TODO: continue until accurate enough!!!
-
-        # FIXME: should use bright sources / high snr here!!
-        use_labels = np.where(use_source)[0] + 1
-
-        # init
-        tracker = cls(cxx, seg_glb, use_labels=use_labels,
-                      bad_pixel_mask=mask)
-        tracker.sigma_pos = σ_xy
-        # tracker.clustering = clf
-        # tracker.xy_off_min = xy_off_min
-        tracker.zero_point = seg_glb.zero_point
-        # tracker.current_offset = xy_offsets[0]
-        tracker.origin = (xy_offsets[0] - xy_offsets.min(0)).round().astype(int)
-
-        if report:
-            # TODO: can probs also highlight large uncertainties
-            #  and bright targets!
-            tracker.report_measurements(xy, centres, σ_xy, counts_med,
-                                        f_detect_measure)
-
-        return tracker, xy, centres, xy_offsets, counts, counts_med
-
     def __init__(self, coords, seg,
                  use_labels=None, label_groups=None,
                  bad_pixel_mask=None, edge_cutoffs=0,
-                 weights='snr', update_weights_every=10,
+                 weights='snr', update_weights_every=25,
                  update_centres_every=100, measure_centres_after=None,
-                 precision=0.25,  # should be diffraction limit
-                 reference_index=0, ):
+                 precision=0.5,  # should be ~ diffraction limit
+                 reference_index=0,
+                 noise_model=None):
         """
-        Class for tracking camera movement by measuring location of sources 
+        Class for tracking camera movement by measuring location of sources
         in CCD images. The class combines various measures of central tendency
         eg. centroid, projected geometric median, marginal gaussian fit, to
         estimate the source positions. The relative source positions are
@@ -598,19 +397,19 @@ class SourceTracker(LabelUser,
             The segmentation image. Centroids for each source are computed
             within the corresponding labelled region.
         use_labels : array-like, optional
-            Only sources corresponding to these labels will be used to
-            calculate frame shift. Note that center of mass measurements are
-            for all sources (that are on-frame) in order to compute the best 
-            relative positions for all sources, but that the frame-to-frame shift
-            will be computed using only the sources in `use_labels`, by default
-            this includes all sources.
+            Only sources corresponding to these labels will be used to calculate
+            frame shift. Note that center of mass measurements are for all
+            sources (that are on-frame) in order to compute the best relative
+            positions for all sources, but that the frame-to-frame shift will be
+            computed using only the sources in `use_labels`, by default this
+            includes all sources.
         label_groups : str, optional
             Name of the segment label group to use for centroid measurements, by
             default None, which uses all availbale labels.
         bad_pixel_mask : np.ndarray, optional
             Ignore these pixels in centroid computation.
         edge_cutoffs : int or list of int, optional
-            Ignore labels that are (at most) this close to the edges of the 
+            Ignore labels that are (at most) this close to the edges of the
             image, by default 0.
         weights : bool, str, optional
             Per-source weights for computing frame offset by weighted average.
@@ -625,12 +424,12 @@ class SourceTracker(LabelUser,
             positional accuracy of sources has been acheived, the relative
             position vector will not be updated any further. The default is 100.
         precision : float, optional
-            Required positional accuracy of soures in units of pixels, by 
+            Required positional accuracy of soures in units of pixels, by
             default 0.25.
         reference_index : int, optional
             Index of source (coords) to use as internal reference, by default 0.
-            The `rpos` property will return relative positions with respect to 
-            this source. 
+            The `rpos` property will return relative positions with respect to
+            this source.
         """
 
         if isinstance(seg, SegmentsMasksHelper):
@@ -649,12 +448,10 @@ class SourceTracker(LabelUser,
         LabelGroupsMixin.__init__(self, label_groups)
 
         # counter for incremental update
-        self.counter = None  # SyncedCounter()
+        self.counter = itt.count()  # SyncedCounter()
         # shared memory. these are just placeholders for now, they are set in
         # `_init_memory`
-        self.measurements = None
-        self.xy_offsets = None
-        self.sigma_pos = None
+        self.measurements = self.measure_avg = self.measure_std = self.delta_xy = self.sigma_xy = None
 
         # reference position (in pixel coordinates) from which the shift will
         # be measured.
@@ -662,7 +459,8 @@ class SourceTracker(LabelUser,
         self.ir = int(reference_index)
         self.xy0 = coords[self.ir]
         self.rpos = coords - coords[self.ir]
-        self.origin = np.array((0, 0))
+        self.origin = np.array([0, 0])
+        self.region_centres = self.seg.com(self.seg.data)
 
         # algorithmic details
         self.edge_cutoffs = edge_cutoffs
@@ -674,6 +472,9 @@ class SourceTracker(LabelUser,
         self._update_centres_every = int(max(update_centres_every, 0))
         self._measure_centres_after = int(measure_centres_after or update_centres_every)
         self._precision_reached = False
+
+        self.noise_model = noise_model
+
         # masks for photometry
         # self.bad_pixel_mask = bad_pixel_mask
 
@@ -714,19 +515,25 @@ class SourceTracker(LabelUser,
         # get array shapes
         nstats = len(self.centrality)
         nsources = self.seg.nlabels
-        shapes = dict(measurements=(n, nstats, nsources, 2),
-                      measure_mean=(n, nsources, 2),
-                      xy_offsets=(n, 2),
-                      sigma_pos=(nsources, 2))
+        shapes = dict(
+            measurements=(n, nstats, nsources, 2),
+            measure_avg=(n, nsources, 2),
+            delta_xy=(n, 2),
+            sigma_xy=(nsources, 2),
+            flux=(n, nsources),
+            flux_std=(n, nsources)
+        )
         if self.snr_weighting or self.snr_cut:
             shapes['snr'] = (math.ceil(n / self._update_weights_every), nsources)
+        if self.noise_model:
+            shapes['measure_std'] = (n, nsources, 2)
 
         # load memory
         spec = ('f', np.nan, overwrite)
         for name, shape in shapes.items():
             setattr(self, name, load_memmap(loc / FILENAMES[name], shape, *spec))
 
-    def __call__(self, image, index, mask=None, counter=None):
+    def __call__(self, image, index, mask=None, counter=None, depth=0):
         """
         Track the shift of the image frame from initial coordinates
 
@@ -740,54 +547,57 @@ class SourceTracker(LabelUser,
 
         """
         count = next(counter or self.counter)
-        self.logger.opt(lazy=True).debug(f'{count = }, {index = }')
+        self.logger.debug(f'{count = }, {index = }')
 
         # TODO: use grid and add offset to grid when computing CoM.  Will be
         # more efficient
-        xy = self.measure(image, index,  mask)
+        # xy = self.measure(image, index,  mask)
+        # # off = (xy - self.region_centres).mean(0)
 
-        # weights
-        if self.should_update_weights(count):
-            self.update_weights(image, count)
-            # TODO: maybe aggregate weights and use mean ??
+        # # weights
+        # if self.should_update_weights(count):
+        #     self.update_weights(image, count)
+        #     # TODO: maybe aggregate weights and use mean ??
 
-            # print(count, 'weights', self._source_weights)
+        #     # print(count, 'weights', self._source_weights)
 
         # # update relative positions from CoM measures
-        # check here if measurements of cluster centres are good enough!
-        if self.should_update_pos(count):
-            self.logger.info('Measuring positions, offsets at count {}.', count)
-            self.compute_centres_offsets(self.measurements[:(index + 1)])
-            off = self.xy_offsets[index]
-        else:
-            # calculate median frame shift using current best relative positions
-            # optionally using snr weighting scheme
-            # measurements wrt image, offsets wrt coords
-            off = self.compute_offset(xy, self._source_weights)
-            self.xy_offsets[index] = off
+        # # check here if measurements of cluster centres are good enough!
+        # if self.should_update_pos(count):
+        #     self.logger.info('Measuring positions, offsets at count {}.', count)
+        #     self.compute_centres_offsets(self.measurements[:(index + 1)])
+        #     off = self.delta_xy[index]
+        # else:
+        #     # calculate median frame shift using current best relative positions
+        #     # optionally using snr weighting scheme
+        #     # measurements wrt image, offsets wrt coords
+        #     off = self.compute_offset(xy, self._source_weights)
+        #     self.delta_xy[index] = off
 
-        # Update origin
-        if (off > 1).any():
-            self.logger.info('ORIGIN SHIFT: {}', off)
+        # # if np.isnan(off).any() or np.ma.is_masked(off):
+        # #     raise ValueError('')
+        # #
+        # # if np.any(np.abs(off) > 20):
+        # #     raise ValueError('')
 
-        self.origin = off[::-1].astype(int)  # NOTE: `origin` in image yx coords
-        self.logger.debug('Updated origin = {}. offset = {}', self.origin, off)
+        # # if np.any(np.abs(self.current_offset - off) > 1):
+        # #     self.origin = off.round().astype(int)
+        # print('!!!!!'*10)
+        # self.logger.info('OFFSET: {}', off)
 
-        # if np.isnan(off).any():
-        #     raise Exception('')
-        #
-        # if np.ma.is_masked(off):
-        #     raise ValueError('')
-        #
-        # if np.any(np.abs(off) > 20):
-        #     raise ValueError('')
+        # # Update origin
+        # if np.any(off >= 1) and depth == 0:
+        #     # NOTE: `origin` in image yx coords
+        #     self.logger.info('ORIGIN SHIFT: {}', off)
+        #     self.origin += np.round(off)[::-1]
+        #     self.logger.debug('Updated origin = {}. offset = {}', self.origin, off)
 
-        # if np.any(np.abs(self.current_offset - off) > 1):
-        #     self.origin = off.round().astype(int)
-        # print('OFFSET', off)
+        #     # re-measure
+        #     self.logger.debug('re-measuring centroids')
+        #     return self(image, index,  mask, iter([count]), depth + 1)
 
         # finally return the new coordinates
-        return self.coords + off
+        # return self.coords + off
 
     def __str__(self):
         nl = '\n'
@@ -836,32 +646,33 @@ class SourceTracker(LabelUser,
         weights = np.fromiter(self.centrality.values(), float)
         return (weights / weights.sum())[:, None, None]
 
-    def should_update_weights(self, count):
+    def should_update_weights(self, count=0):
         return ((self.snr_weighting or self.snr_cut) and
                 ((self._source_weights is None) or
-                 ((count + 1) % self._update_weights_every == 0)))
+                 (count % self._update_weights_every == 0)))
 
-    def should_update_pos(self, count):
-        return ((count > 0) and
-                ((count + 1) % self._update_centres_every) == 0 and
-                (self.sigma_pos > self.precision).any())
+    def should_update_pos(self, count=0):
+        # if count % self._update_centres_every) == 0:
+        return (count % self._update_centres_every) == 0  # (count > 0) and
+        # ( )#and
+        # (self.sigma_xy.mean() > self.precision))
 
     def get_coords(self, i=None):
         if i is None:
-            return self.coords[None] - self.xy_offsets[:, None]
-        return self.coords - self.xy_offsets[i]
+            return self.coords[None] + self.delta_xy[:, None]
+        return self.coords + self.delta_xy[i]
 
     def get_coord(self, i):
-        return self.coords - self.xy_offsets[i]
+        return self.coords + self.delta_xy[i]
 
     def get_coords_residual(self):
-        return self.measurements - self.coords - self.xy_offsets[:, None]
+        return self.measurements - self.coords - self.delta_xy[:, None]
 
     # @api.synonyms({'njobs': 'n_jobs'})
-    def run(self, data, indices=None, n_jobs=-1, progress_bar=True, **kws):  # start_offset=None,
+    def run(self, data, indices=None, n_jobs=-1, progress_bar=True):
         """
-        Start a worker pool of source trackers. The workload will be split into 
-        chunks of size `` 
+        Start a worker pool of source trackers. The workload will be split into
+        chunks of size ``
 
         Parameters
         ----------
@@ -882,16 +693,21 @@ class SourceTracker(LabelUser,
             If memory has not been initialized prior to calling this method.
         """
 
-        # worker_pool : _type_, optional
-        #     Optional worker pool for multiprocessing. The default None, uses
-        #     `joblib.Parallel` for the computation.
+    #     if self.measurements is None:
+    #         raise FileNotFoundError('Initialize memory first by calling the '
+    #                                 '`init_memory` method.')
+
+    #     for i, f in enumerate(self.centrality):
+    #         getattr(self.seg, f)(data, None, n_jobs, self.measurements[:, i])
+
+    # def _run(self, data, indices=None, n_jobs=-1, progress_bar=True, **kws):
+
+        if indices is None:
+            indices, = np.where(~self.measured)
 
         if self.measurements is None:
             raise FileNotFoundError('Initialize memory first by calling the '
                                     '`init_memory` method.')
-
-        if indices is None:
-            indices = range(len(data))
 
         # divide work
         batch_size = self._update_weights_every or self._update_centres_every
@@ -904,87 +720,132 @@ class SourceTracker(LabelUser,
                 # burn in
                 itt.repeat(False, burn_in - 1),
                 # compute every nth batch
-                itt.cycle(itt.chain([True], itt.repeat(False, every - 1)))
+                itt.cycle(itt.chain([None], itt.repeat(False, every - 1)))
             )
             for burn_in, every in
             np.array([(self._measure_centres_after, self._update_centres_every),
-                      (0, self._update_weights_every)]) // batch_size)
-
-        # workload iterable with progressbar if required
-        workload = tqdm(zip(batches, update_weights, update_centres),
-                        total=n_batches, unit_scale=batch_size,
-                        bar_format=PROGRESS_FMT, ascii=' ╸━', unit=' frames',
-                        disable=not progress_bar)
+                      (0, self._update_weights_every)]) // batch_size
+        )
 
         if n_jobs == -1:
             n_jobs = mp.cpu_count()
 
+        # setup compute context
+        pbar = dict(bar_format=PROGRESS_FMT, ascii=' ╸━', unit=' frames',
+                    disable=not progress_bar)
+        # workload = zip(batches, update_weights, update_centres)
+        workload = tqdm(zip(batches, update_weights, update_centres),
+                        total=n_batches, unit_scale=batch_size, **pbar)
+
         if n_jobs == 1:
-            # with ctx.closing(self.progress_bar):
-            loop = self.loop
+            # workload iterable with progressbar if required
+            worker = self.loop
             context = ctx.nullcontext(list)
         else:
-            # setup compute context
             tqdm.set_lock(mp.RLock())  # for managing output contention
             memory_lock = mp.Lock()
-            loop = delayed(self.loop)
-            executor = Parallel(n_jobs=n_jobs, backend='multiprocessing')
+
+            # context = Parallel(n_jobs=n_jobs, backend='loky', verbose=1)
+            executor = Parallel(n_jobs=n_jobs, backend='multiprocessing', verbose=10)
             context = initialized(executor, set_lock, (memory_lock, tqdm.get_lock()))
             # NOTE: object serialization is about x100-150 times faster with
             # multiprocessing backend. ~0.1s vs 10s.
             # backend = 'multiprocessing'
 
-        # setup progressbar
-        logger.remove()
-        pbar_sink = self.logger.add(write_tqdm_log, colorize=True, enqueue=True)
+            worker = delayed(self.loop)
+            # workload iterable with progressbar if required
 
-        # with pbar:
+            # setup progressbar
+            # logger.remove()
+            # pbar_sink = self.logger.add(write_tqdm_log, colorize=True, enqueue=True)
+
+        # execute
         with context as compute:
             # t_start = time.time()
-            compute(loop(data, *args) for args in workload)
+            compute(worker(data, *args) for args in workload)
 
             # logger.debug('With {} backend, pickle serialization took: {:.3f}s',
             #              backend, time.time() - t_start)
-        # else:
-        #     worker_pool.starmap(self.loop,
-        #                         ((data, idx) for idx in mit.divide(n_jobs, indices)))
-        #     worker_pool.close()
-        #     worker_pool.join()
+            # else:
+            #     worker_pool.starmap(self.loop,
+            #                         ((data, idx) for idx in mit.divide(n_jobs, indices)))
+            #     worker_pool.close()
+            #     worker_pool.join()
 
-        self.logger.remove(pbar_sink)
-        self.logger.add(sys.stderr)
-        self.logger.debug('{} Processes successfully shut down.', n_jobs)
+        # self.logger.remove(pbar_sink)
+        # self.logger.add(sys.stderr)
+        # self.logger.debug('{} Processes successfully shut down.', n_jobs)
 
-    def loop(self, data, indices, update_weights=False, update_centres=False):
+    def loop(self, data, indices, update_weights=None, update_centres=None):
 
-        if update_weights:
-            indices = list(indices)
+        if isinstance(indices, numbers.Integral):
+            indices = np.array(indices, 'i')
+
+        indices = np.fromiter(indices, 'i')
+
+        # weights
+        if update_weights or self.should_update_weights():
             i = indices[0]
             self.update_weights(data[i], i)
-            # self.measure(data[i], i)
 
-        xym = np.ma.array([self.measure(data[i], i)
-                           for i in indices])
+        # measure
+        for i in indices:
+            xym = self.measure(data[i], i)
+            off = self.compute_offsets(xym, self._source_weights)  # δxy
 
-        if update_centres:
-            self.compute_centres_offsets()
-        else:
-            centres, σxy, δxy, out = \
-                _measure_positions_offsets(xym, self.coords, d_cut=self._distance_cut)
+            # Update origin
+            if np.any(np.abs(shift := off[::-1] - self.origin) >= 1):
+                self.logger.info('SHIFT: {}', shift)
+                # NOTE: `origin` in image yx coords
+                self.origin += np.array(np.round(shift)).astype(int)
+                self.logger.debug('Updated origin = {}.', self.origin)
+
+                # re-measure
+                self.logger.debug('re-measuring centroids')
+                xym = self.measure(data[i], i)
+                off = self.compute_offsets(xym, self._source_weights)
+
             with memory_lock:
-                self.xy_offsets[indices] = δxy
+                self.delta_xy[i] = off
 
-                self.sigma_pos = nanstd(self.measure_mean - self.xy_offsets[:, None], 0)
+        xym = self.measure_avg[indices]
+
+        if update_centres or self.should_update_pos():
+            self.logger.info('Updating source positions & offsets.')
+            self.compute_centres_offsets()
+            self.logger.opt(lazy=True).debug(
+                'Average pos stddev: {}', lambda: self.sigma_xy.mean(0))
+        else:
+            # calculate median frame shift using current best relative positions
+            # optionally using snr weighting scheme
+            # measurements wrt image, offsets wrt coords
+            with memory_lock:
+                self.sigma_xy = nanstd(self.measure_avg - self.delta_xy[:, None], 0)
                 self.logger.opt(lazy=True).debug(
-                    'Average sigma pos: {}', lambda: self.sigma_pos.mean(0))
+                    'Average pos stddev: {}', lambda: self.sigma_xy.mean(0))
 
-    def measure(self, image, index, mask=None, counter=None):
-        self.measurements[index] = xy = self.measure_source_locations(image, mask)
-        self.measure_mean[index] = xym = (xy * self.feature_weights).sum(0)
-        # self.progress_bar.update()
+        # self.logger.info('OFFSET: {}', off)
+        return self.coords + self.delta_xy[indices, None]
+
+    @property
+    def measured(self):
+        return ~np.isnan(self.measure_avg).all((1, 2))
+
+    def measure(self, image, index, mask=None, origin=None):
+        # self.logger.debug('Measuring centroids')
+        self.measurements[index] = xy = self.measure_source_locations(image, mask, origin)
+        self.measure_avg[index] = xym = (xy * self.feature_weights).sum(0)
+
+        if self.noise_model:
+            self.measure_std[index] = self.seg.com_std(
+                xy[0], image, self.noise_model(image), self.use_labels
+            )
+
+        self.flux[index], self.flux_std[index] = self.seg.flux(image)
+
         return xym
 
-    def measure_source_locations(self, image, mask=None):  # , origin=(0, 0)
+    def measure_source_locations(self, image, mask=None, origin=None):
         """
         Calculate measure of central tendency (centre-of-mass) for the objects
         in the segmentation image
@@ -1010,7 +871,7 @@ class SourceTracker(LabelUser,
         elif self.masks.bad_pixels is not None:
             mask |= self.masks.bad_pixels
 
-        yx = self._measure_source_locations(image, mask)
+        yx = self._measure_source_locations(image, mask, origin)
 
         # check measurements
         # FIXME: still need this ?? - checking overlap at every frame above
@@ -1021,7 +882,7 @@ class SourceTracker(LabelUser,
 
         return yx[..., ::-1]
 
-    def _measure_source_locations(self, data, mask):
+    def _measure_source_locations(self, data, mask, origin):
         """
         Measure locations for all sources that are on-frame, ignoring those that
         are partially off-frame.
@@ -1049,16 +910,19 @@ class SourceTracker(LabelUser,
         """
         assert data.ndim in {2, 3}
 
-        if np.any((np.abs(self.origin) > (shape := data.shape[-2:]))):
+        if origin is None:
+            origin = self.origin
+
+        if np.any((np.abs(origin) > (shape := data.shape[-2:]))):
             raise ValueError(f'Image of shape {shape} does not overlap with'
                              ' segmentation image: Tracker origin (lower left'
-                             f' corner) is at {self.origin}.')
+                             f' corner) is at {origin}.')
 
         self.logger.trace('Measuring source locations for frame with origin at '
-                          '{}.', self.origin)
+                          '{}.', origin)
 
         # select the current active region from global segmentation
-        seg = self.seg.select_overlap(self.origin, shape)
+        seg = self.seg.select_overlap(origin, shape)
 
         # work only with sources that are contained in this image region
         # remove detections that are partially off-frame
@@ -1075,12 +939,13 @@ class SourceTracker(LabelUser,
         #     embed(header="Embedded interpreter at 'src/obstools/phot/tracking.py':1097")
         #     raise ValueError('No segments in image.')
 
-        # compute background subtracted CoM
+        # compute centroids
         data = np.ma.MaskedArray(data, mask)
-        labels = self.use_labels
+        labels = None  # self.use_labels
         yx = np.full((len(self.centrality), self.seg.nlabels, 2), np.nan)
         for i, stat in enumerate(self.centrality):
-            yx[i, labels - 1] = c = getattr(seg, stat)(data, labels, njobs=1)[:, :2]
+            # labels - 1
+            yx[i] = c = getattr(seg, stat)(data, labels, njobs=1)[:, :2]
             self.logger.trace('stat: {}\n{}', stat, c)
 
         # NOTE this is ~2x faster than padding image and mask. can probably
@@ -1096,7 +961,7 @@ class SourceTracker(LabelUser,
         # good = ~self.is_bad(com)
         # self.coms[i, good] = com[good]
 
-        return yx + self.origin
+        return yx
 
     # def check_measurement(self, xy):
 
@@ -1106,7 +971,7 @@ class SourceTracker(LabelUser,
         """
         Measure the relative positions of sources, as well as the xy offset
         (dither) of each image frame based on the set of centroid; measurements
-        in `xy`. 
+        in `xy`.
 
         Parameters
         ----------
@@ -1119,30 +984,18 @@ class SourceTracker(LabelUser,
         # xy = self.measurements
         # ok = np.logical_not(np.isnan(self.measurements).all((1, 2, 3)))
 
-        self.logger.info('compute_centres_offsets')
+        self.logger.debug('compute_centres_offsets')
 
         with memory_lock:
-            if (self.sigma_pos < self.precision).all():
-                if self._precision_reached:
-                    return
+            if (self.sigma_xy.mean() < self.precision).all():
+                return self._check_precision()
 
-                self._precision_reached = (~(np.isnan(self.xy_offsets).any(-1))).sum()
-                self.logger.opt(lazy=True).info(
-                    'Required positional accuracy of {0[0]:} < {0[1]:g} achieved '
-                    'with {0[2]:} measurements. Relative source positions will '
-                    'not be updated further.',
-                    lambda: (self.sigma_pos.mean(0),
-                             self.precision,
-                             self._precision_reached)
-                )
-                return
-
-        xym, centres, σ_pos, xy_offsets, out = \
-            compute_centres_offsets(self.measure_mean, self._distance_cut)
+        xym, centres, σ_pos, delta_xy, out = compute_centres_offsets(
+            self.measure_avg, self._distance_cut)
 
         # self.logger.info('compute_centres_offsets OK')
 
-        # origin = np.floor(xy_offsets.min(0))
+        # origin = np.floor(delta_xy.min(0))
 
         # self.zero_point
         # note using the first non-masked point will avoid this compute
@@ -1155,14 +1008,36 @@ class SourceTracker(LabelUser,
         δ = self.xy0 - xy0
 
         with memory_lock:
-            self.xy_offsets[:] = xy_offsets + δ
+            self.delta_xy[:] = delta_xy + δ
             self.rpos = centres - xy0
-            self.sigma_pos[:] = σ_pos
+            self.sigma_xy[:] = σ_pos
 
         # self.logger.info('compute_centres_offsets SAVED')
         # if (σ_pos < self.precision).all():
 
         self.report_measurements(xym, centres, σ_pos)
+
+    # TODO Rename this here and in `compute_centres_offsets`
+
+    def _check_precision(self):
+        if self._precision_reached:
+            return
+
+        n = np.sum(self.measured)
+        if n < self._measure_centres_after:
+            self.logger.info('Delaying centre compute.')
+            return
+
+        self._precision_reached = n
+        self.logger.opt(lazy=True).info(
+            'Required positional accuracy of {0[0]:} < {0[1]:g} achieved '
+            'with {0[2]:} measurements. Relative source positions will '
+            'not be updated further.',
+            lambda: (self.sigma_xy.mean(0),
+                     self.precision,
+                     self._precision_reached)
+        )
+        return
 
     def report_measurements(self, xy=None, centres=None, σ_xy=None,
                             counts=None, detect_frac_min=None,
@@ -1178,7 +1053,7 @@ class SourceTracker(LabelUser,
             centres = self.coords
 
         if σ_xy is None:
-            σ_xy = self.sigma_pos
+            σ_xy = self.sigma_xy
 
         return report_measurements(xy, centres, σ_xy, counts, detect_frac_min,
                                    count_thresh, self.logger)
@@ -1210,34 +1085,76 @@ class SourceTracker(LabelUser,
 
     # def animate(self, data):
 
-    def plot_position_measures(self, **kws):
+    def plot_position_measures(self, labels, section=..., **kws):
 
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle, Circle
         from .gui import SourceTrackerGUI
 
-        delta = self.measurements - self.coords
+        delta = self.measurements[section] - self.coords
+        delta_avg = self.measure_avg[section] - self.coords
+        delta_xy = self.delta_xy[section]
+        comm = dict(lw=1, ls='--', fc='none', ec='k', zorder=10)
 
-        for j in range(len(self.use_labels)):
-            fig, axes = _, (ax1, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
-            for ax in axes:
-                # add pixel size rect
-                comm = dict(lw=1, ls='--', fc='none', ec='k', zorder=10)
-                ax.add_patch(Rectangle((-0.5, -0.5), 1, 1, **comm))
-                ax.add_patch(Circle((0, 0), self.precision, **comm))
-                ax.set_aspect('equal')
-                ax.tick_params(bottom=True, top=True, left=True, right=True)
+        fig, axes = plt.subplots(len(labels), 2, sharex=True, sharey=True)
+        axes = np.atleast_2d(axes)
+        for ax in axes.ravel():
+            # add pixel size rect
+            ax.add_patch(Rectangle((-0.5, -0.5), 1, 1, **comm))
+            ax.add_patch(Circle((0, 0), self.precision, **comm))
+            ax.set_aspect('equal')
+            ax.tick_params(bottom=True, top=True, left=True, right=True)
 
-            for i, (measure, use) in enumerate(self.centrality.items()):
+        comm = dict(ls='', mfc='none', zorder=1)
+        features = {**self.centrality, 'Weigthed Avg': 1}
+        for j in range(len(labels)):
+            ax1, ax2 = axes[j]
+
+            for i, (measure, use) in enumerate(features.items()):
                 if not use:
                     continue
 
-                marker, label = SourceTrackerGUI.centroid_props[measure]
-                comm = dict(marker=marker, label=label, ls='', mfc='none', zorder=1)
-                ax1.plot(*delta[:, i, j].T, **comm)
-                ax2.plot(*(delta[:, i, j] + self.xy_offsets).T, **comm)
+                if items := SourceTrackerGUI.centroid_props.get(measure):
+                    data, (marker, label) = delta[:, i, j], items
+                else:
+                    data, marker, label = delta_avg[:, j], 'x', measure
 
-            ax1.legend(loc='lower center', bbox_to_anchor=(1.05, 1.05))
+                comm = {**comm, 'marker': marker, 'label': label}
+                ax1.plot(*data.T, **comm)
+                ax2.plot(*(data + delta_xy).T, **comm)
+
+        # fig.tight_layout()
+        # fig.subplots_adjust(top=0.82, hspace=0, vspace=0)
+        axes[0, 0].legend(loc='lower left', bbox_to_anchor=(0, 1.05))
+
+    # def plot_position_measures(self, **kws):
+
+    #     import matplotlib.pyplot as plt
+    #     from matplotlib.patches import Rectangle, Circle
+    #     from .gui import SourceTrackerGUI
+
+    #     delta = self.measurements - self.coords
+
+    #     for j in range(len(self.use_labels)):
+    #         fig, axes = _, (ax1, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
+    #         for ax in axes:
+    #             # add pixel size rect
+    #             comm = dict(lw=1, ls='--', fc='none', ec='k', zorder=10)
+    #             ax.add_patch(Rectangle((-0.5, -0.5), 1, 1, **comm))
+    #             ax.add_patch(Circle((0, 0), self.precision, **comm))
+    #             ax.set_aspect('equal')
+    #             ax.tick_params(bottom=True, top=True, left=True, right=True)
+
+    #         for i, (measure, use) in enumerate(self.centrality.items()):
+    #             if not use:
+    #                 continue
+
+    #             marker, label = SourceTrackerGUI.centroid_props[measure]
+    #             comm = dict(marker=marker, label=label, ls='', mfc='none', zorder=1)
+    #             ax1.plot(*delta[:, i, j].T, **comm)
+    #             ax2.plot(*(delta[:, i, j] + self.delta_xy).T, **comm)
+
+    #         ax1.legend(loc='lower center', bbox_to_anchor=(1.05, 1.05))
 
     # def plot_position_measures(self, **kws):
 
@@ -1246,7 +1163,7 @@ class SourceTracker(LabelUser,
         # from obstools.phot.diagnostics import plot_position_measures
 
         # return plot_position_measures(self.measurements, self.coords,
-        #                               -self.xy_offsets, **kws)
+        #                               -self.delta_xy, **kws)
 
     # def _pad(self, image, origin, zero=0.):
     #     # make a measurement of some property of image using the segments
@@ -1331,7 +1248,7 @@ class SourceTracker(LabelUser,
 
         self.ir = new_order[self.ir]
         self.rpos[brightness_order] = self.rpos[new_order]
-        self.sigma_pos[brightness_order] = self.sigma_pos[new_order]
+        self.sigma_xy[brightness_order] = self.sigma_xy[new_order]
         self.use_labels = new_order + 1
 
         return brightness_order
@@ -1433,6 +1350,7 @@ class SourceTracker(LabelUser,
         return src, flx_bg, npix, npix_bg
 
     def update_weights(self, image, i):
+        self.logger.debug('Updating weights')
         self.snr[i // self._update_weights_every] = self.get_snr_weights(image, i)
         self._source_weights = nanmean(self.snr, 0)
         self.logger.debug('Sources SNR: {}', self._source_weights)
@@ -1496,7 +1414,7 @@ class SourceTracker(LabelUser,
 
         return lj | lm | lbad
 
-    def compute_offset(self, xy, weights):
+    def compute_offsets(self, xy, weights=None):
         """
         Calculate the xy offset of coordinate `coo` from centre reference
 
@@ -1510,13 +1428,10 @@ class SourceTracker(LabelUser,
 
         """
         # shift calculated as snr weighted mean of individual CoM shifts
-        xy = np.ma.MaskedArray(xy, np.isnan(xy)).mean(1)
-        idx = self.use_labels - 1
-        δ = (self.coords[idx] - xy[idx])
-        return np.ma.mean(δ, 0)
-        # offset = np.ma.average(δ, 0, weights)
-        # this offset already relative to the global segmentation
-        # return offset
+        xy = np.ma.MaskedArray(xy, np.isnan(xy))
+        # if weights is None:
+        #     weights = self._source_weights
+        return np.ma.average(self.coords - xy, 0, weights)
 
     def update_pos_point(self, coo, weights=None):
         # TODO: bayesian_update
@@ -1597,3 +1512,218 @@ class SourceTracker(LabelUser,
 
     def gui(self, hdu, **kws):
         return SourceTrackerGUI(self, hdu, **kws)
+
+    @classmethod
+    def from_image(cls, image, mask=None, top: int = None, detect=True, **kws):
+        """Initialize the tracker from an image."""
+
+        # Detect sources
+        assert detect
+        seg = super().from_image(image, detect)
+
+        labels = None
+        if top:
+            flux, sigma = seg.flux(np.ma.MaskedArray(image, mask))
+            labels = np.argsort(flux)[:top] + 1
+
+        # Centroid
+        xy = seg.com_bg(image, mask)[:, ::-1]
+
+        # cls.best_for_tracking(image)
+        obj = cls(xy, seg, labels, bad_pixel_mask=mask, **kws)
+
+        # log nice table with what's been found.
+        obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
+
+        return obj
+
+    @classmethod
+    def from_hdu(cls, hdu, sample_exposure_depth=5, **detect_kws):
+
+        # get image and info from the hdu
+        image = hdu.get_sample_image(min_depth=sample_exposure_depth)
+        # precision is used to decice when our measurement of the object
+        # positions are accurate enough. Look for the telescope info in the fits
+        # headers so we can compute the diffraction limit, and use that as a
+        # guide.
+        kws = {}
+        if dl := getattr(hdu, 'diffraction_limit', None):
+            kws['precision'] = dl
+
+        kws['noise_model'] = CCDNoiseModel(hdu.readout.noise, hdu.readout.preAmpGain)
+
+        tracker = SourceTracker.from_image(image, detect=detect_kws, **kws)
+        return tracker, image
+
+        # idx = np.ogrid[0:hdu.nframes - 1:n*1j].astype(int)
+        # reg = ImageRegister.from_images(hdu.calibrated[idx],
+        #                                 np.tile(hdu.get_fov(), (n, 1)),
+        #                                 fit_rotation=False)
+        # clf = reg.get_clf(bin_seeding=True, min_bin_freq=3)
+        # reg.register(clf, plot=True)
+        # # seg = reg.global_seg()
+
+        # origin = np.floor(reg.delta_xy.min(0)).astype(int)
+        # # seg = GlobalSegmentation(reg.global_seg(), zero_point)
+
+        # tracker = cls(reg.xy, reg.global_seg(), origin=origin)
+        # tracker.init_memory(hdu.nframes)
+
+    # TODO:
+    # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
+    #                flux_sort=True, dilate=1, bad_pixel_mask=None, edge_mask=None)
+
+    @classmethod
+    def from_images(cls, images, mask=None,
+                    required_positional_accuracy=0.5, centre_distance_max=1,
+                    f_detect_measure=0.5, f_detect_merge=0.2, post_merge_dilate=1,
+                    flux_sort=True, worker_pool=itt, report=None, plot=False,
+                    **detect_kws):
+        """
+
+        Parameters
+        ----------
+        images
+        mask
+        required_positional_accuracy
+        centre_distance_max
+        f_detect_measure
+        f_detect_merge
+        post_merge_dilate
+        flux_sort
+        worker_pool
+        report
+        plot
+        detect_kws
+
+        Returns
+        -------
+
+        """
+
+        reg = ImageRegister(images)
+
+        from obstools.image.segmentation import detect_measure
+
+        #
+        # n, *ishape = np.shape(images)
+        # detect sources, measure locations
+        segmentations, coms = zip(*map(
+            ftl.partial(detect_measure, **detect_kws), images))
+
+        # register constellation of sources
+        centres, σ_xy, delta_xy, outliers, xy = register(
+            cls.clustering, coms, centre_distance_max, f_detect_measure,
+            plot)
+
+        # combine segmentation images
+        seg_glb = GlobalSegmentation.merge(segmentations, delta_xy,
+                                           True,  # extend
+                                           f_detect_merge,
+                                           post_merge_dilate)
+
+        # since the merge process re-labels the sources, we have to ensure the
+        # order of the labels correspond to the order of the clusters.
+        # Do this by taking the label of the pixel nearest measured centers
+        # This is also a useful metric for the success of the clustering
+        # step: Sometimes multiple sources are put in the same cluster,
+        # in which case the centroid will likely be outside the labelled
+        # regions in the segmented image (label 0). These sources will then
+        # fortuitously be ignored below.
+
+        # clustering algorithm may also identify more sources than in `seg_glb`
+        # whether this happens will depend on the `f_detect_merge` parameter.
+        # The sources that are not in the segmentation image will get the
+        # label 0 in `cluster_labels`
+        cxx = np.ma.getdata(centres - seg_glb.zero_point)
+        indices = cxx.round().astype(int)
+        cluster_labels = seg_glb.data[tuple(indices.T)]
+        seg_lbl_omit = (cluster_labels == 0)
+        if seg_lbl_omit.any():
+            cls.logger.info('{} sources omitted from merged segmentation.',
+                            seg_lbl_omit.sum())
+
+        # return seg_glb, xy, centres, σ_xy, delta_xy, outliers, cluster_labels
+
+        # may also happen that sources that are close together get grouped in
+        # the same cluster by clustering algorithm.  This is bad, but can be
+        # probably be detected by checking labels in individual segmented images
+        # if n_clusters != seg_glb.nlabels:
+
+        # return seg_glb, xy, centres, delta_xy  # , counts, counts_med
+        if flux_sort:
+            # Measure fluxes here. bright objects near edges of the slot
+            # have lower detection probability and usually only partially
+            # detected merged segmentation usually more complete for these
+            # sources which leads to more accurate flux measurement and
+            # therefore better change of flagging bright partial sources for
+            # photon bleed
+            origins = seg_glb.get_start_indices(delta_xy)
+
+            # ======================================================================
+            counts = np.ma.empty(xy.shape[:-1])
+            ok = np.logical_not(seg_lbl_omit)
+
+            counts[:, ok] = list(worker_pool.starmap(
+                seg_glb.flux, ((image, ij0)
+                               for ij0, image in
+                               zip(origins, images))))
+
+            counts[:, ~ok] = np.ma.masked
+            counts_med = np.ma.median(counts, 0)
+
+            # ======================================================================
+            # reorder source labels for descending brightness
+            order = np.ma.argsort(counts_med, endwith=False)[::-1]
+            # order = seg_glb.sort(np.ma.compressed(counts_med), descend=True)
+            seg_glb.relabel_many(order[ok] + 1, seg_glb.labels)
+
+            # reorder measurements
+            counts = counts[:, order]
+            counts_med = counts_med[order]
+
+        # `cluster_labels` maps cluster nr to label in image
+        # reorder measurements to match order of labels in image
+        cluster_labels = seg_glb.data[tuple(indices.T)]
+        order = np.ma.MaskedArray(
+            cluster_labels, cluster_labels == 0).argsort()
+        centres = centres[order]
+        xy = xy[:, order]
+        σ_xy = σ_xy[order]
+
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        if plot:
+            im = seg_glb.display()
+            im.ax.set_title('Global segmentation 0')
+            display(im.figure)
+
+        # initialize tracker
+        use_source = (σ_xy < required_positional_accuracy).all(1)
+        use_source = np.ma.getdata(use_source) & ~np.ma.getmask(use_source)
+        if use_source.sum() < 2:
+            cls.logger.warning(
+                'Measured positions not accurate enough: σ_xy = {} > {:f}',
+                σ_xy, required_positional_accuracy
+            )
+            # TODO: continue until accurate enough!!!
+
+        # FIXME: should use bright sources / high snr here!!
+        use_labels = np.where(use_source)[0] + 1
+
+        # init
+        tracker = cls(cxx, seg_glb, use_labels=use_labels,
+                      bad_pixel_mask=mask)
+        tracker.sigma_xy = σ_xy
+        # tracker.clustering = clf
+        # tracker.xy_off_min = xy_off_min
+        tracker.zero_point = seg_glb.zero_point
+        # tracker.current_offset = delta_xy[0]
+        tracker.origin = (delta_xy[0] - delta_xy.min(0)).round().astype(int)
+
+        if report:
+            # TODO: can probs also highlight large uncertainties
+            #  and bright targets!
+            tracker.report_measurements(xy, centres, σ_xy, counts_med,
+                                        f_detect_measure)
+
+        return tracker, xy, centres, delta_xy, counts, counts_med
