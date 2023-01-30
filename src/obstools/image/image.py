@@ -232,7 +232,8 @@ class TransformedImage(Image):
         # update axes limits
         if set_lims := (set_lims or (coords == 'world')):
             corners = self.corners
-            xlim, ylim = np.sort([corners.min(0), corners.max(0)]).T
+            xlim, ylim = np.array([corners.min(0), corners.max(0)]).T
+            print(dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
         return art
