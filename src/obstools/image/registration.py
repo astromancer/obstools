@@ -23,11 +23,12 @@ from collections import abc
 # third-party
 import numpy as np
 import aplpy as apl
-import cmasher as cmr
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
+from matplotlib.transforms import Affine2D
 from loguru import logger
+from mpl_multitab import MplTabs
 from joblib import Parallel, delayed
 from astropy.utils import lazyproperty
 from scipy.cluster.vq import kmeans
@@ -38,14 +39,13 @@ from scipy.interpolate import NearestNDInterpolator
 # local
 import recipes.pprint as pp
 from recipes.string import indent
-from recipes.lists import split_like
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
+from recipes.lists import cosort, split_like
 from recipes.utils import duplicate_if_scalar
-from scrawl.image import ImageDisplay
 
 # relative
-from .. import transforms as transform
+from .. import transforms as tf
 from ..campaign import ImageHDU
 from ..stats import geometric_median
 from ..modelling import UnconvergedOptimization
@@ -68,6 +68,7 @@ SAMPLE_STAT = 'median'
 DEPTH = 5
 PLOT = False
 
+
 # ---------------------------------------------------------------------------- #
 
 
@@ -81,7 +82,7 @@ def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
 
 def objective_pix(target, values, xy, bins, p):
     """Objective for direct image matching"""
-    xy = transform.rigid(xy, p)
+    xy = tf.rigid(xy, p)
     bs = binned_statistic_2d(*xy.T, values, 'mean', bins)
     rs = np.square(target - bs.statistic)
     return np.nansum(rs)
@@ -187,12 +188,11 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
 
     """
 
-    core_sample_indices_, = np.where(labels != -1)
-    labels_xy = labels[core_sample_indices_]
-    n = labels_xy.max() + 1
+    ok = (labels != -1)
+    core_sample_indices_, = np.where(ok)
+    n = labels[core_sample_indices_].max() + 1
 
     # plot
-
     if colours is None:
         if cmap is None:
             from photutils.utils.colormaps import make_random_cmap
@@ -219,19 +219,19 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
     art = ax.scatter(*features[core_sample_indices_].T,
                      **{**dflt, **scatter_kws})
 
-    ax.plot(*features[labels == -1].T, 'rx', alpha=0.5)
+    ax.plot(*features[~ok].T, 'rx', alpha=0.5)
 
     if nrs:
         from scrawl.utils import emboss
 
         o = 3
         # alpha = 0.75
-        for lbl, i in zip(*np.unique(labels[labels != -1], return_index=True)):
+        for lbl, i in zip(*np.unique(labels[ok], return_index=True)):
             xy = features[labels == lbl]
 
             # print(i, xy, colours[i])
             nr = ax.annotate(f'${lbl}$', xy.mean(0), (o, o),
-                             textcoords='offset points', size=6,
+                             textcoords='offset points', size=8,
                              color=colours[i])
 
             # nr, = ax.plot(*(xy.max(0) + offset), marker=f'${i}$', ms=7,
@@ -449,16 +449,14 @@ def _measure_positions_offsets(xy, centres, d_cut=None, centroid=geometric_media
 def group_features(labels, *features):
     """
     Read multiple sets of features into a uniform array where the first
-    dimension select the class to which those features belong according to
-    `classifier` Each data set is returned as a masked array where missing
-    elements have been masked out to match the size of the largest class.
-    The returned feature array is easier to work with than lists of unevenly
-    sized features ito further statistical analysis.
-
+    dimension selects the class to which those features belong. Each data set is
+    returned as a masked array where missing elements have been masked out to
+    match the size of the largest class. The returned feature array is easier to
+    work with than lists of unevenly sized features for further analysis.
 
     Parameters
     ----------
-    labels
+    labels 
     features
 
     Returns
@@ -469,34 +467,38 @@ def group_features(labels, *features):
     # core_samples_mask = np.zeros(len(labels), dtype=bool)
     # core_samples_mask[classifier.core_sample_indices_] = True
 
+    assert np.size(labels)
+    assert features
+
+    #
     unique_labels = list(set(labels))
     if -1 in unique_labels:
         unique_labels.remove(-1)
+    zero = unique_labels[0]
     n_clusters = len(unique_labels)
     n_samples = len(features[0])
 
-    items_per_frame = list(map(len, features[0]))
-    split_indices = np.cumsum(items_per_frame[:-1])
-    indices = np.split(labels, split_indices)
-
+    # init arrays, one per feature
     grouped = []
-    for f in next(zip(*features)):
+    for data in next(zip(*features)):
         shape = (n_samples, n_clusters)
-        if f.ndim > 1:
-            shape += (f.shape[-1],)
+        if data.ndim > 1:
+            shape += (data.shape[-1], )
 
         g = np.ma.empty(shape)
         g.mask = True
         grouped.append(g)
 
-    for i, j in enumerate(indices):
+    # group
+    for i, j in enumerate(split_like(labels, features[0])):
         ok = (j != -1)
         if ~ok.any():
-            # catches case in which f[i] is empty (eg. no object detections)
+            # catch for data[i] is empty (eg. no source detections)
             continue
 
+        jj = j[ok] - zero
         for f, g in zip(features, grouped):
-            g[i, j[ok]] = f[i][ok, ...]
+            g[i, jj] = f[i][ok, ...]
 
     return tuple(grouped)
 
@@ -866,7 +868,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         Transform raw center-of-mass measurements with the current set of
         parameters
         """
-        return list(map(transform.affine, self.coms, self.params, self.rscale))
+        return list(map(tf.affine, self.coms, self.params, self.rscale))
 
     @property
     def n_points(self):
@@ -1149,7 +1151,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # between them
 
             # get coords.
-            xyr = transform.rigid(xy, p0)
+            xyr = tf.rigid(xy, p0)
             dxy = self._dxy_hop(xyr, plot)
             p = np.add(p0, [*dxy, 0])
 
@@ -1266,7 +1268,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                    'Fitting successful {:d} / {:d}', i - len(failed), i)
 
         # likelihood ratio test
-        xyn = list(map(transform.affine, self.coms, params, self.rscale))
+        xyn = list(map(tf.affine, self.coms, params, self.rscale))
         lhr = self.lh_ratio(np.vstack(self.xyt), np.vstack(xyn))
         better = (lhr > 1)
         # decide whether to accept new params!
@@ -1301,29 +1303,24 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if plot:
             #
-            art = self.plot_clusters()
-            ax = art.axes
-
-            # bandwidth size indicator.
-            # todo: get this to remain anchored lower left but scale with zoom..
-            xy = self.xy.min(0)  # - bw * 0.6
-            cir = Circle(xy, clf.bandwidth, alpha=0.5)
-            ax.add_artist(cir)
+            art = self.plot_clusters(nrs=True, frames=True)
 
     # ------------------------------------------------------------------------ #
+
     @property
     def labels_per_image(self):
         if self.labels is None:
             raise ValueError('Unregistered!')
 
-        # group_features(self.labels, self.labels)[0]
         return split_like(self.labels, self.coms)
 
     @property
     def images_per_label(self):
-        lpi = self.labels_per_image
-        return [[i for i, iml in enumerate(lpi) if (lbl in iml)]
+        return [self._images_per_label(lbl)
                 for lbl in sorted(set(self.labels) - {-1})]
+
+    def _images_per_label(self, label):
+        return [i for i, iml in enumerate(self.labels_per_image) if (label in iml)]
 
     @property
     def xy_per_label(self):
@@ -1331,7 +1328,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # np.unique(self.labels)[None].T == self.labels
         return [xy[self.labels == i] for i in sorted(set(self.labels) - {-1})]
 
-    def remap_labels(self, target, flux_sort=True):
+    def _trim_labels(self):
+        return []
+
+    def remap_labels(self, target, flux_sort=False):
         """
         Re-order the *cluster* labels so that our target is 0, the rest follow
         in descending order of brightness first listing those that occur within
@@ -1339,53 +1339,49 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         assert isinstance(target, numbers.Integral)
 
-        # get cluster labels bright to faint
-        counts, = group_features(self.labels, self.attrs.counts)
-
         # get the labels of sources that are detected in at least one of the
         # science frames
-        in_sci = ~counts[1:].mask
-        nb, = np.where(in_sci.any(0))
-        xb = np.setdiff1d(np.where(in_sci.all(0)), nb)
-
-        old = [target, *np.setdiff1d(nb, target), *xb]
+        _, nb = cosort(*np.unique(self.labels, return_counts=True)[::-1], order=-1)
+        xb, = np.where(self._trim_labels())  # unimportant labels
+        [nb.remove(r) for r in (target, -1, *xb) if r in nb]
 
         if flux_sort:
+            # get cluster labels bright to faint
+            counts, = group_features(self.labels, self.attrs.counts)
+
             # measure relative brightness (scale by one of the stars, to account for
             # gain differences between instrumental setups)
+            nb = np.ma.median(counts[:, nb] / counts[:, [nb[0]]], 0).argsort()[::-1]
 
-            bright2faint = list(np.ma.median(
-                counts / counts[:, [target]], 0).argsort()[::-1])
-            list(map(bright2faint.remove, old))
-            old += bright2faint
+        # these are the new labels!
+        return np.argsort([target, *nb, *xb])
 
-        # return old
-        # forward_map = np.zeros(self.labels.max())
-        # forward_map[old] = new
-        return np.argsort(old)   # these are the new labels!
-
-    def relabel_segments(self, target=None, flux_sort=True):
+    def relabel(self, target=None, flux_sort=False):
         # new desired segment labels
         #  +1 ensure non-zero labels for SegmentedImage
-        new_image_labels = self.remap_labels(target, flux_sort)
-        new_labels = []
-        # cluster_to_segment = {}
+        new = self.remap_labels(target, flux_sort)
+        labels = np.full_like(self.labels, -1)
+        labels[self.labels != -1] = new[self.labels]
+        self.labels = labels
+
         # relabel all segmentedImages for cross image consistency
-        i = 0
+        new_labels = []
         for cluster_labels, image in zip(self.labels_per_image, self):
             # relabel image segments
-            labels = new_image_labels[cluster_labels]
-            image.seg.relabel_many(labels + 1)
-            # have to reorder the features
-            reorder = labels.argsort()
-            image.xy = image.xy[reorder]
-            image.counts = image.counts[reorder]
+            image_labels = cluster_labels + 1
+            reorder = ...
+            if np.any(image.seg.labels != image_labels):
+                image.seg.relabel_many(image_labels)
+                # have to reorder the features
+                use = (image_labels != 0)
+                reorder = [*image_labels[use].argsort(), *np.where(~use)[0]]
+                image.xy = image.xy[reorder]
+                image.counts = image.counts[reorder]
+
             new_labels.extend(cluster_labels[reorder])
 
         self.labels = np.array(new_labels)
-        # self.labels[self.labels != -1] = new_image_labels[self.labels]
-        # self.labels = new_cluster_labels
-        return new_image_labels
+        return new_labels
 
     # def relabel_clusters(self):
         # match cluster labels to segment labels
@@ -1410,7 +1406,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return xy, params
 
-    def get_centres(self):
+    # ------------------------------------------------------------------------ #
+    def get_centres(self, func=geometric_median):
         """
         Cluster centers via geometric median ignoring noise points
 
@@ -1421,7 +1418,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # this ignores noise points from clustering
         centres = np.empty((self.n_sources(), 2))  # ma.masked_all
         for i, xy in enumerate(np.rollaxis(self.xyt_block, 1)):
-            centres[i] = geometric_median(xy)
+            centres[i] = func(xy)
 
         return centres
 
@@ -1488,9 +1485,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # sanity check
         n_sources_most = max(map(len, self.coms))
         if n_sources > n_sources_most * 1.5:
-            warnings.warn("Looks like we're overfitting clusters. Image with "
-                          f'most sources has {n_sources_most}, while clustering'
-                          f' produced {n_sources} clusters. Maybe reduce bandwidth.')
+            self.logger.info(
+                'Looks like we may be overfitting clusters. Image with most '
+                'sources has {n_sources_most}, while clustering produced '
+                '{n_sources} clusters. Maybe reduce bandwidth.'
+            )
 
     # def check_labelled(self):
         # if not len(self):
@@ -1543,7 +1542,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             # some of the offsets may be masked. ignore those
             good = ~xy_offsets.mask.any(1)
             for i in np.where(good)[0]:
-                self[i].offset -= xy_offsets[i]
+                self[i].origin -= xy_offsets[i]
 
             self.xy = centres
             self.sigmas = xy_std
@@ -1703,9 +1702,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         interpolate_nn(r, r == -1)
 
         seg = SegmentedImage(r.T)
-        if circularize:
-            return seg.circularize()
-        return seg
+        return seg.circularize() if circularize else seg
 
     # def fit_pixels(self, index):
 
@@ -1718,7 +1715,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #         p = self.params[i]
     #         seg = self.detections[i].dilate(2, copy=True)
     #         for sub, g in seg.cutouts(image, np.indices(image), flatten=True):
-    #             g = transform.rigid(g.reshape(-1, 2) * r, p)
+    #             g = tf.rigid(g.reshape(-1, 2) * r, p)
     #             grid.extend(g)
     #             pixels.extend(sub.ravel())
 
@@ -1755,44 +1752,22 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         if number_sources:
             off = -4 * self.scales.min(0)
-            mos.mark_sources(self.xy,
-                             marker=None,
+
+            mos.mark_sources(self.xy, marker=None,
+                             nrs=True,
                              xy_offset=off)
 
         return mos
 
-    def plot_detections(self, dilate=2,
-                        image=dict(cmap=cmr.voltage_r),
-                        contour=dict(cmap='hot', lw=1.5),
-                        label=dict(color='w', size='xx-small'),
-                        tabbed=True):
+    def plot_detections(self, coords='pixel', **kws):
+        gui = ImageRegistrationGUI(self, coords=coords,
+                                   **{**dict(regions=True, labels=True), **kws})
 
-        # *(self.order + isinstance(self, ImageRegisterDSS))
-        reorder = op.itemgetter(*self.order)
-        segments = reorder(self.detections)
-        images = reorder(self.images)
-
-        # overlay ragged apertures
-        figures = []
-        for im, seg in zip(images, segments):
-            seg = seg.dilate(dilate, copy=True)
-            img = ImageDisplay(im, **image)
-            seg.show.contours(img.ax, **contour)
-            seg.show.labels(img.ax, **label)
-            figures.append(img.figure)
-            #img.save(loc / f'{hdu.file.stem}-ragged.png')
-
-        if tabbed:
-            from mpl_multitab import MplMultiTab
-
-            ui = MplMultiTab(figures=figures)
-            ui.show()
-            return ui
-
-        return figures
+        gui.show()
+        return gui
 
     def plot_clusters(self, centres='k+', frames=False, nrs=False,
-                      show_bandwidth=True, **kws):
+                      show_bandwidth=True, trim=False, **kws):
         """
         Plot the identified sources (clusters) in a single frame.
         """
@@ -1804,14 +1779,18 @@ class ImageRegister(ImageContainer, LoggingMixin):
         n = len(self)
         fig, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
         # ax.set_title(f'Position Measurements (CoM) {n} frames')
-
-        art = plot_clusters(ax, np.vstack(self.xyt), self.labels, nrs=nrs,
+        labels = self.labels.copy()
+        if trim and len(trim := self._trim_labels()):
+            xx = (self.labels == np.transpose(np.where(trim))).any(0)
+            labels[xx] = -1
+        art = plot_clusters(ax, np.vstack(self.xyt), labels, nrs=nrs,
                             label=f'Centroids ({n} images)', **kws)
         self._colour_sequence_cache = art.get_edgecolors()
 
         if frames:
             for img in self:
-                frame = Rectangle(img.offset, *img.shape[::-1],
+                frame = Rectangle(img.origin,
+                                  *(img.shape[::-1] * img.scale / self.scale),
                                   angle=np.degrees(img.angle),
                                   fc='none', lw=1, ec='0.5')
                 ax.add_artist(frame)
@@ -1832,7 +1811,31 @@ class ImageRegister(ImageContainer, LoggingMixin):
             ax.legend(loc='lower left', bbox_to_anchor=(0, 1.01), handles=[art, proxy])
 
         # TODO: plot position error ellipses
+        ax.set_aspect('equal')
+        fig.tight_layout()
         return art
+
+
+class ImageRegistrationGUI(MplTabs):
+    def __init__(self, reg, **kws):
+
+        super().__init__()
+
+        self.reg = reg
+        self.style = kws
+        self.art = {}
+
+        for _ in reg:
+            fig = self.add_tab()
+
+        # self._plot(len(reg) - 1)
+        self.add_callback(self.plot)
+
+    def plot(self, fig, i):
+        i, = i
+        self.art[i] = self.reg[i].plot(fig=fig, **self.style)
+
+        # fig.canvas.draw() # WHY? blit?
 
 
 class ImageRegisterDSS(ImageRegister):
@@ -1906,10 +1909,16 @@ class ImageRegisterDSS(ImageRegister):
         self.target_coords_world = coords
         self.target_coords_pixels = np.divide(self.image.shape, 2) + 0.5
 
-    def remap_labels(self, target=None, flux_sort=True):
+    def remap_labels(self, target=None, flux_sort=False, trim=False):
         if target is None:
             target, = self.clustering.predict([self.target_coords_pixels])
-        return super().remap_labels(target, flux_sort)
+
+        new_labels = super().remap_labels(target, flux_sort)
+
+        # if trim:
+        #     new_labels[self._trim_labels()] = -1
+
+        return new_labels
 
     def mosaic(self, names=(), **kws):
 
@@ -1947,8 +1956,27 @@ class ImageRegisterDSS(ImageRegister):
     #     return labels, use
 
     def register(self, clf=None, plot=PLOT):
+        # trim=True
+        # if trim:
+        #     self._trim_labels()
+
         super().register(clf, plot)
-        self.relabel_segments()
+        self.relabel()
+
+    def _trim_labels(self, outside=0):
+        xy = np.ma.median(self.xyt_block, 0)
+        out = np.ones((len(self), self.n_sources()), bool)
+        data = list(self.data)
+        data.pop(outside)
+        for i, im in enumerate(data):
+            tr = Affine2D().translate(*-im.origin).rotate(-im.angle).scale(*(self.scale / im.fov))
+            xyi = tr.transform(xy)
+            out[i] = l = ((0 > xyi) | (xyi > 1)).any(1)
+            # print(i+1, np.where(l)[0])
+
+        return out.all(0)
+        # return np.where(outside.all(0))[0]
+        # return np.array(sorted(set(self.labels) - {-1}))[outside.all(0)]
 
     def build_wcs(self, run):
         assert len(run) == len(self) - 1

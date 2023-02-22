@@ -108,13 +108,13 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         else:
             raise ValueError(f'Invalid scale: {scale!r}.')
 
-        # image offsets are in units of pixels by default. convert to units of
+        # image origins are in units of pixels by default. convert to units of
         # `fov` (arcminutes)
         images = []
         for image in reg.data:
             new = image.copy()
             new.scale = image.scale / rscale
-            new.offset = image.offset * oscale
+            new.origin = image.origin * oscale
             images.append(new)
 
         return cls(images, (), axes, show_ref_image, reg.primary)
@@ -220,16 +220,16 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             # name = name or (self.names[0] if len(self.names) else None)
 
         # if image.__class__.__name__ != 'SkyImage':
-        *offset, angle = p
-        image = SkyImage(image, fov, offset, angle)
+        *origin, angle = p
+        image = SkyImage(image, fov, origin, angle)
 
         # name image
         if name is None:
             name = self.label_fmt % next(self._counter)
 
         # plot
-        # *image.offsets, image.angle = p
-        art = self.art[name] = image.plot(self.ax,
+        # *image.origins, image.angle = p
+        art = self.art[name] = image.plot(ax=self.ax,
                                           frame=frame, set_lims=False,
                                           **kws)
 
@@ -252,8 +252,8 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
                          self._up_lims * (1 + delta))
         self.ax.set(xlim=xlim, ylim=ylim)
 
-    def mark_sources(self, xy, marker='x', number=True, color='c',
-                     xy_offset=(0, 0)):
+    def mark_sources(self, xy, marker='x', nrs=True, color='c',
+                     xy_offset=(0, 0), **kws):
         """
         Display the coordinates of the sources
 
@@ -268,12 +268,30 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
                 self.ax.plot(*xy.T, marker, color=color)
             )
 
-        if number:
-            for i, xy in enumerate(xy):
-                lines.extend(
-                    self.ax.plot(*(xy + xy_offset), ms=[7, 10][i >= 10],
-                                 marker=f'${i}$', color=color)
-                )
+        if (nrs is not False) and (nrs is not None):
+            from scrawl.utils import emboss
+            
+            
+            if nrs is True:
+                nrs = range(len(xy))
+
+            kws.setdefault('size', 8)
+            for i, xy in zip(nrs, xy):
+                # print(i, xy, colours[i])
+                nr = self.ax.annotate(f'{i}', xy, xy_offset,
+                                      textcoords='offset points',
+                                      color=color, **kws)
+
+                # nr, = ax.plot(*(xy.max(0) + offset), marker=f'${i}$', ms=7,
+                #               color=colours[i])
+                emboss(nr, 1.5, color='0.2')
+
+            # for i, xy in enumerate(xy):
+            #     lines.extend(
+            #         self.ax.plot(*(xy + xy_offset),
+            #                      ms=[7, 10, 14][int(np.log10(i)) if i else 0],
+            #                      marker=f'${i}$', color=color)
+            #     )
         return lines
 
     def mark_target(self, name='', xy=None, colour='forestgreen',

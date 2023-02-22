@@ -32,12 +32,14 @@ UNIT_CORNERS = np.array([[0., 0.],
                          [1., 1.],
                          [0., 1.]])
 
-IMAGE_STYLE = dict(hist=False,
+IMAGE_STYLE = dict(cmap='cmr.voltage_r',
+                   hist=False,
                    sliders=False,
                    cbar=False,
                    interpolation='none')
 
-CONTOUR_STYLE = dict(cmap='cmr.pride')
+CONTOUR_STYLE = dict(cmap='hot',
+                     lw=1.5)
 
 FRAME_STYLE = dict(fc='none',
                    lw=1,
@@ -47,7 +49,7 @@ MARKER_STYLE = dict(marker='x',
                     color='w',
                     ls='none')
 
-TEXT_STYLE = dict(size=8,
+TEXT_STYLE = dict(size='xx-small',
                   color='w',
                   weight='heavy',
                   offset=5)
@@ -57,7 +59,7 @@ def isdict(obj):
     return isinstance(obj, dict)
 
 
-def attr_dict(obj, keys):
+def get_attrs(obj, keys):
     return {key: getattr(obj, key) for key in keys}
 
 
@@ -85,7 +87,7 @@ class Image(SelfAware):
         self.art = ArtistContainer(image=None, frame=None)
 
     def __repr__(self):
-        return pformat(attr_dict(self, self._repr_keys),
+        return pformat(get_attrs(self, self._repr_keys),
                        self.__class__.__name__, lhs=str,
                        brackets='<>',
                        hang=True)
@@ -115,16 +117,18 @@ class Image(SelfAware):
     def __array__(self):
         return self.data
 
-    def show(self, ax=None, image=True, frame=True, set_lims=True, **kws):
+    def show(self, image=True, frame=True, set_lims=True, **kws):
         #  ,
         """
         Display the image in the axes.
         """
 
         # logger.debug(f'{corners=}')
-        im = ImageDisplay(self.data, ax=ax, **{**IMAGE_STYLE, **kws})
-        self.art.image = im.image
-        ax = im.ax
+        ax = None
+        if image:
+            im = ImageDisplay(self.data, **{**IMAGE_STYLE, **kws})
+            self.art.image = im.image
+            ax = im.ax
 
         # Add frame around image
         if frame:
@@ -134,6 +138,9 @@ class Image(SelfAware):
 
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
                                                **frame_kws)
+            if (ax := kws.get('ax', ax)) is None:
+                raise TypeError('`ax` keyword required')
+                
             ax.add_patch(frame)
 
         return self.art
@@ -150,19 +157,21 @@ class Image(SelfAware):
 
 class TransformedImage(Image):
 
-    _repr_keys = ('shape', 'scale', 'offset', 'angle')
+    _repr_keys = ('shape', 'scale', 'origin', 'angle')
 
     # @doc.inherit('Parameters')
-    def __init__(self, data, offset=(0, 0), angle=0, scale=1):
+    def __init__(self, data, origin=(0, 0), angle=0, scale=1):
         """
         A translated, scaled, rotated image.
 
         Parameters
         ----------
-        offset : tuple, optional
-            [description], by default (0, 0)
+        origin : tuple, optional
+            Position of the lower left corner of the image array with respect to
+            some user-defined coordinate system, by default (0, 0).
         angle : int, optional
-            [description], by default 0
+            Rotation angle in radians counter-clockwise from horizontal axis, by
+            default 0.
         scale : float or array_like of float, optional, by default 1
             Pixel scale in units/pixel. 
 
@@ -173,7 +182,7 @@ class TransformedImage(Image):
 
         """
         super().__init__(data)
-        self.offset = offset
+        self.origin = origin
         self.angle = angle
         self.scale = scale
         """scale in data units per pixel for required coordinate system"""
@@ -187,14 +196,14 @@ class TransformedImage(Image):
         self._angle = float(angle)
 
     @property
-    def offset(self):
-        return self._offset
+    def origin(self):
+        return self._origin
 
-    @offset.setter
-    def offset(self, offset):
-        offset = np.asarray(offset, float)
-        assert offset.size == 2
-        self._offset = offset.squeeze()
+    @origin.setter
+    def origin(self, origin):
+        origin = np.asarray(origin, float)
+        assert origin.size == 2
+        self._origin = origin.squeeze()
 
     @property
     def scale(self):
@@ -204,46 +213,56 @@ class TransformedImage(Image):
     def scale(self, scale):
         self._scale = np.array(duplicate_if_scalar(scale), float)
 
+    # alias
     pixel_scale = scale
 
     @property
     def params(self):
-        return np.array([*self._offset, self.angle])
+        return np.array([*self._origin, self.angle])
 
     @params.setter
     def params(self, params):
-        *self.offset, self.angle = params
+        *self.origin, self.angle = params
 
     @property
     def transform(self):
-        return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.offset)
+        return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.origin)
 
-    def show(self, ax=None, image=True, frame=True, set_lims=None, coords='world', **kws):
+    # ------------------------------------------------------------------------ #
+    # def contains(self, xy):
+    #     # tr = Affine2D().scale(*( / reg.scale)).rotate(self.angle).translate(*self.origin)
+    #     tr = Affine2D().translate(*-self.origin).rotate(-self.angle).scale(*reg.scale)
+    #     xyi = tr.transform(xy)
+    #     return (0 > xyi & xyi < 1).any()
 
-        art = super().show(ax, image, frame, set_lims, **kws)
-        ax = art.image.axes
+    # ------------------------------------------------------------------------ #
+    def show(self, image=True, frame=True, set_lims=None, coords='world', **kws):
+
+        art = super().show(image, frame, set_lims, **kws)
+        ax = next(filter(None, mit.collapse(art.values()))).axes
 
         # Rotate + offset the image by setting the transform
         if coords == 'world':
             art_trans = self.transform + ax.transData
-            for artist in mit.collapse(art.values()):
+            for artist in filter(None, mit.collapse(art.values())):
                 artist.set_transform(art_trans)
 
         # update axes limits
         if set_lims := (set_lims or (coords == 'world')):
             corners = self.corners
             xlim, ylim = np.array([corners.min(0), corners.max(0)]).T
-            print(dict(xlim=xlim, ylim=ylim))
+            # self.logger.debug('Updating axes limits {}', dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
         return art
+    
 
 
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
-    associated meta data like pixel scale and segmented image of detected
-    sources, their coordinates and integrated counts.
+    associated meta data like pixel scale and pixel map of detected sources,
+    their coordinates and integrated counts.
     """
     # @doc.inherit('Parameters')
 
@@ -299,7 +318,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         return cls(image, fov, scale=scale,
                    segmentation=super().from_image(image, **kws))
 
-    def __init__(self, data, fov=None, offset=(0, 0), angle=0, scale=None,
+    def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=None,
                  segmentation=None):
         """
         Create and SkyImage object with a know size on sky.
@@ -321,14 +340,14 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
         if fov is scale is None:
             raise ValueError('Either field-of-view, or pixel scale must be '
-                             'given and not be `None`')
+                             'given and not be `None`.')
 
         if scale is None:
             fov = np.array(duplicate_if_scalar(fov))
             scale = fov / data.shape
 
         # init
-        TransformedImage.__init__(self, data, offset, angle, scale)
+        TransformedImage.__init__(self, data, origin, angle, scale)
 
         # segmentation data
         self.seg = segmentation     # : SegmentedArray or None
@@ -362,13 +381,13 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         self.counts = counts[ok]
         # return xy coordinates in pixels
         return self.seg, self.xy
-    
+
     def remove_segment(self, label):
         self.seg.remove_label(label)
         self.xy = np.delete(self.xy, label - 1, 0)
         self.counts = np.delete(self.counts, label - 1)
 
-    def show(self, ax=None, image=True, frame=True, positions=False, regions=False,
+    def show(self, image=True, frame=True, positions=False, regions=False,
              labels=False, set_lims=None, coords='world', **kws):
         """
         Display the image in the axes, applying the affine transformation for
@@ -376,8 +395,8 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         """
         assert coords in {'pixel', 'world'}
 
-        art = super().show(ax, image, frame, set_lims, coords, **kws)
-        ax = art.image.axes
+        art = super().show(image, frame, set_lims, coords, **kws)
+        ax = next(filter(None, mit.collapse(art.values()))).axes
 
         # add xy position markers (centre of mass)
         if positions is not False:
@@ -396,7 +415,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             regions = regions if isdict(regions) else {}
             regions.setdefault('alpha', kws.get('alpha'))
             art.seg = self.seg.show.contours(ax, transform=transform,
-                                             **{**CONTOUR_STYLE, **regions, **kws})
+                                             **{**CONTOUR_STYLE, **regions})
 
         if labels:
             art.texts = self.seg.show.labels(
@@ -467,11 +486,11 @@ class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorized):
     images = AttrVector('data')
     shapes = AttrVector('data.shape', convert=np.array)
     detections = AttrVector('seg')
-    coms = AttrVector('xy')
+    coms = centroids = AttrVector('xy')
     fovs = AttrVector('fov', convert=np.array)
     scales = AttrVector('scale', convert=np.array)
     params = AttrVector('params', convert=np.array)
-    xy_offsets = AttrVector('offset', convert=np.array)
+    origins = AttrVector('origin', convert=np.array)
     angles = AttrVector('angles', convert=np.array)
     corners = AttrVector('corners', convert=np.array)
 
