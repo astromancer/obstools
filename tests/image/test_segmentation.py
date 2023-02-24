@@ -10,9 +10,13 @@ from photutils.datasets import (make_gaussian_sources_image,
                                 make_random_gaussians_table)
 
 # local
+from obstools.image.detect import DetectionBase
 from obstools.image.segmentation import (MaskedStatsMixin, SegmentedImage,
                                          trace_boundary)
 
+
+# ---------------------------------------------------------------------------- #
+# DetectionBase.__call__.__cache__.disable()
 
 np.random.seed(1234)
 
@@ -60,7 +64,6 @@ def sim_data(sim_image, request):
 @pytest.fixture
 def seg(sim_image):
     # detect objects in test image
-    SegmentedImage.detection._algorithm.__call__.__cache__.disable()
     return SegmentedImage.detect(sim_image)
 
 # ------------------------------------------------------------------------------
@@ -70,18 +73,18 @@ def seg(sim_image):
 
 
 class TestSegmentation:
-    def test_detect(self):
+    def test_detect(self, sim_image):
         seg = SegmentedImage.detect(sim_image)
 
-    def test_display_term(self):
-        s = seg.display_term()
+    def test_console_image(self, seg):
+        s = seg.show.console()
         # do some test with s
 
 # @pytest.mark.skip
 
 
 def test_self_awareness():
-    seg = SegmentedImage(np.zeros(10, 10))
+    seg = SegmentedImage(np.zeros((10, 10)))
     seg2 = SegmentedImage(seg)
     # todo check that lazy properties don't recompute
     # todo check that groups are preserved
@@ -89,11 +92,17 @@ def test_self_awareness():
 
 # @pytest.mark.skip
 def test_pickle():
-    z = np.zeros((25, 100), int)
+    shape = (25, 100)
+    z = np.zeros(shape, int)
     z[10:15, 30:40] = 1
-    segm = SegmentedImage(z)
-    clone = pickle.loads(pickle.dumps(segm))
+    image = np.random.rand(*shape)
+    image[10:15, 30:40] += 5
+    seg = SegmentedImage(z)
+    clone = pickle.loads(pickle.dumps(seg))
+    
     # todo some equality tests ...
+    assert np.all(seg.detect(image).data == clone.detect(image).data)
+    assert np.all(seg.com(image) == clone.com(image))
 
 # # @pytest.mark.skip
 # def test_slices():
@@ -134,17 +143,17 @@ def test_trace_contours():
     from scipy import ndimage
 
     d = ndimage.distance_transform_edt(np.ones((15, 15)))
-    tests = [d > 5]
+    cases = [d > 5]
     z = np.square(np.indices((15, 15)) - 7.5).sum(0) < 7.5
     z[9, 4] = 1
-    tests.append(z)
+    cases.append(z)
 
     z = np.zeros((5, 5), bool)
     z[3:5, 2] = 1
-    tests.append(z)
+    cases.append(z)
 
-    for t in tests:
-        boundary = trace_boundary(t)
+    for t in cases:
+        pixels, boundary, perimeter = trace_boundary(t)
 
         seg = SegmentedImage(t)
         im = seg.display(extent=np.c_[(0, 0), t.shape].ravel())

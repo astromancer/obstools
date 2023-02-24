@@ -1,16 +1,12 @@
 # std
-import textwrap
 from pathlib import Path
 
 # third-party
-import numpy as np
 import pytest
-from pytest import approx
+import numpy as np
 
 # local
-from recipes.transforms import rotate
-from obstools.image.registration import (CoherentPointDrift, ImageRegister,
-                                         MultivariateGaussians, SkyImage, rigid)
+from obstools.image import Image, ImageRegister, SkyImage
 
 
 # from pytest_steps import test_steps as steps
@@ -24,168 +20,8 @@ def load_test_data(filename):
     return list(np.load(filename).values())
 
 
-def make_id(name, n):
-    for i in range(n):
-        yield f'{name}{i}'
-
-
-# dynamically generate some simple fixtures for combinatorial tests
-# sourcery skip: remove-dict-items
-for name, params in dict(
-        xy=[((5, 10), (5, 6), (8, 2))],
-        sigmas=[1,
-                (1, 0.5),
-                (1, 0.5, 0.6),
-                ((0.5, 0.1),
-                 (0.5, 0.6),
-                 (0.8, 0.2))
-                ],
-        amplitudes=[10,
-                    (1, 2, 3)
-                    ]
-).items():
-    exec(textwrap.dedent(
-        f"""
-        @pytest.fixture(params=params, ids=make_id(name, len(params)))
-        def {name}(request):
-            return request.param
-        """))
-
-
-@pytest.fixture
-def model(xy, sigmas, amplitudes):
-    # this actually already tests the initialization, but it's basically
-    # impossible to re-use the model created in a test :(
-    return MultivariateGaussians(xy, sigmas, amplitudes)
-
-
-# class TestTransforms:
-#     def test_rotate(self):
-#         ''
-
-#     def test_rigid(self):
-#         ''
-
-#     def test_affine(self):
-#         ''
-
-
-# @pytest.mark.skip       # TODO autouse
-class TestMultivariateGaussians:
-    """test MultivariateGaussians"""
-
-    xy_test = (5, 5)
-    xy_test2 = [(3, 3), (6, 6)]
-    expected = iter([6.066578,
-                     1.213435,
-                     1.353353,
-                     0.270671,
-                     1.353390,
-                     0.270674,
-                     2.493522,
-                     0.498704,
-                     ])
-    expected2 = iter([[0.015057, 6.06779528],
-                      [0.00301366, 1.21340099],
-                      [5.06408816e-06, 6.06530660e+00],
-                      [1.51716529e-06, 1.21306132e+00],
-                      [8.20811573e-11, 1.35538752e+00],
-                      [1.33176199e-11, 2.70874035e-01],
-                      [1.25016514e-08, 1.35335283e+00],
-                      [2.50034256e-09, 2.70670566e-01]]
-                     )
-
-    def test_init(self, model):
-        assert model.xy.shape == model.sigmas.shape
-
-    def test_set_attr(self, model):
-        # test setting hyper parameters
-        amplitudes = (3, 4, 5)
-        model.amplitudes = amplitudes
-
-        # test bork for negative amplitudes
-        with pytest.raises(ValueError):
-            model.amplitudes = np.negative(amplitudes)
-
-        # test bork for bad shape
-        with pytest.raises(ValueError):
-            model.amplitudes = [1, 2]
-
-        # test bork bad sigma shape
-        with pytest.raises(ValueError):
-            model.sigmas = [1, 2, 3, 4]
-
-        # TODO: test borks for non-finite / masked amp / sigma
-
-    # TODO: def test_flux(self, model): check integral
-
-    # @pytest.mark.parametrize('expected', (1,2))
-
-    def test_call(self, model):
-        # model call
-        # use the next 2 lines to generate expected answers
-        # with open('foo.txt', 'a') as fp:
-        #     fp.write('%f\n' % model((), self.xy_test))
-
-        pytest.approx(model((), self.xy_test), next(self.expected))
-
-    def test_call2(self, model):
-        # model call
-        pytest.approx(model((), self.xy_test2), next(self.expected2))
-
-    @pytest.mark.skip
-    @pytest.mark.mpl_image_compare(baseline_dir='images',
-                                   remove_text=True)
-    def test_plot(self, model):
-        # print('running test_plot')
-        im = model.plot(sliders=False, hist=False)
-        # im.ax.plot(*self.xy_test, 'mx')
-        # im.figure.savefig(f'{next(counter)}.png')
-        return im.figure
-
-# TODO: testGMM - check always integrates to 1
-
-
-@pytest.fixture
-def cpd(xy, sigmas, amplitudes):
-    # this actually already tests the initialization, but it's basically
-    # impossible to re-use the model created in a test :(
-    weights = amplitudes / np.sum(amplitudes)
-    return CoherentPointDrift(xy, sigmas, weights)
-
-# @pytest.mark.skip
-
-
-class TestCoherentPointDrift:
-    @classmethod
-    def setup_class(cls):
-        cls.model = CoherentPointDrift(((5, 10), (5, 6), (8, 2)),
-                                       2.5)
-
-    # @pytest.mark.skip
-    def test_transform(self):
-        xy = np.random.rand(5, 2)
-        assert xy == pytest.approx(self.model.transform(xy, (0, 0, 0)))
-
-        self.model.fit_rotation = False
-        assert xy + 1 == pytest.approx(self.model.transform(xy, (1, 1)))
-
-    # @pytest.mark.skip
-    def test_fit_translate(self, cpd):
-        cpd.fit_rotation = False
-        off = (0.5, 0.5)
-        r = cpd.fit(cpd.gmm.xy + off)
-        assert pytest.approx(off, 0.01) == -r
-
-    def test_fit(self, cpd):
-        cpd.fit_rotation = True
-        θ = np.pi / 12
-        off = (0.5, 0.5)
-
-        xy = rigid(cpd.gmm.xy, np.hstack([off, θ]))
-        r = cpd.fit(xy)
-
-        assert pytest.approx(r, 0.01) == np.hstack([-rotate(off, -θ), -θ])
+images = load_test_data('images.npz')
+fovs = load_test_data('fovs.npz')
 
 
 # @pytest.fixture
@@ -203,10 +39,6 @@ class TestCoherentPointDrift:
 #     return load_test_data('fovs.npz')
 
 
-images = load_test_data('images.npz')
-fovs = load_test_data('fovs.npz')
-
-
 @pytest.fixture
 def skyimage(data, fov):
     return SkyImage(data, fov)
@@ -216,15 +48,21 @@ def skyimage(data, fov):
 def skyimage0():
     return SkyImage(images[0], fovs[0])
 
-
-@pytest.mark.skip
-class TestSkyImage():
+class TestImage:
     def test_init(self):
-        img = np.random.randn(10, 10)
-        SkyImage(img, (1, 1))
+        data = np.random.randn(10, 10)
+        img = Image(data)
+        assert (img.data == data).all()
 
+# @pytest.mark.skip
+class TestSkyImage:
+    def test_init(self):
+        data = np.random.randn(10, 10)
+        img = SkyImage(data, (1, 1))
+        assert (img.data == data).all()
+        
         with pytest.raises(ValueError):
-            SkyImage(img)
+            SkyImage(data)
 
     def test_detect(self, skyimage0):
         skyimage0.detect()
@@ -241,7 +79,7 @@ class TestSkyImage():
 # @pytest.mark.incremental
 
 
-@pytest.mark.skip
+# @pytest.mark.skip
 class TestImageRegister:
 
     def test_init(self):
@@ -266,8 +104,8 @@ class TestImageRegister:
         reg = ImageRegister(images, fovs, np.zeros(len(fovs, 3)))
 
         # test vectorized item attribute lookup
-        assert reg.fovs == approx(fovs)
-        assert reg.scales == approx(fovs / reg.attrs('data.shapes'))
+        assert reg.fovs == pytest.approx(fovs)
+        assert reg.scales == pytest.approx(fovs / reg.attrs('data.shapes'))
 
     @pytest.mark.parametrize('data, fov', zip(images, fovs), indirect=True)
     def test_no_rotation(self, skyimage):
@@ -289,7 +127,7 @@ class TestImageRegister:
 
 # #mos = reg.mosaic(alpha=0.3)
 
-# # dss = ImageRegistrationDSS('CTCV J1928-5001', (4.25, 4.25))
+# # dss = ImageRegisterDSS('CTCV J1928-5001', (4.25, 4.25))
 
 # p = reg(slot_image, slot_fov, slot_pa)
 
@@ -365,7 +203,7 @@ class TestImageRegister:
 #     a = scales.argmin(0)[0]
 # others = set(range(n)) - {a}
 
-# matcher = ImageRegistrationDSS(I[a], FoV[a])
+# matcher = ImageRegisterDSS(I[a], FoV[a])
 # self = matcher
 # for i in others:
 #     print(i)
