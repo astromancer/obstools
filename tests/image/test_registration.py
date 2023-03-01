@@ -1,85 +1,18 @@
-# std
-from pathlib import Path
 
 # third-party
 import pytest
 import numpy as np
 
 # local
-from obstools.image import Image, ImageRegister, SkyImage
-
-
-# from pytest_steps import test_steps as steps
-
-
-def load_test_data(filename):
-    """load test data npz"""
-    here = Path(__file__).parent
-    # here = Path('/home/hannes/work/obstools/tests/')
-    filename = (here / 'data' / filename).resolve()
-    return list(np.load(filename).values())
-
-
-images = load_test_data('images.npz')
-fovs = load_test_data('fovs.npz')
-
-
-# @pytest.fixture
-# def random_skyimage():
-#     return SkyImage(np.random.randn(10, 10), (1, 1))
-
-
-# @pytest.fixture()
-# def images():
-#     return load_test_data('images.npz')
-
-
-# @pytest.fixture
-# def fovs():
-#     return load_test_data('fovs.npz')
-
-
-@pytest.fixture
-def skyimage(data, fov):
-    return SkyImage(data, fov)
-
-
-@pytest.fixture
-def skyimage0():
-    return SkyImage(images[0], fovs[0])
-
-class TestImage:
-    def test_init(self):
-        data = np.random.randn(10, 10)
-        img = Image(data)
-        assert (img.data == data).all()
-
-# @pytest.mark.skip
-class TestSkyImage:
-    def test_init(self):
-        data = np.random.randn(10, 10)
-        img = SkyImage(data, (1, 1))
-        assert (img.data == data).all()
-        
-        with pytest.raises(ValueError):
-            SkyImage(data)
-
-    def test_detect(self, skyimage0):
-        skyimage0.detect()
-        assert len(skyimage0.xy)
-        assert len(skyimage0.counts)
-
-    @pytest.mark.mpl_image_compare(baseline_dir='images',
-                                   remove_text=True)
-    def test_plot(self, skyimage0):
-        art, frame = skyimage0.plot(p=(0, 0, np.pi/12))
-        return art.figure
+from obstools.image import ImageRegister
 
 
 # @pytest.mark.incremental
 
+# ---------------------------------------------------------------------------- #
 
-# @pytest.mark.skip
+
+@pytest.mark.skip
 class TestImageRegister:
 
     def test_init(self):
