@@ -1,3 +1,4 @@
 
-from .image import SkyImage
+from .image import *
+from .registration import ImageRegister
 from .segmentation import SegmentedImage

@@ -20,8 +20,9 @@ from pyxides.getitem import IndexerMixin
 from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.pprint import qualname
+from recipes.oo.repr_ import ReprHelper
 from recipes.utils import duplicate_if_scalar
-from recipes.dicts import pformat, AttrDict as ArtistContainer
+from recipes.dicts import AttrDict as ArtistContainer
 
 # relative
 from .detect import SourceDetectionMixin
@@ -59,18 +60,22 @@ def isdict(obj):
     return isinstance(obj, dict)
 
 
-def get_attrs(obj, keys):
-    return {key: getattr(obj, key) for key in keys}
-
-
-class Image(SelfAware):
+class Image(SelfAware, ReprHelper):
     """
-    A simple image class
+    A simple image class.
     """
 
-    _repr_keys = ('shape', )
+    # ------------------------------------------------------------------------ #
+    __slots__ = ('data', 'meta', 'art')
 
-    def __init__(self, data):
+    _repr_style = dict(ReprHelper._repr_style,
+                       attrs=['shape'],
+                       maybe=['meta'],
+                       brackets='<>',
+                       hang=True)
+
+    # ------------------------------------------------------------------------ #
+    def __init__(self, data, **kws):
         """
         Create a Image
 
@@ -78,27 +83,29 @@ class Image(SelfAware):
         ----------
         data : array-like
             The image data as a 2d
-
         """
 
         # data array
         self.data = np.asanyarray(data)
+        # meta data
+        self.meta = kws
         # artists
         self.art = ArtistContainer(image=None, frame=None)
-
-    def __repr__(self):
-        return pformat(get_attrs(self, self._repr_keys),
-                       self.__class__.__name__, lhs=str,
-                       brackets='<>',
-                       hang=True)
 
     def __getstate__(self):
         # remove artists that can't be pickled
         return {**self.__dict__, 'art': ArtistContainer(image=None, frame=None)}
 
-    def copy(self):
-        return copy(self)
+    def __array__(self):
+        return self.data
 
+    def copy(self):
+        new = self.__class__(self.data, **self.meta)
+        for attr in self.__slots__:
+            setattr(new, attr, getattr(self, attr))
+        return new
+
+    # ------------------------------------------------------------------------ #
     @property
     def shape(self):
         return self.data.shape
@@ -114,9 +121,7 @@ class Image(SelfAware):
         """
         return self.transform.transform(UNIT_CORNERS * self.shape - 0.5)
 
-    def __array__(self):
-        return self.data
-
+    # ------------------------------------------------------------------------ #
     def show(self, image=True, frame=True, set_lims=True, **kws):
         #  ,
         """
@@ -140,7 +145,7 @@ class Image(SelfAware):
                                                **frame_kws)
             if (ax := kws.get('ax', ax)) is None:
                 raise TypeError('`ax` keyword required')
-                
+
             ax.add_patch(frame)
 
         return self.art
@@ -157,10 +162,15 @@ class Image(SelfAware):
 
 class TransformedImage(Image):
 
-    _repr_keys = ('shape', 'scale', 'origin', 'angle')
+    # ------------------------------------------------------------------------ #
+    __slots__ = ()
 
+    _repr_style = dict(Image._repr_style,
+                       attrs=('shape', 'scale', 'origin', 'angle'))
+
+    # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
-    def __init__(self, data, origin=(0, 0), angle=0, scale=1):
+    def __init__(self, data, origin=(0, 0), angle=0, scale=1, **kws):
         """
         A translated, scaled, rotated image.
 
@@ -181,12 +191,13 @@ class TransformedImage(Image):
             If both `fov` and `scale` are None
 
         """
-        super().__init__(data)
+        super().__init__(data, **kws)
         self.origin = origin
         self.angle = angle
         self.scale = scale
         """scale in data units per pixel for required coordinate system"""
 
+    # ------------------------------------------------------------------------ #
     @property
     def angle(self):
         return self._angle
@@ -255,7 +266,6 @@ class TransformedImage(Image):
             ax.set(xlim=xlim, ylim=ylim)
 
         return art
-    
 
 
 class SkyImage(TransformedImage, SourceDetectionMixin):
@@ -264,14 +274,16 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
     associated meta data like pixel scale and pixel map of detected sources,
     their coordinates and integrated counts.
     """
+
+    __slots__ = ('seg', 'xy', 'counts')
+
+    # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
-
     # filename = None
-
     @classmethod
     # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
     def from_hdu(cls, hdu, sample_stat='median', depth=5, interval=...,
-                 report=True, **kws):
+                 report=False, **kws):
         """
         Construct a SkyImage from an HDU by first drawing a sample image, then
         running the source detection algorithm on it.
@@ -311,15 +323,16 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         image = hdu.get_sample_image(sample_stat, depth, interval)
 
         # TODO: if wcs is defined, use that as default
-        return cls(image, hdu.fov, angle=hdu.pa, segmentation=seg)
+        return cls(image, hdu.fov, angle=hdu.pa, segments=seg, **dict(hdu.header))
 
     @classmethod
     def from_image(cls, image, fov=None, scale=None, **kws):
         return cls(image, fov, scale=scale,
-                   segmentation=super().from_image(image, **kws))
+                   segments=super().from_image(image, **kws))
 
+    # ------------------------------------------------------------------------ #
     def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=None,
-                 segmentation=None):
+                 segments=None, **kws):
         """
         Create and SkyImage object with a know size on sky.
 
@@ -347,10 +360,10 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             scale = fov / data.shape
 
         # init
-        TransformedImage.__init__(self, data, origin, angle, scale)
+        TransformedImage.__init__(self, data, origin, angle, scale, **kws)
 
         # segmentation data
-        self.seg = segmentation     # : SegmentedArray or None
+        self.seg = segments     # : SegmentedArray or None
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels
         self.counts = None  # : np.ndarray: pixel sums for segmentation
 
@@ -363,6 +376,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         """Field of view"""
         return self.shape * self.scale
 
+    # ------------------------------------------------------------------------ #
     def detect(self, snr=3, **kws):  # max_iter=1,
 
         if self.seg is None:
@@ -426,8 +440,9 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
     plot = show
 
-    def add_label(self, ax, name='', **kws):
-        return ax.text(*self.corners[-1], name,
+    def add_label(self, ax, name=None, **kws):
+        return ax.text(*self.corners[-1],
+                       (self.meta.get('name', '') if name is None else name),
                        rotation=np.degrees(self.angle), rotation_mode='anchor',
                        va='top', **kws)
 
