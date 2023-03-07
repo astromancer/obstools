@@ -1,6 +1,7 @@
 
 
 # std
+import operator as op
 import functools as ftl
 from collections import defaultdict
 
@@ -12,14 +13,16 @@ from photutils import detect_sources, detect_threshold
 
 # local
 import recipes.pprint as pp
-from recipes import string, caching
+from recipes import caching, string
 from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
 from recipes.oo.property import classproperty
 from motley.table import Table
+from recipes.dicts import AttrReadItem
 
 # relative
 from ..modelling import UnconvergedOptimization
+
 
 # TODO: watershed segmentation on the negative image ?
 # TODO: detect_gmm():
@@ -29,11 +32,21 @@ from ..modelling import UnconvergedOptimization
 DEFAULT_ALGORITHM = 'sigma_threshold'
 NPIXELS = 7
 EDGE_CUTOFF = None
+EDGE_FRACTION = 0.5  # maximum fractional area of source inside border region
 MONOLITHIC = True
 ROUNDNESS = (0.5, 1.5)
 DILATE = 0
 DEBLEND = False
 
+# MultiThreshold parameter defaults
+MULTI_THRESH_DEFAULTS = AttrReadItem(
+    snr=(10, 7, 5, 3),
+    npixels=(7, 5, 3),
+    deblend=(True, False),
+    dilate='auto',
+    edge_cutoff=None,
+    max_iter=5
+)
 # ---------------------------------------------------------------------------- #
 
 
@@ -70,16 +83,17 @@ class DetectionBase(LoggingMixin):
     """Base class for source detection."""
 
     members = {}
-    owner = None
+    # read only class attribute. Maps algorithm names to subclasses.
+
+    # __slots__ = ('owner', 'params')
     # `SourceDetectionDescriptor.__set_name__` assigns the descriptor owner here
 
     @classproperty
     @classmethod
     def name(cls):
         name = cls.__name__
-        if any(map(str.islower, name)):
-            return string.snake_case(name)
-        return name.lower()
+        return (string.snake_case(name) if any(map(str.islower, name))
+                else name.lower())
 
     @classmethod
     def resolve(cls, algorithm):
@@ -106,6 +120,10 @@ class DetectionBase(LoggingMixin):
             kls = self.owner
         return kls
 
+    def __init__(self):
+        self.owner = None
+        self.params = {}
+
     def detect(self, image, mask=None, *args, report=False, **kws):
 
         seg = self.__call__(image, mask, *args, **kws)
@@ -116,14 +134,14 @@ class DetectionBase(LoggingMixin):
             self.report(image, seg, **report)
 
         return seg
+    
+    def _get_hash_key(self):
+        return self.name, tuple(self.params.items())
 
-    @caching.cached(typed={'image': caching.hashers.array,
+    @caching.cached(typed={'self': _get_hash_key,
+                           'image': caching.hashers.array,
                            'mask': caching.hashers.array})
-    def __call__(self, image, mask=None,
-                 npixels=NPIXELS, edge_cutoff=EDGE_CUTOFF,
-                 monolithic=MONOLITHIC, roundness=ROUNDNESS,
-                 dilate=DILATE, deblend=DEBLEND,
-                 **kws):
+    def __call__(self, image, mask=None, **kws):
         """
         Image object detection that returns a `SegmentedImage` instance. Post
         processing to remove sources that do not meet criteria (`npixels`,
@@ -135,7 +153,8 @@ class DetectionBase(LoggingMixin):
         ----------
         image
         mask
-        dilate
+        *args
+        **kws
 
 
         Returns
@@ -144,35 +163,43 @@ class DetectionBase(LoggingMixin):
         """
 
         # self.logger.debug('Running source detection algorithm: {!r} {}', )
+        code = self.post_process.__code__
+        post = {key: kws.pop(key) for key in code.co_varnames[3:code.co_argcount]
+                if key in kws}
 
         # Initialize
-        seg_data = self.fit_predict(image, mask, npixels=npixels, **kws)
-        return self.post_process(image, seg_data, npixels, edge_cutoff,
-                                 monolithic, roundness, dilate, deblend)
+        seg_data = self.fit_predict(image, mask, **kws)
+        return self.post_process(image, seg_data, **post)
 
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
-    def post_process(self, image, seg_data,
-                     npixels=NPIXELS, edge_cutoff=EDGE_CUTOFF,
+    def post_process(self, image, seg_data, npixels=NPIXELS,
+                     edge_cutoff=EDGE_CUTOFF, edge_fraction=EDGE_FRACTION,
                      monolithic=MONOLITHIC, roundness=ROUNDNESS,
                      dilate=DILATE, deblend=DEBLEND):
-        self.logger.info('Post-processing detected sources with criteria: {}',
-                         dict(npixels=npixels,
-                              edge_cutoff=edge_cutoff,
-                              monolithic=monolithic,
-                              roundness=roundness,
-                              dilate=dilate,
-                              deblend=deblend))
+        #
+        self.logger.info('Post-processing detected sources with criteria:\n{}',
+                         pp.pformat(locals(), ignore=('self', 'image', 'seg_data')))
 
+        #
         kls = self._get_owner()
+        seg = kls(seg_data)
 
-        def msg(labels, criterion):
+        def debug_msg(labels, criterion):
             if len(labels):
                 self.logger.opt(depth=1).debug(
                     'Removing {} segments failing {} criterion: {}',
                     len(labels), criterion, labels
                 )
+
+        # dilate
+        if dilate:
+            seg.dilate(iterations=dilate)
+
+        # deblend
+        if deblend:  # and not no_sources:
+            seg = seg.deblend(image, npixels)
 
         #  shape rejection
         if monolithic:
@@ -183,30 +210,27 @@ class DetectionBase(LoggingMixin):
 
             remove_labels = set(seg_data[filled & ~mask]).union(
                 seg.labels[seg.areas < npixels])
-            msg(remove_labels, 'monolithic')
+            debug_msg(remove_labels, 'monolithic')
             seg.remove_labels(list(remove_labels))
-        else:
-            seg = kls(seg_data)
 
         if edge_cutoff:
             border = make_border_mask(image, edge_cutoff)
-            msg(np.unique(seg.data[border]), 'edge cutoff')
-            seg.remove_masked_labels(border)
+            remove, n_border_pixels = np.unique(seg.data[border], return_counts=True)
+            if 0 in remove:
+                remove, n_border_pixels = remove[1:], n_border_pixels[1:]
 
-        if deblend:  # and not no_sources:
-            seg = seg.deblend(image, npixels)
+            bad = (n_border_pixels / seg.areas[remove - 1]) > edge_fraction
+            remove = remove[bad]
+            debug_msg(remove, 'edge cutoff')
+            seg.remove_labels(remove)
 
         # shape rejection 2
         if roundness:
             lo, hi = roundness
             r = seg.roundness
             remove_labels = seg.labels[(lo > r) | (r >= hi)]
-            msg(remove_labels, 'roundness')
+            debug_msg(remove_labels, 'roundness')
             seg.remove_labels(remove_labels)
-
-        # dilate
-        if dilate:
-            seg.dilate(iterations=dilate)
 
         # cleanup
         if seg.nlabels:
@@ -280,8 +304,12 @@ class SigmaThreshold(DetectionBase):
 
 
 class GMM(DetectionBase):
+
+    # __slots__ = ('gmm', )
+
     def __init__(self, n_components=5, **kws):
         self.gmm = GaussianMixture(n_components, **kws)
+        self.params = dict(n_components=n_components, **kws)
 
     def fit_predict(self, image, mask=None):
         """
@@ -339,16 +367,16 @@ class GMM(DetectionBase):
 
 
 class _BackgroundFitter(DetectionBase):
-    """Source detection with optional background model"""
+    """Source detection with optional background model."""
 
-    opt_kws = {}  # default
+    # __slots__ = ('model', 'result', 'residual', 'gof')
 
     def __init__(self, algorithm, model=None):
         super().__init__(algorithm)
         self.model = model
         self.result = self.residual = self.gof = None
 
-    def __call__(self, image, mask=False, opt_kws=opt_kws, **kws):
+    def __call__(self, image, mask=False, opt_kws=(), **kws):
         # detect on residual image. Only previously undetected sources will
         # be present here
         self.residual = image
@@ -367,7 +395,7 @@ class _BackgroundFitter(DetectionBase):
         mimage = np.ma.MaskedArray(image, mask)
         # result = residual = gof = None
         try:
-            self.result = self.model.fit(mimage, **opt_kws)
+            self.result = self.model.fit(mimage, **(opt_kws or {}))
         except UnconvergedOptimization:
             self.logger.info('Model optimization unsuccessful. Breaking loop.')
         else:
@@ -381,6 +409,8 @@ class _SourceAggregator(DetectionBase):
     """
     Aggregate info from multiple detection loops
     """
+
+    # __slots__ = ('count', 'seg')
 
     def __init__(self, algorithm, model=None):
         self.count = 0
@@ -405,6 +435,9 @@ class _SourceAggregator(DetectionBase):
 
 
 class _ResultsAggregator(_SourceAggregator, _BackgroundFitter):
+
+    # __slots__ = ('info', 'fitness')
+
     def __init__(self, algorithm, model=None):
         super().__init__(algorithm, model)
         self.info = defaultdict(list)
@@ -431,10 +464,13 @@ class _ResultsAggregator(_SourceAggregator, _BackgroundFitter):
 
 class _SourceDetectionLoop(_ResultsAggregator):
 
+    # __slots__ = ('max_iter', )
+
     def __init__(self, algorithm, model=None, *args, max_iter=1, **kws):
         super().__init__(algorithm, model, *args, **kws)
         self.max_iter = max_iter
-        self.params = self.iter_params(**kws)
+        self.params = dict(**kws, max_iter=max_iter)
+        self._params = self.iter_params(**kws)
 
     def __call__(self, image, mask=False, max_iter=None, *args, **kws):
 
@@ -459,7 +495,7 @@ class _SourceDetectionLoop(_ResultsAggregator):
             raise StopIteration
 
         # detect new
-        params = next(self.params)
+        params = next(self._params)
         new_segs = super().__call__(self.image, self.mask, **params)
 
         if not new_segs.nlabels:
@@ -484,9 +520,8 @@ class _SourceDetectionLoop(_ResultsAggregator):
 
         # report detections here
         col_headers = list(self.info.keys())
-        info_list = list(self.info.values())
         tbl = np.column_stack([
-            np.array(info_list, 'O'),
+            np.array(list(self.info.values()), 'O'),
             list(map(len, self.seg.groups)),
             list(map(ftl.partial(pp.collection, max_items=3), self.seg.groups))
         ])
@@ -522,23 +557,18 @@ class MultiThreshold(_SourceDetectionLoop):
     optimization parameters can be controlled by passing `opt_kws` dict.
     """
 
-    # Parameter defaults
-    snr = (10, 7, 5, 3)
-    npixels = (7, 5, 3)
-    deblend = (True, False)
-    dilate = 'auto'
-    edge_cutoff = None
-    max_iter = 5
-
     # group labels
     # auto_key_template = 'sources{count}'
 
-    def __init__(self, max_iter=max_iter, model=None):
+    def __init__(self, max_iter=MULTI_THRESH_DEFAULTS.max_iter, model=None):
         super().__init__('sigma_threshold', model, max_iter)
 
     def __call__(self, image, mask=False,
-                 snr=snr, npixels=npixels, deblend=deblend, dilate=dilate,
-                 edge_cutoff=edge_cutoff):
+                 snr=MULTI_THRESH_DEFAULTS.snr,
+                 npixels=MULTI_THRESH_DEFAULTS.npixels,
+                 deblend=MULTI_THRESH_DEFAULTS.deblend,
+                 dilate=MULTI_THRESH_DEFAULTS.dilate,
+                 edge_cutoff=MULTI_THRESH_DEFAULTS.edge_cutoff):
         """
 
         Parameters
@@ -599,7 +629,8 @@ class SourceDetectionDescriptor:
         return f'{self.__class__.__name__}({self.algorithm})'
 
     def __set_name__(self, owner, name):
-        # set the class th
+        # set the class that uses this descriptor as `owner` attribute on
+        # instance of the detection algorithm
         # self.logger.debug('Assigned ownership of {!r} detection algorithm to {}.',
         #                   self.algoritm, owner)
         self._algorithm.owner = owner
