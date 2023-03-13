@@ -4,8 +4,8 @@ Image and image container classes
 
 
 # std
+import pickle
 import warnings
-from copy import copy
 
 # third-party
 import numpy as np
@@ -19,14 +19,16 @@ from pyxides import ListOf
 from pyxides.getitem import IndexerMixin
 from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
-from recipes.pprint import qualname
-from recipes.oo.repr_ import ReprHelper
+from recipes.oo.slots import SlotHelper
+from recipes.oo.repr_helpers import qualname
 from recipes.utils import duplicate_if_scalar
 from recipes.dicts import AttrDict as ArtistContainer
 
 # relative
 from .detect import SourceDetectionMixin
 
+
+# ---------------------------------------------------------------------------- #
 
 UNIT_CORNERS = np.array([[0., 0.],
                          [1., 0.],
@@ -55,12 +57,14 @@ TEXT_STYLE = dict(size='xx-small',
                   weight='heavy',
                   offset=5)
 
+# ---------------------------------------------------------------------------- #
+
 
 def isdict(obj):
     return isinstance(obj, dict)
 
 
-class Image(SelfAware, ReprHelper):
+class Image(SelfAware, SlotHelper):  # AliasManager
     """
     A simple image class.
     """
@@ -68,11 +72,11 @@ class Image(SelfAware, ReprHelper):
     # ------------------------------------------------------------------------ #
     __slots__ = ('data', 'meta', 'art')
 
-    _repr_style = dict(ReprHelper._repr_style,
+    _repr_style = dict(SlotHelper._repr_style,
                        attrs=['shape'],
-                       maybe=['meta'],
-                       brackets='<>',
-                       hang=True)
+                       maybe=['meta'],)
+    #    brackets='<>',
+    #    hang=True)
 
     # ------------------------------------------------------------------------ #
     def __init__(self, data, **kws):
@@ -94,18 +98,17 @@ class Image(SelfAware, ReprHelper):
 
     def __getstate__(self):
         # remove artists that can't be pickled
-        return {**self.__dict__, 'art': ArtistContainer(image=None, frame=None)}
+        return {**super().__getstate__(),
+                'art': ArtistContainer(image=None, frame=None)}
 
     def __array__(self):
         return self.data
 
-    def copy(self):
-        new = self.__class__(self.data, **self.meta)
-        for attr in self.__slots__:
-            setattr(new, attr, getattr(self, attr))
-        return new
+    def copy(self,):
+        return pickle.loads(pickle.dumps(self))
 
     # ------------------------------------------------------------------------ #
+
     @property
     def shape(self):
         return self.data.shape
@@ -122,6 +125,7 @@ class Image(SelfAware, ReprHelper):
         return self.transform.transform(UNIT_CORNERS * self.shape - 0.5)
 
     # ------------------------------------------------------------------------ #
+    # @alias('plot')
     def show(self, image=True, frame=True, set_lims=True, **kws):
         #  ,
         """
@@ -150,6 +154,9 @@ class Image(SelfAware, ReprHelper):
 
         return self.art
 
+    # alias
+    plot = show
+
     # @lazyproperty
     # def grid(self):
     #     return np.indices(self.data.shape)
@@ -163,7 +170,7 @@ class Image(SelfAware, ReprHelper):
 class TransformedImage(Image):
 
     # ------------------------------------------------------------------------ #
-    __slots__ = ()
+    __slots__ = ('_origin', '_angle', '_scale')
 
     _repr_style = dict(Image._repr_style,
                        attrs=('shape', 'scale', 'origin', 'angle'))
@@ -267,6 +274,9 @@ class TransformedImage(Image):
 
         return art
 
+    # alias
+    plot = show
+
 
 class SkyImage(TransformedImage, SourceDetectionMixin):
     """
@@ -277,9 +287,13 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
     __slots__ = ('seg', 'xy', 'counts')
 
+    _repr_style = dict(TransformedImage._repr_style,
+                       maybe=())
+
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
     # filename = None
+
     @classmethod
     # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
     def from_hdu(cls, hdu, sample_stat='median', depth=5, interval=...,
@@ -357,7 +371,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
 
         if scale is None:
             fov = np.array(duplicate_if_scalar(fov))
-            scale = fov / data.shape
+            scale = fov / np.shape(data)
 
         # init
         TransformedImage.__init__(self, data, origin, angle, scale, **kws)
@@ -438,6 +452,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
             )
         return art
 
+    # alias
     plot = show
 
     def add_label(self, ax, name=None, **kws):

@@ -49,3 +49,13 @@ class TestSkyImage:
                           scale=array([0.01007813, 0.01007813]),
                           origin=array([0., 0.]),
                           angle=0.0)>'''))
+        
+    def test_copy(self, skyimage0):
+        
+        
+        clone = skyimage0.copy()
+        
+        # from IPython import embed
+        # embed(header="Embedded interpreter at 'tests/image/test_image.py':57")
+        
+        assert skyimage0 == clone
