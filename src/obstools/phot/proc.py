@@ -230,7 +230,7 @@ class ApertureOptimizer:
         self.rmax = rmax
 
     def __str__(self):
-        return '%s\n%s\n%s' % (self.__class__.__name__, self.ap, self.ap_sky)
+        return '\n'.join((self.__class__.__name__, self.ap, self.ap_sky))
 
     def __iter__(self):
         yield from (self.ap, self.ap_sky)
@@ -477,7 +477,7 @@ class FrameProcessor(LoggingMixin):
             count += 1
 
             self.logger.debug('Attempting optimized aperture photometry for '
-                              'group %i (%s): %s', g, name, tuple(labels))
+                              'group {} ({}): {}', g, name, tuple(labels))
             # print(g, labels, ix, photmasks.shape)
 
             # indices corresponding to labels (labels may not be sequential)
@@ -607,7 +607,7 @@ class FrameProcessor(LoggingMixin):
         if low_snr.all():
             # skip opt
             self.logger.debug('Skipping optimization: frame {:s}. low SNR for '
-                              'stars %s', i, labels)
+                              'stars {}', i, labels)
             return None, opt, -2
 
         # remove low snr stars
@@ -635,11 +635,11 @@ class FrameProcessor(LoggingMixin):
             self.logger.warning(
                 'Optimization failed: frame {:s}, labels {:s}\n{:s}',
                 i, labels, r.message
-                )
+            )
             flag = -1
         elif np.any(r.x == opt.bounds):
             self.logger.warning('Optimization converged on boundary:'
-                                ' frame %s, labels %s', i, labels)
+                                ' frame {}, labels {}', i, labels)
             flag = 0
         else:
             flag = 1
@@ -731,7 +731,7 @@ class FrameProcessor(LoggingMixin):
             # TODO: kill this for loop
             ix, mdl, msg = mdlr.model_selection(g)
             if msg:
-                self.logger.warning('%s (Frame %i, Star %i)', msg, i, j)
+                self.logger.warning('{} (Frame {}, Star {})', msg, i, j)
 
             if ix == -99:
                 p = pu = None
@@ -887,7 +887,7 @@ class FrameProcessor(LoggingMixin):
 #         for j, g in enumerate(gof.swapaxes(0, 1)):  # zip(pars, paru, gof)
 #             ix, mdl, msg = self.modeller.model_selection(g)
 #             if msg:
-#                 self.logger.warning('%s (Frame %i, Star %i)', (msg, i, j))
+#                 self.logger.warning('{} (Frame {}, Star {})', (msg, i, j))
 #
 #             if ix is not None:
 #                 self.logger.info('Best model: {:s} (Frame {:d}, Star {:d})' % (mdl, i, j))

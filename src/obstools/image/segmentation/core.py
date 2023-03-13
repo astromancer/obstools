@@ -1275,11 +1275,11 @@ class SegmentedImage(SegmentationImage,     # base
 
         for label, section in itr:
             # NOTE this propagates values that are `None` in `arrays` tuple
-            cutouts = (_2d_slicer(_, section, 
+            cutouts = (_2d_slicer(_, section,
                                   masks[label] if flag else None,
                                   compress)
                        for _, flag in zip(arrays, flags))
-            
+
             yield yielder(label, section, unpack, cutouts)
 
     # alias

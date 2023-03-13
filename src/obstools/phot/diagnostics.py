@@ -813,8 +813,8 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 
 # @timer
 def plot_lc_aps(apdata, labels):
-    # from mpl_multitab import MplMultiTab
-    ##ui = MplMultiTab()
+    # from mpl_multitab import MplTabs
+    ##ui = MplTabs()
     figs = []
 
     with mp.Pool() as pool:
@@ -1056,5 +1056,5 @@ if __name__ == '__main__':
     nlabels = [f.parent.name for f in qfiles]
     wlabels = ['Queues', 'Performance']
 
-    ui = MplMultiTab2D(figures=[qfigs, monfigs], labels=[wlabels, nlabels])
+    ui = MplMultiTab(figures=[qfigs, monfigs], labels=[wlabels, nlabels])
     ui.show()

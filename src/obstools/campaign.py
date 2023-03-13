@@ -54,6 +54,9 @@ from .image.calibration import ImageCalibratorMixin
 SAMPLE_STAT = 'median'
 DEPTH = 5
 
+DETECT_REPORT_STYLE = {'title_props': ('B', '_'),
+                       'extend': 2}
+
 
 # ---------------------------------------------------------------------------- #
 get_msg = op.attrgetter('message')
@@ -167,12 +170,13 @@ class ImageHDU(PrimaryHDU,
         """
         # NOTE: `get_sample_image` and `detection` are both cached for performance
         image = self.get_sample_image(stat, depth, interval)
+
         if report is True:
-            report = dict(title=self.file.name,
-                          title_props=('B', '_'),
-                          extend=2)
-        return self.detection(image, **kws,
-                              report=report)
+            report = DETECT_REPORT_STYLE
+        if report:
+            report = {**report, 'title': self.file.name}
+
+        return self.detection(image, **kws, report=report)
 
     @property
     def file(self):
@@ -624,7 +628,7 @@ class PhotCampaign(PPrintContainer,
         # register constellation of stars by fitting clusters to center-of-mass
         # measurements. Refine the fit, by ...
         reg.register(plot=plot)
-        
+
         # refine alignment
         # refine = 5
         for _ in range(5):
@@ -634,7 +638,7 @@ class PhotCampaign(PPrintContainer,
                 break
 
             reg.recentre()
-        
+
         # reg.refine(plot=plot)
         # reg.recentre(plot=plot)
         return reg
