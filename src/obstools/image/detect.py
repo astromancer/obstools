@@ -134,7 +134,7 @@ class DetectionBase(LoggingMixin):
             self.report(image, seg, **report)
 
         return seg
-    
+
     def _get_hash_key(self):
         return self.name, tuple(self.params.items())
 
@@ -201,7 +201,7 @@ class DetectionBase(LoggingMixin):
         if deblend:  # and not no_sources:
             seg = seg.deblend(image, npixels)
 
-        #  shape rejection
+        # shape rejection
         if monolithic:
             mask = seg_data.astype(bool)
             filled = ndimage.binary_fill_holes(mask)
@@ -213,13 +213,15 @@ class DetectionBase(LoggingMixin):
             debug_msg(remove_labels, 'monolithic')
             seg.remove_labels(list(remove_labels))
 
+        # edge rejection
         if edge_cutoff:
             border = make_border_mask(image, edge_cutoff)
             remove, n_border_pixels = np.unique(seg.data[border], return_counts=True)
             if 0 in remove:
                 remove, n_border_pixels = remove[1:], n_border_pixels[1:]
 
-            bad = (n_border_pixels / seg.areas[remove - 1]) > edge_fraction
+            w = np.any(seg.labels == remove[None].T, 0)
+            bad = (n_border_pixels / seg.areas[w]) > edge_fraction
             remove = remove[bad]
             debug_msg(remove, 'edge cutoff')
             seg.remove_labels(remove)
