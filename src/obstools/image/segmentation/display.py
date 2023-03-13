@@ -332,7 +332,7 @@ class ConsoleFormatter:
         im = self.format(label, frame, origin)
         print(im)
         return im
-    
+
     # alias
     console = __call__
 
@@ -343,7 +343,7 @@ class ConsoleFormatter:
 
         from matplotlib.pyplot import get_cmap
         return get_cmap(cmap)
-    
+
     def format(self, label=True, frame=True, origin=0, cmap=None):
 
         # colour map
@@ -370,7 +370,7 @@ class ConsoleFormatter:
         return im
 
     def cutouts(self, image, labels=None, extend=1,
-                cmap=None, contour_color=('r', 'B'),
+                cmap=None, contour=('r', 'B'),
                 **kws):
         """
         Cutout image thumbnails displayed as a grid in terminal.
@@ -386,129 +386,61 @@ class ConsoleFormatter:
             sides of the segment.
         cmap : str, optional
             Colour map, by default 'cmr.voltage_r'.
-        contour_color : str, optional
+        contour : str, optional
             Colour for the overlaid contour, by default 'r'.
 
         """
-        ims = self.format_cutouts(image, labels, extend, cmap, contour_color, **kws)
+        ims = self.format_cutouts(image, labels, extend, cmap, contour, **kws)
         print(ims)
         return ims
 
     def format_cutouts(self, image, labels=..., extend=1,
-                       cmap=None, contour_color=('r', 'B'),
+                       cmap=None, contour=('r', 'B'),
                        statistics=(), **kws):
+        """
+        Cutout image thumbnails displayed as a grid in terminal. Optional binary
+        contours overlaid.
 
-        labels, sections, cutouts = zip(
-            *self.seg.cutouts(image,
+        Parameters
+        ----------
+        image : np.ndarray
+            Image array with sources to display.
+
+        cmap : str, optional
+            Colour map, by default 'cmr.voltage_r'.
+        contour : str, optional
+            Colour for the overlaid contour, by default 'r'.
+
+
+        """
+
+        #     top : int
+        # Number of brightest sources to display images for.
+
+        labels, slices, cutouts = zip(
+            *self.seg.cutouts(image, labels=labels,
                               labelled=True, with_slices=True,
                               extend=extend, masked=True)
         )
-
-        thumbs = []
         cutouts, masks = zip(*((im.data, ~im.mask) for im in cutouts))
-        cutouts = motley.image.thumbnails(cutouts, masks, cmap, contour_color)
-        for (ys, xs), img in zip(sections, cutouts):
-            # Tick labels
-            y0, y1 = ys.start, ys.stop
-            x0, x1 = xs.start, xs.stop
-            xticks = [''] * (x1 - x0 + 1)
-            xticks[::2] = range(x0, x1 + 1, 2)
-            yticks = [''] * (y1 - y0 + 1)
-            yticks[::2] = range(y0, y1 + 1, 2)
-            thumbs.append(
-                img.format(frame='[', xticks=xticks, yticks=yticks)
-            )
+        origins = ((x.start, y.start) for y, x in slices)
 
-        row_headers = None
+        # 
+        info = {}
         if statistics:
-            thumbs = [thumbs]
-            row_headers = ['Image']
             for stat in statistics:
-                header, fmt = STAT_FMT.get(stat, (echo, ''))
+                header, fmt = STAT_FMT.get(stat, ('', echo))
                 result = (func_or_result(image, labels)
                           if callable(func_or_result := getattr(self.seg, stat))
                           else func_or_result)
-                thumbs.append(fmt(result))
-                row_headers.append(header)
+                info[header] = fmt(result)
 
-        tbl = motley.table.Table(thumbs,
-                                 col_headers=labels,
-                                 row_headers=row_headers,
-                                 order='c',
-                                 **kws)
-
-        # HACK to fix table rendering space issues with combining characters..
-        # -------------------------------------------------------------------- #
-
-        x = f'{motley.textbox.MAJOR_TICK_TOP}\x1b[0m'
-        s = str(tbl).replace(x, f'{x} ')
-
-        if tbl.ncols < 3:
-            return s
-
-        def _needs_fix(line):
-            i, j = 0, 0
-            while i != -1:
-                i = line.find('⎪', i + 1)
-                if line[i - 2:i].isspace():
-                    yield j
-                j += 1
-
-        def _fix_line(line, needs_fix):
-            j = 0
-            for i, k in enumerate(string.where(line, '⎪')):
-                if i in needs_fix:
-                    yield line[j:k-2]
-                    j = k
-            yield line[j:]
-
-        # s = str(tbl).replace(x, f'{x} ')
-
-        # handle split tables!
-        o = ''
-        for i, s in enumerate(s.split('\n\n')):
-            top, *lines = s.splitlines(keepends=True)
-
-            title = kws.get('title', '') + (motley.table.CONTINUED if i else '')
-            title_line = ''
-            if title:
-                title_line, *lines = lines
-
-            header, ticks, first, *lines = lines
-            needs_fix = list(_needs_fix(first))[bool(statistics):]
-            extra_space = 2 * len(needs_fix)
-            o += top.replace('\x1b[;4m' + ' ' * extra_space, '\x1b[;4m', 1)
-
-            if title and extra_space:
-                title_line = title_line.replace(' ' * extra_space, '', 1)
-
-                # title_props=','.join(kws['title_props'])
-                # old_title = motley.format(
-                #     '{title:{title_align}{width}|{style}}', **kws,
-                #     width=len(title) + extra_space, style=','.join(title_props))
-
-                # space0 = extra_space // 2
-                # space1 = space0 + extra_space % 2
-                # title_line.index(space0)
-                # title_align = kws.get('title_align', '<')
-                # oldtitle = f'{title:{title_align}{len(title) + extra_space}}'
-                # if old_title not in title_line:
-                #     from IPython import embed
-                #     embed(header="Embedded interpreter at 'src/obstools/image/segmentation/display.py':475")
-
-                # title_line = title_line.replace(old_title, title)
-
-            o += ''.join((title_line, *_fix_line(header, needs_fix), ticks))
-            for line in [first, *lines]:
-                o += ''.join(_fix_line(line, needs_fix))
-
-            o += '\n\n'
-
-        return o.rstrip()
+        return motley.image.thumbnails_table(
+            cutouts, masks, labels, origins, cmap, contour, info=info)
 
 
 # def source_thumbnails_terminal(image, seg, top,
-#                                cmap='cmr.voltage_r', contour_color='r',
+#                                cmap='cmr.voltage_r', contour='r',
 #                                title=None,
 #                                label_fmt='{{label:d|B_}: ^{width}}'):
 #     """
@@ -524,7 +456,7 @@ class ConsoleFormatter:
 #         Number of brightest sources to display images for.
 #     image_cmap : str, optional
 #         Colour map, by default 'cmr.voltage_r'.
-#     contour_color : str, optional
+#     contour : str, optional
 #         Colour for the overlaid contour, by default 'r'.
 #     label_fmt : str, optional
 #         Format string for the image titles, by default
@@ -539,5 +471,5 @@ class ConsoleFormatter:
 #     labels = seg.labels[:top]
 #     image_stack = np.ma.array(seg.thumbnails(image, labels, True, True))
 #     return motley.image.thumbnails(image_stack.data, image_stack.mask,
-#                                    cmap, contour_color,
+#                                    cmap, contour,
 #                                    title, labels, label_fmt)

@@ -44,9 +44,9 @@ class LabelGroups(Record):
 class LabelGroupsMixin:
     """Mixin class for grouping and labelling image segments"""
 
-    _groups = None
+    _groups = ()
 
-    def __init__(self, groups=None):
+    def __init__(self, groups=()):
         self.groups = groups
 
     @property
