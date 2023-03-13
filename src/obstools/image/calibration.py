@@ -162,12 +162,12 @@ class ImageCalibrator(ImageOrienter):
     """
     Do calibration arithmetic for CCD images on the fly!
     """
-    
+
     # init the descriptors
     dark = CalibrationImageDescriptor('dark')
     flat = CalibrationImageDescriptor('flat')
 
-    def __init__(self, hdu, dark=keep, flat=keep):
+    def __init__(self, hdu, dark=keep, flat=keep, gain=None):
 
         xy = []
         if hasattr(hdu, 'oriented'):
@@ -178,6 +178,7 @@ class ImageCalibrator(ImageOrienter):
         self._dark = self._flat = None
         self.dark = dark
         self.flat = flat
+        self.gain = float(gain or hdu.readout.preAmpGain)
 
     def __str__(self):
         return pformat(dict(dark=self.dark,
@@ -207,9 +208,9 @@ class ImageCalibrator(ImageOrienter):
         if self.flat is not None:
             data = data / self.flat
 
-        return data
+        # return image in units of electrons
+        return data * self.gain
 
-    #
     def __getitem__(self, item):
         return self(super().__getitem__(item))
 
