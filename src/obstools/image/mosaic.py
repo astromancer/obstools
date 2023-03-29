@@ -206,6 +206,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         -------
 
         """
+
         if p is None:
             p = image.params if isinstance(image, SkyImage) else (0, 0, 0)
 
@@ -229,9 +230,9 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
         # plot
         # *image.origins, image.angle = p
-        art = self.art[name] = image.plot(ax=self.ax,
-                                          frame=frame, set_lims=False,
-                                          **kws)
+        _, art = _, self.art[name] = image.plot(ax=self.ax,
+                                                frame=frame, set_lims=False,
+                                                **kws)
 
         # if coords is not None:
         #     line, = self.ax.plot(*coords.T, 'x')
@@ -270,8 +271,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
         if (nrs is not False) and (nrs is not None):
             from scrawl.utils import emboss
-            
-            
+
             if nrs is True:
                 nrs = range(len(xy))
 

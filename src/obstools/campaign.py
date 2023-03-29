@@ -24,7 +24,7 @@ from astropy.io.fits.hdu.base import _BaseHDU
 import docsplice as doc
 from motley.table.attrs import AttrTable
 from pyxides.typing import ListOf
-from pyxides.getitem import IndexerMixin
+from pyxides.getitem import IndexingMixin
 from pyxides.grouping import AttrGrouper, Groups
 from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
@@ -243,7 +243,7 @@ class ImageHDU(PrimaryHDU,
 #     pass
 
 
-class GlobIndexing(IndexerMixin):
+class GlobIndexing(IndexingMixin):
     """
     Mixin that allows retrieving items from the campaign by indexing with
     filename(s) or glob expressions.

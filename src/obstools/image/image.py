@@ -16,7 +16,7 @@ from matplotlib.transforms import Affine2D
 # local
 from scrawl.image import ImageDisplay
 from pyxides import ListOf
-from pyxides.getitem import IndexerMixin
+from pyxides.getitem import IndexingMixin
 from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.oo.slots import SlotHelper
@@ -94,7 +94,7 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         # meta data
         self.meta = kws
         # artists
-        self.art = ArtistContainer(image=None, frame=None)
+        self.art = ArtistContainer(display=None, image=None, frame=None)
 
     def __getstate__(self):
         # remove artists that can't be pickled
@@ -135,9 +135,9 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         # logger.debug(f'{corners=}')
         ax = None
         if image:
-            im = ImageDisplay(self.data, **{**IMAGE_STYLE, **kws})
-            self.art.image = im.image
-            ax = im.ax
+            display = ImageDisplay(self.data, **{**IMAGE_STYLE, **kws})
+            self.art.image = display.image
+            ax = display.ax
 
         # Add frame around image
         if frame:
@@ -152,7 +152,7 @@ class Image(SelfAware, SlotHelper):  # AliasManager
 
             ax.add_patch(frame)
 
-        return self.art
+        return display, self.art
 
     # alias
     plot = show
@@ -256,7 +256,7 @@ class TransformedImage(Image):
     # ------------------------------------------------------------------------ #
     def show(self, image=True, frame=True, set_lims=None, coords='world', **kws):
 
-        art = super().show(image, frame, set_lims, **kws)
+        display, art = super().show(image, frame, set_lims, **kws)
         ax = next(filter(None, mit.collapse(art.values()))).axes
 
         # Rotate + offset the image by setting the transform
@@ -272,7 +272,7 @@ class TransformedImage(Image):
             # self.logger.debug('Updating axes limits {}', dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
-        return art
+        return display, art
 
     # alias
     plot = show
@@ -423,7 +423,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         """
         assert coords in {'pixel', 'world'}
 
-        art = super().show(image, frame, set_lims, coords, **kws)
+        display, art = super().show(image, frame, set_lims, coords, **kws)
         ax = next(filter(None, mit.collapse(art.values()))).axes
 
         # add xy position markers (centre of mass)
@@ -450,7 +450,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
                 ax, **{**TEXT_STYLE, 'transform': transform,
                        **(labels if isdict(labels) else {})}
             )
-        return art
+        return display, art
 
     # alias
     plot = show
@@ -462,7 +462,7 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
                        va='top', **kws)
 
 
-class ImageContainer(IndexerMixin, ListOf(SkyImage), Vectorized):
+class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
     def __init__(self, images=(), fovs=()):
         """
         A container of `SkyImages`'s
