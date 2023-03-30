@@ -22,7 +22,7 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
     ocoo = np.array(coo[:, ::-1], dtype='O')
     cootbl = Table(ocoo,
                    col_headers=list('xy'),
-                   col_head_props=dict(bg='g'),
+                   col_head_style=dict(bg='g'),
                    row_headers=range(len(coo)),  # starts numbering from 0
                    # row_nrs=True,
                    align='>',  # easier to read when right aligned
@@ -44,7 +44,7 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
     # tags[:] = 'x' * ms
 
     col_headers = motley.rainbow(labels, bg=cols)
-    tt = Table(tags, title='\n',  # title,   # title_props=None,
+    tt = Table(tags, title='\n',  # title,   # title_style=None,
                col_headers=col_headers,
                frame=False, align='^',
                col_borders='', cell_whitespace=0)
@@ -73,8 +73,8 @@ def table_cdist(sdist, window, _print=False):
                 title='Distance matrix',
                 col_headers=range(n),
                 row_headers=range(n),
-                col_head_props=dict(bg=bg),
-                row_head_props=dict(bg=bg),
+                col_head_style=dict(bg=bg),
+                row_head_style=dict(bg=bg),
                 align='>')
 
     if sdist.size > 1:

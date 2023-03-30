@@ -54,7 +54,7 @@ from .image.calibration import ImageCalibratorMixin
 SAMPLE_STAT = 'median'
 DEPTH = 5
 
-DETECT_REPORT_STYLE = {'title_props': ('B', '_'),
+DETECT_REPORT_STYLE = {'title_style': ('B', '_'),
                        'extend': 2}
 
 

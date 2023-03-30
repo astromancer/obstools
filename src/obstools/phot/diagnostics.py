@@ -473,7 +473,7 @@ def fit_summary(modelDb, locData):
             coo))
     tbl = Table(tbl,
                 title='Fitting summary: Unconvergent',
-                title_props=dict(txt='bold', bg='m'),
+                title_style=dict(txt='bold', bg='m'),
                 row_headers=names, col_headers=col_headers)
 
     return tbl
