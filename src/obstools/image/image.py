@@ -272,6 +272,9 @@ class TransformedImage(Image):
             # self.logger.debug('Updating axes limits {}', dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
+        # add artists for blitting
+        display.add_art(art.values())
+
         return display, art
 
     # alias
