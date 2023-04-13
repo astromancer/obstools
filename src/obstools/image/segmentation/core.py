@@ -919,7 +919,7 @@ class SegmentedImage(SegmentationImage,     # base
         array of int (labels)
         """
 
-        if labels is None:
+        if (labels is None) or (labels is all) or (labels is ...):
             labels = self.labels
 
         if isinstance(labels, numbers.Integral):

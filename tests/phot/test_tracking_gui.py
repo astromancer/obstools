@@ -50,7 +50,7 @@ tracker.init_memory(hdu.nframes)
 
 
 app = QtWidgets.QApplication(sys.argv)
-# ui = MplMultiTab()
+# ui = MplTabs()
 # fig = ui.add_tab()
 # vid = TrackerVideo(tracker, hdu.calibrated, fig=fig)
 

@@ -425,7 +425,7 @@ class ConsoleFormatter:
         cutouts, masks = zip(*((im.data, ~im.mask) for im in cutouts))
         origins = ((x.start, y.start) for y, x in slices)
 
-        # 
+        #
         info = {}
         if statistics:
             for stat in statistics:
@@ -436,7 +436,7 @@ class ConsoleFormatter:
                 info[header] = fmt(result)
 
         return motley.image.thumbnails_table(
-            cutouts, masks, labels, origins, cmap, contour, info=info)
+            cutouts, masks, labels, origins, cmap, contour, info=info, **kws)
 
 
 # def source_thumbnails_terminal(image, seg, top,

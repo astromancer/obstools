@@ -11,7 +11,6 @@ import numpy as np
 from scipy.optimize import leastsq, minimize
 
 # local
-from recipes.oo import coerce
 from recipes.lists import tally
 from recipes.io import load_memmap
 from recipes.logging import LoggingMixin
@@ -27,7 +26,7 @@ LN2PI_2 = np.log(2 * np.pi) / 2
 
 
 def int2tup(obj):
-    return coerce(obj, tuple, numbers.Integral)
+    return ensure_wrapped(obj, tuple)
     
 
 
