@@ -1657,6 +1657,27 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return grid, bs
 
+    def drizzle(self, path, outwcs, pixfrac, ignore=()):
+        
+        from drizzle.drizzle import Drizzle
+        
+        if len(self.wcss) != len(self) - len(ignore):
+            raise ValueError('First do `reg.build_wcs(run)`.')
+
+        # Get the WCS for the output image
+        drizzle = Drizzle(outwcs=outwcs, pixfrac=pixfrac)
+
+        # Add the input images to the existing output image
+        wcss = iter(self.wcss)
+        for i, image in enumerate(self):
+            if i not in ignore:
+                fscale = image.counts[image.seg.labels == 2].item()
+                data = (image.data - image.seg.mean(image.data, 0)) / fscale
+                drizzle.add_image(data, next(wcss),
+                                  expin=image.meta['EXPOSURE'])
+
+        drizzle.write(path)
+
     def global_seg(self, circularize=True):
         """
         Get the global segmentation for all sources across all frames in this
@@ -1907,18 +1928,22 @@ class ImageRegisterDSS(ImageRegister):
 
         # save target coordinate position
         self.target_coords_world = coords
-        self.target_coords_pixels = np.divide(self.image.shape, 2) + 0.5
+
+    @property
+    def target_coords_pixel(self):
+        hdr = self.hdu[0].header
+        return np.subtract([hdr['crpix1'], hdr['crpix2']], 0.5)
 
     def remap_labels(self, target=None, flux_sort=False, trim=False):
         if target is None:
             target, = self.clustering.predict([self.target_coords_pixels])
 
-        new_labels = super().remap_labels(target, flux_sort)
+        return super().remap_labels(target, flux_sort)
 
         # if trim:
         #     new_labels[self._trim_labels()] = -1
 
-        return new_labels
+        # return new_labels
 
     def mosaic(self, names=(), **kws):
 
@@ -1963,15 +1988,34 @@ class ImageRegisterDSS(ImageRegister):
         super().register(clf, plot)
         self.relabel()
 
-    def _trim_labels(self, outside=0):
+    def _trans_to_image(self, index, unit='pixel'):
+        assert unit in {'fraction', 'pixel', 'arcmin'}
+
+        scale = self.scale
+        image = self[index]
+        if unit == 'fraction':
+            scale *= 1 / image.fov
+        elif unit == 'pixel':
+            scale /= image.scale
+        # elif unit == 'arcmin':
+        #     scale *= 1
+
+        return Affine2D().translate(*-image.origin) \
+                         .rotate(-image.angle) \
+                         .scale(*scale)
+
+    def _trans_to_dss(self, index, unit='pixel'):
+        return self._trans_to_image(index, unit).inverted()
+
+    def _trim_labels(self, index=0):
         xy = np.ma.median(self.xyt_block, 0)
         out = np.ones((len(self), self.n_sources()), bool)
         data = list(self.data)
-        data.pop(outside)
-        for i, im in enumerate(data):
-            tr = Affine2D().translate(*-im.origin).rotate(-im.angle).scale(*(self.scale / im.fov))
+        data.pop(index)
+        for i in range(len(data)):
+            tr = self._trans_to_image(i + int(i >= index), unit='fraction')
             xyi = tr.transform(xy)
-            out[i] = l = ((0 > xyi) | (xyi > 1)).any(1)
+            out[i] = ((0 > xyi) | (xyi > 1)).any(1)
             # print(i+1, np.where(l)[0])
 
         return out.all(0)
@@ -1980,17 +2024,19 @@ class ImageRegisterDSS(ImageRegister):
 
     def build_wcs(self, run):
         assert len(run) == len(self) - 1
-        for hdu, p, scale in zip(run, self.params[1:], self.scales[1:]):
-            self._build_wcs(hdu, p, scale)
 
-    def _build_wcs(self, hdu, p, scale):
+        self.wcss = []
+        for i, hdu in enumerate(run, 1):
+            wcs = self._build_wcs(i)
+            # TODO obsgeo, dateobs, mjdobs
+            hdu.header.update(wcs.to_header())  # NOTE: NOT SAVED
+            self.wcss.append(wcs)
+
+        return self.wcss
+
+    def _build_wcs(self, i):
         """
-        Create tangential plane wcs
-        Parameters
-        ----------
-        p
-        cube
-        telescope
+        Create tangential plane WCS for image at index `i`.
 
         Returns
         -------
@@ -1998,42 +2044,70 @@ class ImageRegisterDSS(ImageRegister):
 
         """
 
-        from astropy import wcs
-        from recipes.transforms.rotation import rotation_matrix
-
+        # survey_image_info
         hdr = self.hdu[0].header
-        *xyoff, theta = p
+        image = self[i]
+
         # transform target coordinates in DSS image to target in SHOC image
         # convert to pixel llc coordinates then to arcmin
         # target coordinates DSS [pixel]
-        xyDSS = np.subtract([hdr['crpix1'], hdr['crpix2']], 0.5) / self.scale
+        xyDSS = np.subtract([hdr['crpix1'], hdr['crpix2']], 0.5)
         # target coordinates SHOC [pixel]
-        xySHOC = (rotation_matrix(-theta) @ (xyDSS - xyoff)) / scale
+        xyIMG = self._trans_to_image(i).transform(xyDSS).squeeze()
         # target coordinates celestial [degrees]
         xySKY = self.target_coords_world
 
-        # coordinate increment
-        # flip = np.array(hdu.flip_state[::-1], bool)
-        # cdelt = scale / 60.  # image scale in degrees
-        # cdelt[flip] = -cdelt[flip]
-
-        # see:
+        # WCS
+        # for parameter definitions see:
         # https://www.aanda.org/articles/aa/full/2002/45/aah3859/aah3859.html
-        # for parameter definitions
         w = wcs.WCS(naxis=2)
-        # array location of the reference point in pixels
-        w.wcs.crpix = xySHOC
+        # axis type
+        w.wcs.ctype = ['RA---TAN', 'DEC--TAN']
         # coordinate increment at reference point
-        w.wcs.cdelt = scale / 60.  # image scale in degrees
+        w.wcs.cdelt = image.scale / 60.  # image scale in degrees
         # target coordinate in degrees reference point
-        xtrg = self.target_coords_world
-        w.wcs.crval = xtrg.ra.value, xtrg.dec.value
+        w.wcs.crval = [xySKY.ra.value, xySKY.dec.value]
         # rotation from stated coordinate type.
-        w.wcs.crota = np.degrees([-theta, -theta])
-        w.wcs.ctype = ["RA---TAN", "DEC--TAN"]  # axis type
+        w.wcs.crota = np.degrees([-image.angle, -image.angle])
+        # array location of the reference point in pixels
+        w.wcs.crpix = xyIMG
+        # need for drizzle
+        w.pixel_shape = image.shape
 
         return w
 
+    def drizzle(self, path, pixfrac, outwcs=None):
+
+        #drizzle.add_image(self[0].data, outwcs, expin=hdr['EXPOSURE'])
+        if outwcs is not None:
+            return super().drizzle(path, outwcs, pixfrac, (0,))
+
+        UNIT_CORNERS = np.array([[0., 0.],
+                                 [1., 0.],
+                                 [1., 1.],
+                                 [0., 1.]])
+
+        cmn = np.full(2, +np.inf)
+        cmx = np.full(2, -np.inf)
+        for i in range(1, len(self)):
+            to_dss = self._trans_to_image(i).inverted()
+            corners = to_dss.transform(UNIT_CORNERS * self[i].shape - 0.5)
+            cmn = np.min([cmn, corners.min(0)], 0)
+            cmx = np.max([cmx, corners.max(0)], 0)
+
+        rscale = np.median(self.rscale[1:])
+        shape = (cmx - cmn) / rscale
+
+        # outwcs = wcs.WCS(self.hdu[0].header)
+        outwcs = wcs.WCS(naxis=2)
+        outwcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+        outwcs.wcs.cdelt = rscale * self.scale / 60.  # image scale in degrees
+        outwcs.wcs.crpix = (self.target_coords_pixel - cmn) / rscale
+        xySKY = self.target_coords_world
+        outwcs.wcs.crval = [xySKY.ra.value, xySKY.dec.value]
+        outwcs.pixel_shape = np.round(shape, 0).astype(int)
+
+        return super().drizzle(path, outwcs, pixfrac, (0,))
 
 # class TransformedImage():
 #     def set_p(self):
