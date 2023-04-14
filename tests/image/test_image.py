@@ -40,7 +40,7 @@ class TestSkyImage:
                                    remove_text=True)
     def test_plot(self, skyimage0):
         skyimage0.angle = np.pi / 12
-        art = skyimage0.plot()
+        display, art = skyimage0.plot()
         return art.image.figure
 
     def test_repr(self, skyimage0):
@@ -51,11 +51,20 @@ class TestSkyImage:
                           angle=0.0)>'''))
         
     def test_copy(self, skyimage0):
-        
-        
         clone = skyimage0.copy()
-        
-        # from IPython import embed
-        # embed(header="Embedded interpreter at 'tests/image/test_image.py':57")
-        
         assert skyimage0 == clone
+        
+    def test_calibration(self, skyimage0):
+        # SkyImage(skyimage0)
+        skyimage0.set_calibrators(dark=10 * np.ones(skyimage0.shape),
+                                  flat=2 * np.ones(skyimage0.shape),
+                                  gain=7)
+
+        ref =  (skyimage0.data - 10) / 2 * 7
+        assert np.allclose(skyimage0[:], ref)
+        
+        # test clone
+        clone = skyimage0.copy()
+        assert np.allclose(clone[:], ref)
+
+            

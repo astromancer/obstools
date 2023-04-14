@@ -10,6 +10,10 @@ import numpy as np
 from obstools.image import Image, SkyImage
 # from pytest_steps import test_steps as steps
 
+
+# ---------------------------------------------------------------------------- #
+np.random.seed(999)
+
 # ---------------------------------------------------------------------------- #
 
 def load_test_data(filename):

@@ -22,10 +22,12 @@ from recipes.oo import SelfAware
 from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
 from recipes.utils import duplicate_if_scalar
+from recipes.oo.property import cached_property
 from recipes.dicts import AttrDict as ArtistContainer
 
 # relative
 from .detect import SourceDetectionMixin
+from .calibration import ImageCalibratorMixin
 
 
 # ---------------------------------------------------------------------------- #
@@ -94,15 +96,20 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         # meta data
         self.meta = kws
         # artists
-        self.art = ArtistContainer(display=None, image=None, frame=None)
+        self.art = self._init_art()
+
+    def _init_art(self):
+        return ArtistContainer(display=None, image=None, frame=None)
 
     def __getstate__(self):
         # remove artists that can't be pickled
-        return {**super().__getstate__(),
-                'art': ArtistContainer(image=None, frame=None)}
+        return {**super().__getstate__(), 'art': self._init_art()}
 
     def __array__(self):
         return self.data
+
+    def __getitem__(self, key):
+        return self.data[key]
 
     def copy(self,):
         return pickle.loads(pickle.dumps(self))
@@ -281,7 +288,15 @@ class TransformedImage(Image):
     plot = show
 
 
-class SkyImage(TransformedImage, SourceDetectionMixin):
+class CCDImage(ImageCalibratorMixin):
+
+    ndim = 2
+
+    def __getitem__(self, key):
+        return self.calibrated[key]
+
+
+class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
     """
     Helper class for image registration. Represents an image with some
     associated meta data like pixel scale and pixel map of detected sources,
@@ -383,6 +398,22 @@ class SkyImage(TransformedImage, SourceDetectionMixin):
         self.seg = segments     # : SegmentedArray or None
         self.xy = None      # : np.ndarray: center-of-mass coordinates pixels
         self.counts = None  # : np.ndarray: pixel sums for segmentation
+
+    def __getstate__(self):
+        return {**super().__getstate__(),
+                'oriented': self.oriented,
+                'calibrated': self.calibrated}
+    
+    def __setstate__(self, state):
+        super().__setstate__(state)
+        # handle copying descriptor states (not handles by superclass since not slots)
+        for name in ('oriented', 'calibrated'):
+            setattr(self, name, state[name])
+        
+        # self.oriented = state['oriented']
+        # cal = state['calibrated']
+        # self.set_calibrators(cal.flat, cal.dark, cal.gain)
+        
 
     # @lazyproperty
     # def xy(self):

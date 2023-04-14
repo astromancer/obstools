@@ -1,9 +1,10 @@
 """
-Helpers for performing image calibration.
+Helpers for efficient image calibration.
 """
 
 
 # std
+from recipes import op
 from collections import abc
 
 # third-party
@@ -41,6 +42,34 @@ _s = IndexHelper()
 # ---------------------------------------------------------------------------- #
 
 
+def get_array(hdu):
+    # used when setting a calibration data (hdu) on the science hdu to retrieve
+    # the data array
+
+    if hdu is None:
+        return
+
+    if isinstance(hdu, ImageCalibratorMixin):
+        # The image is an HDU object
+        # ensure consistent orientation between image - and calibration data
+        # NOTE: The flat fields will get debiased here. An array is returned
+        img = hdu.calibrated
+    elif isinstance(hdu, PrimaryHDU):
+        img = hdu.data
+    elif isinstance(hdu, np.ndarray):
+        img = hdu
+    else:
+        raise TypeError(f'Received invalid object of type {type(hdu)}. '
+                        'Calibration frames should be one of the following '
+                        'types: ImageCalibratorMixin, PrimaryHDU, np.ndarray.')
+
+    img = np.asanyarray(img)
+    if img.ndim != 2:
+        raise ValueError(f'Calibration image must be 2D, not {img.ndim}D.')
+
+    return img
+
+
 class CalibrationImageDescriptor:
     """
     Descriptor class for calibration images (flat/dark).
@@ -70,34 +99,11 @@ class CalibrationImageDescriptor:
         setattr(instance, self.name, None)
 
 
-def get_array(hdu):
-    # used when setting a calibration data (hdu) on the science hdu to retrieve
-    # the data array
-
-    if hdu is None:
-        return
-
-    if isinstance(hdu, ImageCalibratorMixin):
-        # The image is an HDU object
-        # ensure consistent orientation between image - and calibration data
-        # NOTE: The flat fields will get debiased here. An array is returned
-        img = hdu.calibrated  # [instance.hdu.oriented.orient]
-    elif isinstance(hdu, PrimaryHDU):
-        img = img.data
-    else:
-        raise NotImplementedError
-
-    img = np.asanyarray(img)
-    if img.ndim != 2:
-        raise ValueError(f'Calibration image must be 2D, not {img.ndim}D.')
-
-    return img
-
-
 class ImageOrienter:
     """
     Simple base class that stores the orientation state. Images are re-oriented
-    upon item access.
+    upon item access. To conserve working memory during large array operations,
+    `astropy.io.fits.hdu.image.Section` is used for 3d data slices.
     """
 
     # forward array-like properties to hdu
@@ -167,6 +173,20 @@ class ImageCalibrator(ImageOrienter):
     dark = CalibrationImageDescriptor('dark')
     flat = CalibrationImageDescriptor('flat')
 
+    @property
+    def gain(self):
+        return self._gain
+
+    @gain.setter
+    def gain(self, gain):
+        gain = float(gain)
+        assert gain > 0
+        self._gain = gain
+
+    @gain.deleter
+    def gain(self):
+        self._gain = 1
+
     def __init__(self, hdu, dark=keep, flat=keep, gain=None):
 
         xy = []
@@ -178,7 +198,10 @@ class ImageCalibrator(ImageOrienter):
         self._dark = self._flat = None
         self.dark = dark
         self.flat = flat
-        self.gain = float(gain or hdu.readout.preAmpGain)
+
+        if gain is None:
+            gain = op.attrgetter('readout.preAmpGain', default=1)(hdu)
+        self.gain = gain
 
     def __str__(self):
         return pformat(dict(dark=self.dark,
@@ -217,8 +240,13 @@ class ImageCalibrator(ImageOrienter):
 
 class ImageCalibratorMixin:
     """
-    A calibration mixin for HDUs.
+    A calibration mixin for HDU objects.
     """
+
+    # dark = ForwardProperty('calibrted.dark')
+    # flat = ForwardProperty('calibrted.flat')
+    # gain = ForwardProperty('calibrted.gain')
+    
     @lazyproperty
     def oriented(self):
         """Manage on-the-fly image orientation."""
@@ -226,16 +254,16 @@ class ImageCalibratorMixin:
 
     @lazyproperty
     def calibrated(self):
-        """Manage on-the-fly calibration for large files."""
+        """Manage on-the-fly image calibration."""
         return ImageCalibrator(self)
 
-    def set_calibrators(self, dark=keep, flat=keep):
+    def set_calibrators(self, dark=keep, flat=keep, gain=keep):
         """
         Set calibration images for this observation. Default it to keep
-        previously set image if none are provided here.  To remove a
-        previously set calibration image pass a value of `None` to this
-        function, or simply delete the attribute `self.calibrated.dark` or
-        `self.calibrated.flat`
+        previously set image if none are provided here. To remove a previously
+        set calibration image pass a value of `None` to this function, or simply
+        delete the attribute `self.calibrated.dark`,  `self.calibrated.flat` or
+        `self.calibrated.gain`.
 
         Parameters
         ----------
@@ -247,9 +275,8 @@ class ImageCalibratorMixin:
 
         """
 
-        for name, hdu in dict(dark=dark, flat=flat).items():
-            if isinstance(hdu, abc.Container) and (len(hdu) == 1):
-                #              FIXME Campaign
-                hdu = hdu[0]
+        for name, val in dict(dark=dark, flat=flat, gain=gain).items():
+            if isinstance(val, abc.Container) and (len(val) == 1):  # FIXME Campaign
+                val = val[0]
 
-            setattr(self.calibrated, name, hdu)
+            setattr(self.calibrated, name, val)
