@@ -235,7 +235,7 @@ class ImageHDU(PrimaryHDU,
         else:
             raise TypeError(f'Can only display 2D or 3D data. Your data is {nd}D.')
 
-        im.figure.canvas.set_window_title(self.file.name)
+        im.figure.canvas.manager.set_window_title(self.file.name)
         return im
 
 
@@ -701,7 +701,10 @@ class PhotCampaign(PPrintContainer,
 
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
-        dss.build_wcs(self)
+        
+        # for hdu, wcs in zip(self, dss.build_wcs(self)):
+        #     hdu.wcs = wcs
+            
         return dss
 
     def coalign_dss(self, fov=None, fov_stretch=1.2,
