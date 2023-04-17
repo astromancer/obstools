@@ -1837,8 +1837,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return art
 
 
-class ImageRegistrationGUI(MplTabs):
-    def __init__(self, reg, **kws):
+class ImageRegistrationGUI(MplMultiTab):
+    def __init__(self, reg, names=(), **kws):
 
         super().__init__()
 
@@ -1846,15 +1846,25 @@ class ImageRegistrationGUI(MplTabs):
         self.style = kws
         self.art = {}
 
-        for _ in reg:
-            fig = self.add_tab()
+        for _, name in itt.zip_longest(reg, names):
+            fig = self.add_tab('Images', name)
 
-        # self._plot(len(reg) - 1)
-        self.add_callback(self.plot)
+        self['Images'].add_callback(self._plot_image)
 
-    def plot(self, fig, i):
-        i, = i
-        self.art[i] = self.reg[i].plot(fig=fig, **self.style)
+        #
+        self.add_tab('Clusters')
+        self['Clusters'].add_callback(self._plot_clusters)
+
+    def _plot_clusters(self, fig, indices):
+        ax = self['Clusters'].figure.axes
+        art = self.plot_clusters(ax, nrs=True, frames=True, trim=True)
+
+    def _plot_image(self, fig, indices):
+        i, j = indices
+        if i == 0:
+            _, self.art[j] = self.reg[j].plot(fig=fig, **self.style)
+        else:
+            raise ValueError
 
         # fig.canvas.draw() # WHY? blit?
 
