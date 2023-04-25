@@ -1,5 +1,4 @@
 # std
-import logging
 import warnings
 import itertools as itt
 import multiprocessing as mp
@@ -9,7 +8,9 @@ from pathlib import Path
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib import ticker
+from matplotlib.patches import Circle, Rectangle
+from loguru import logger
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # local
@@ -29,7 +30,156 @@ from scrawl.ticks import LinearRescaleFormatter
 
 SECONDS_PER_DAY = 86400
 
-logger = logging.getLogger('diagnostics')
+
+class SourceTrackerPlots:
+
+    def __init__(self, tracker):
+        self.tracker = tracker
+
+    def image(self, image, ax=None, points='rx', contours=True,
+              labels=CONFIG.labels, **kws):
+
+        tracker = self.tracker
+        sim = SkyImage(image, segments=tracker.seg)
+        sim.xy = tracker.coords
+
+        display, art = sim.show(True, False, points, False, labels,
+                                coords='pixel', ax=ax, **kws)
+
+        if contours:
+            if contours is True:
+                contours = {}
+            art.contours = self.contours(**contours)
+
+        return art
+
+    def contours(self, ax, **kws):
+        return self.seg.show.contours(
+            ax, 
+            **{'offsets':     self.origin,
+               'transOffset': AffineDeltaTransform(display.ax.transData),
+               **kws}
+        )
+
+    def positions(self, labels=None, section=..., figsize=(6.5, 7),
+                  legend=True, show_weights=True, show_null_weights=False,
+                  **kws):
+        """
+        For sets of measurements (m, n, 2), plot each (m, 2) feature set as on
+        its own axes as scatter / density plot.  Additionally plot the shifted
+        points in the neighbouring axes to the right. Mark the pixel size and
+        diffraction limit for reference.
+        """
+
+        if labels is None:
+            labels = self.use_labels
+
+        points = self.coords[labels - 1] + self._origins[section, None]
+        delta = self.measurements[section] - points[:, None]
+        delta_avg = self.measure_avg[section] - points
+        delta_xy = self.delta_xy[section]
+
+        fig, axes = plt.subplots(len(labels), 2, sharex=True, sharey=True,
+                                 figsize=figsize)
+        axes = np.atleast_2d(axes)
+        style = dict(lw=1, ls='--', fc='none', ec='c', zorder=100)
+        for i, ax in enumerate(axes.ravel()):
+            pos = self._setup_scatter_axes(ax, i)
+            self._show_pixel(style)
+
+        style = dict(ls='', mfc='none', zorder=1, alpha=0.35, **kws)
+        features = self.tracker.centrality
+
+        art = defaultdict(list)
+        for feature, (marker, color, _) in CONFIG.centroids.items():
+            style = {**style,
+                     'marker': marker,
+                     'color': color,
+                     'label': captions[feature]}
+
+            if (weight := features.get(feature)) is not None:
+                if not (weight or show_null_weights):
+                    continue
+                data = delta[:, list(features).index(feature)]
+            elif feature == 'avg':
+                data = delta_avg
+            else:
+                raise ValueError(f'Unknown feature {feature!r}')
+
+            for j, data in enumerate(data.T):
+                ax1, ax2 = axes[j]
+                art[feature].extend(ax1.plot(*data, **style))
+                art[f'{feature}-delta'].extend(ax2.plot(*(data + delta_xy.T), **style))
+
+        fig.tight_layout()
+        if legend:
+            self._legend(axes[0, 0], art, show_weights)
+
+    def _setup_scatter_axes(self, ax, i):
+
+        ax.set_aspect('equal')
+        ax.tick_params(bottom=True, top=True, left=True, right=True,
+                       labelright=(lr := (i % 2)), labelleft=(not lr),
+                       labeltop=(lt := (i // 2) == 0), labelbottom=(not lt))
+
+        for x in (ax.xaxis, ax.yaxis):
+            x.set_major_locator(ticker.IndexLocator(1, -1))
+            x.set_major_formatter(ticker.FuncFormatter(
+                lambda x, pos: f'{round(x):d}'))
+
+        ax.grid()
+        return pos
+
+    def _show_pixel(self, style):
+        # add pixel size rect
+        r = Rectangle((-0.5, -0.5), 1, 1, **style)
+        c = Circle((0, 0), self.tracker.precision, **style)
+        for p in (r, c):
+            ax.add_patch(p)
+        return r, c
+
+    def _legend(self, ax, art, show_weights, **kws):
+
+        captions = dict(self._get_legend_labels(show_weights))
+
+        for key in CONFIG.centroids.items():
+            handles.append(art[key][0])
+            labels.append(caption[key])
+
+        if show_weights:
+            spacer = Line2D(*np.empty((2, 1, 1)), marker='', ls='')
+            handles.insert(spacer, -1)
+            labels.insert('\n ', -1)
+
+        fig.subplots_adjust(top=0.8)
+        ax.legend(
+            handles, labels,
+            **{**dict(ncol=2,
+                      loc='lower left',
+                      bbox_to_anchor=(-0.1, 1.2),
+                      handletextpad=0.25,
+                      labelspacing=-0.175,
+                      columnspacing=0.25),
+               **kws}
+        )
+
+    def _get_legend_labels(self, show_weights=True):
+        centroids = self.centrality
+        weights = iter(centroids.values())
+        ends = iter(vbrace(len(centroids)).splitlines())
+
+        *_, labels = zip(*map(CONFIG.centroids.get, centroids))
+        if not show_weights:
+            yield from zip(centroids, labels)
+            return
+
+        # add weight to label
+        w = max(map(len, labels)) + 1
+        for stat, (*_, label) in CONFIG.centroids.items():
+            if stat in centroids:
+                yield stat, f'{label: <{w}}$(w={next(weights)}) ${next(ends)}'
+            else:
+                yield stat, label
 
 
 def _sanitize_data(data, allow_dim):
@@ -44,32 +194,32 @@ def _sanitize_data(data, allow_dim):
     return data
 
 
-def add_rectangle_inset(axes, pixel_size, colour='0.6'):
-    # add rectangle to indicate size of lower axes on upper
-    for j, ax in enumerate(axes.ravel()):
-        r, c = divmod(j, axes.shape[1])
-        if not (r % 2):
-            continue
+# def add_rectangle_inset(axes, pixel_size, colour='0.6'):
+#     # add rectangle to indicate size of lower axes on upper
+#     for j, ax in enumerate(axes.ravel()):
+#         r, c = divmod(j, axes.shape[1])
+#         if not (r % 2):
+#             continue
 
-        bbox = ax.viewLim
-        xyr = np.array([bbox.x0, bbox.y0])
-        rect = Rectangle(xyr, bbox.width, bbox.height,
-                         fc='none', ec=colour, lw=1.5)
-        ax_up = axes[r - 1, c]
-        ax_up.add_patch(rect)
+#         bbox = ax.viewLim
+#         xyr = np.array([bbox.x0, bbox.y0])
+#         rect = Rectangle(xyr, bbox.width, bbox.height,
+#                          fc='none', ec=colour, lw=1.5)
+#         ax_up = axes[r - 1, c]
+#         ax_up.add_patch(rect)
 
-        # add lines for aesthetic
-        # get position of upper edges of lower axes in data
-        # coordinates of upper axes
-        if (ax_up.viewLim.height > pixel_size) and \
-                (ax_up.viewLim.width > pixel_size):
-            trans = ax.transAxes + ax_up.transData.inverted()
-            xy = trans.transform([[0, 1], [1, 1]])
+#         # add lines for aesthetic
+#         # get position of upper edges of lower axes in data
+#         # coordinates of upper axes
+#         if (ax_up.viewLim.height > pixel_size) and \
+#                 (ax_up.viewLim.width > pixel_size):
+#             trans = ax.transAxes + ax_up.transData.inverted()
+#             xy = trans.transform([[0, 1], [1, 1]])
 
-            ax_up.plot(*np.array([xyr, xy[0]]).T,
-                       color=colour, clip_on=False)
-            ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
-                       color=colour, clip_on=False)
+#             ax_up.plot(*np.array([xyr, xy[0]]).T,
+#                        color=colour, clip_on=False)
+#             ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
+#                        color=colour, clip_on=False)
 
 
 def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
@@ -814,7 +964,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 # @timer
 def plot_lc_aps(apdata, labels):
     # from mpl_multitab import MplTabs
-    ##ui = MplTabs()
+    # ui = MplTabs()
     figs = []
 
     with mp.Pool() as pool:
@@ -1045,8 +1195,8 @@ def plot_monitor_data(mon_cpu_file, mon_mem_file):
 # ====================================================================================================
 
 if __name__ == '__main__':
-    path = Path(
-        '/home/hannes/work/mensa_sample_run4/')  # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
+    # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
+    path = Path('/home/hannes/work/mensa_sample_run4/')
     qfiles = list(path.rglob('phot.q.dat'))
     qfigs = list(map(plot_q_mon, qfiles))
 

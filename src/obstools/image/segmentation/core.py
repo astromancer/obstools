@@ -17,35 +17,28 @@ from astropy.utils import lazyproperty
 from photutils.segmentation import SegmentationImage, deblend_sources
 
 # local
-from pyxides.vectorize import vdict
 from recipes import api, dicts
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
-from recipes.utils import duplicate_if_scalar
 
 # relative
 from ...utils import prod
 from ...stats import geometric_median
-from ..utils import shift_combine
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
+from .utils import is_lazy
+from .slices import SliceDict
 from .trace import trace_boundary
-from .display import SegmentPlotter
+from .display import SegmentPlotter, make_cmap
 from .stats import MaskedStatsMixin
 from .groups import LabelGroupsMixin, auto_id
 
 
-#
+# ---------------------------------------------------------------------------- #
 # simple container for 2-component objects
 yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
 # ---------------------------------------------------------------------------- #
-
-
-def is_lazy(_):
-    return isinstance(_, lazyproperty)
-
-
 def image_sub(background_estimator):
     if background_estimator in (None, False):
         return echo0
@@ -78,154 +71,6 @@ def _get_unpack(with_label, with_slice):
         (_unpack, _unpack_with_slice),
         (_unpack_with_label, _unpack_with_label_and_slice)
     )[with_label][with_slice]
-
-
-# ---------------------------------------------------------------------------- #
-
-# def autoreload_isinstance_hack(obj, kls):
-#     for parent in obj.__class__.mro():
-#         if parent.__name__ == kls.__name__:
-#             return True
-
-
-# def is_sequence(obj):
-#     """Check if obj is non-string sequence"""
-#     return isinstance(obj, (tuple, list, np.ndarray))
-
-
-def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
-                        post_merge_dilate=1):
-    """
-
-    Parameters
-    ----------
-    segmentations
-    xy_offsets
-    extend
-    f_accept
-    post_merge_dilate
-
-    Returns
-    -------
-
-    """
-    # merge detections masks by align, summation, threshold
-    if isinstance(segmentations, (list, tuple)) and \
-            isinstance(segmentations[0], SegmentationImage):
-        segmentations = np.array([seg.data for seg in segmentations])
-    else:
-        segmentations = np.asarray(segmentations)
-
-    n_images = len(segmentations)
-    n_accept = max(f_accept * n_images, 1)
-
-    eim = shift_combine(segmentations.astype(bool), xy_offsets, 'sum',
-                        extend=extend)
-    seg_image_extended, n_sources = ndimage.label(eim >= n_accept,
-                                                  structure=np.ones((3, 3)))
-
-    # edge case: it may happen that when creating the boolean array above
-    # with the threshold `n_accept`, that pixels on the edges of sources
-    # become separated from the main source. eg:
-    #                     ________________
-    #                     |              |
-    #                     |    ████      |
-    #                     |  ████████    |
-    #                     |    ██████    |
-    #                     |  ██  ██      |
-    #                     |              |
-    #                     |              |
-    #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-    # These pixels will receive a different label if we do not provide a
-    # block structure element.
-    # Furthermore, it also sometimes happens for faint sources that the
-    # thresholding splits the source in two, like this:
-    #                     ________________
-    #                     |              |
-    #                     |    ████      |
-    #                     |  ██          |
-    #                     |      ████    |
-    #                     |      ██      |
-    #                     |              |
-    #                     |              |
-    #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-    # After dilating post merger, we end up with two labels for a single source
-    # We fix these by running the "blend" routine. Note that this will
-    #  actually blend blend sources that are touching but are actually
-    #  distinct sources eg:
-    #                     __________________
-    #                     |    ██          |
-    #                     |  ██████        |
-    #                     |██████████      |
-    #                     |  ██████        |
-    #                     |    ████  ██    |
-    #                     |      ████████  |
-    #                     |        ████████|
-    #                     |        ██████  |
-    #                     |          ██    |
-    #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
-    # If you have crowded fields you may need to run "deblend" again
-    # afterwards to separate them again
-    seg_extended = SegmentedImage(seg_image_extended)
-    seg_extended.dilate(post_merge_dilate)
-    seg_extended.blend()
-    return seg_extended
-
-
-def select_overlap(seg, image, origin, shape):
-    """
-    Get data from a sub-region of dimension `shape` from `image` data,
-    beginning at index `origin`. If the requested shape of the image
-    is such that the image only partially overlaps with the data in the
-    segmentation image, fill the non-overlapping parts with zeros (of
-    the same dtype as the image)
-
-    Parameters
-    ----------
-    image
-    origin
-    shape
-
-    Returns
-    -------
-
-    """
-    if np.ma.is_masked(origin):
-        raise ValueError('Cannot select image sub-region when `origin` value has'
-                         ' masked elements.')
-
-    hi = np.array(shape)
-    δtop = seg.shape - hi - origin
-    over_top = δtop < 0
-    hi[over_top] += δtop[over_top]
-    low = -np.min([origin, (0, 0)], 0)
-    oseg = tuple(map(slice, low, hi))
-
-    # adjust if beyond limits of global segmentation
-    start = np.max([origin, (0, 0)], 0)
-    end = start + (hi - low)
-    iseg = tuple(map(slice, start, end))
-    if image.ndim > 2:
-        iseg = (...,) + iseg
-        oseg = (...,) + oseg
-        shape = (len(image),) + shape
-
-    sub = np.zeros(shape, image.dtype)
-    sub[oseg] = image[iseg]
-    return sub
-
-
-def inside_segment(coords, sub, grid):
-    b = []
-    ogrid = grid[0, :, 0], grid[1, 0, :]
-    for g, f in zip(ogrid, coords):
-        bi = np.digitize(f, g - 0.5)
-        b.append(bi)
-
-    mask = (sub == 0)
-    if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
-        return False
-    return not mask[b[0], b[1]]
 
 
 def get_masking_flags(arrays, masked):
@@ -293,223 +138,12 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     return ma
 
 
-def radial_source_profile(image, seg, labels=None):
-    com = seg.com(image, labels)
-    grid = np.indices(image.shape)
-    profiles = []
-    for i, (sub, g) in enumerate(seg.cutouts(image, grid, flatten=True,
-                                             labels=labels)):
-        r = np.sqrt(np.square(g - com[i, None].T).sum(0))
-        profiles.append((r, sub))
-    return profiles
-
-
 # class ModelledSegment(Segment):
 #     def __init__(self, segment_img, label, slices, area, model=None):
 #         super().__init__(segment_img, label, slices, area)
 #         self.model = model
 #         # self.grid =
 #         #
-
-
-class SliceDict(vdict):
-    """
-    Dict-like container for tuples of slices. Aids selecting rectangular
-    sub-regions of images more easily.
-    """
-
-    # maps semantic corner positions to slice attributes
-    _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
-
-    def __init__(self, mapping, **kws):
-        super().__init__()
-        kws.update(mapping)
-        for k, v in kws.items():
-            self[k] = v  # ensures item conversion in `__setitem__`
-
-    def __setitem__(self, key, value):
-        # convert items to namedtuple so we can later do things like
-        # >>> image[:, seg.slices[7].x]
-        super().__setitem__(key, yxTuple(*value))
-
-    @property
-    def x(self):
-        _, x = zip(*self.values())
-        return vdict(zip(self.keys(), x))
-
-    @property
-    def y(self):
-        y, _ = zip(*self.values())
-        return vdict(zip(self.keys(), y))
-
-    def _get_corners(self, vh, slices):
-        # vh - vertical horizontal positions as two character string
-        yss, xss = (self._corner_slice_mapping[_] for _ in vh)
-        unpack = list
-        if isinstance(slices, yxTuple):
-            slices = [slices]
-            unpack = next
-
-        return unpack(((getattr(y, yss), getattr(x, xss))
-                       for (y, x) in slices))
-
-    def lower_left_corners(self, labels=...):
-        """lower left corners of segment slices"""
-        return self._get_corners('ll', self[labels])
-
-    def lower_right_corners(self, labels=...):
-        """lower right corners of segment slices"""
-        return self._get_corners('lr', self[labels])
-
-    def upper_right_corners(self, labels=...):
-        """upper right corners of segment slices"""
-        return self._get_corners('ur', self[labels])
-
-    def upper_left_corners(self, labels=...):
-        """upper left corners of segment slices"""
-        return self._get_corners('ul', self[labels])
-
-    # aliases
-    llc = lower_left_corners
-    lrc = lower_right_corners
-    urc = upper_right_corners
-    ulc = upper_left_corners
-
-    def sizes(self, labels=...):
-        return np.subtract(self.urc(labels), self.llc(labels))
-
-    # alias
-    shapes = sizes
-
-    # def extents(self, labels=None):
-    #     """xy sizes"""
-    #     slices = self[labels]
-    #     sizes = np.zeros((len(slices), 2))
-    #     for i, sl in enumerate(slices):
-    #         if sl is not None:
-    #             sizes[i] = [np.subtract(*s.indices(sz)[1::-1])
-    #                         for s, sz in zip(sl, self.seg.shape)]
-    #     return sizes
-
-    def extend(self, labels, increment=1, clip=False):
-        """
-        Increase the size of each slice in either / both  directions by an
-        increment.
-        """
-        # FIXME: carry image size in slice 0 so we can default clip=True
-
-        # z = np.array([slices.llc(labels), slices.urc(labels)])
-        # z + np.array([-1, 1], ndmin=3).T
-        urc = np.add(self.urc(labels), increment).astype(int)
-        llc = np.add(self.llc(labels), -increment).astype(int)
-        if clip:
-            urc = urc.clip(None, duplicate_if_scalar(clip))  # TODO:.parent.shape
-            llc = llc.clip(0)
-
-        return [tuple(slice(*i) for i in _)
-                for _ in zip(*np.swapaxes([llc, urc], -1, 0))]
-
-    # def around_centroids(self, image, size, labels=None):
-    #     com = self.seg.centroid(image, labels)
-    #     slices = self.around_points(com, size)
-    #     return com, slices
-    #
-    # def around_points(self, points, size):
-    #
-    #     yxhw = duplicate_if_scalar(size) / 2
-    #     yxdelta = yxhw[:, None, None] * [-1, 1]
-    #     yxp = np.atleast_2d(points).T
-    #     yxss = np.round(yxp[..., None] + yxdelta).astype(int)
-    #     # clip negative slice indices since they yield empty slices
-    #     return list(zip(*(map(slice, *np.clip(ss, 0, sz).T)
-    #                       for sz, ss in zip(self.seg.shape, yxss))))
-
-    def plot(self, ax, **kws):
-        from matplotlib.patches import Rectangle
-        from matplotlib.collections import PatchCollection
-        from matplotlib.cm import get_cmap
-
-        kws.setdefault('facecolor', 'None')
-
-        rectangles = []
-        slices = list(filter(None, self))
-        n_slices = len(slices)
-
-        ec = kws.get('edgecolor', None)
-        ecs = kws.get('edgecolors', None)
-        if ec is None and ecs is None:
-            cmap = get_cmap(kws.get('cmap', 'gist_ncar'))
-            ecs = cmap(np.linspace(0, 1, n_slices))
-            kws['edgecolors'] = ecs
-
-        # make the patches
-        for y, x in slices:
-            xy = np.subtract((x.start, y.start), 0.5)  # pixel centres at 0.5
-            w = x.stop - x.start
-            h = y.stop - y.start
-            r = Rectangle(xy, w, h)
-            rectangles.append(r)
-
-        # collect
-        windows = PatchCollection(rectangles, **kws)
-        # plot
-        ax.add_collection(windows)
-        return windows
-
-
-# class Slices:
-#     # FIXME: remove this now superceded by SliceDict
-#     """
-#     Container emulation for tuples of slices. Aids selecting rectangular
-#     sub-regions of images more easil
-#     """
-#     # maps semantic corner positions to slice attributes
-#     _corner_slice_mapping = {'l': 'start', 'u': 'stop', 'r': 'stop'}
-#
-#     def __init__(self, seg_or_slices):
-#         """
-#         Create container of slices from SegmentationImage, Slice instance, or
-#         from list of 2-tuples of slices.
-#
-#         Slices are stored in a numpy object array. The first item in the
-#         array is a slice that will return the entire object to which it is
-#         passed as item getter. This represents the "background" slice.
-#
-#         Parameters
-#         ----------
-#         slices
-#         seg
-#         """
-#
-#         # self awareness
-#         if isinstance(seg_or_slices, Slices):
-#             slices = seg_or_slices
-#             seg = slices.seg
-#
-#         elif isinstance(seg_or_slices, SegmentationImage):
-#             # get slices from SegmentationImage
-#             seg = seg_or_slices
-#             slices = SegmentationImage.slices.fget(seg_or_slices)
-#         else:
-#             raise TypeError('%r should be initialized from '
-#                             '`SegmentationImage` or `Slices` object' %
-#                             self.__class__.__name__)
-#
-#         # use object array as container so we can get items by indexing with
-#         # list or array which is really nice and convenient
-#         # secondly, we include index 0 as the background ==> full array slice!
-#         # this means we can index this object directly with an array of
-#         # labels, or integer label, instead of needing the -1 every time you
-#         # want a slice
-#         self.slices = np.empty(len(slices) + 1, 'O')
-#         self.slices[0] = (slice(None),) * seg.data.ndim
-#         self.slices[1:] = slices
-#
-#         # add SegmentedImage instance as attribute
-#         self.seg = seg
-
-
-# import functools as ftl
 
 
 # class Centrality():
@@ -591,8 +225,6 @@ class SegmentedImage(SegmentationImage,     # base
     # In terms of modelling, this class also functions as a domain mapping layer
     # that lives on top of images.
 
-    seed = None
-
     # Source detection
     # ------------------------------------------------------------------------ #
     detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
@@ -636,9 +268,6 @@ class SegmentedImage(SegmentationImage,     # base
             obj.flux_sort(image)
 
         return obj
-
-    # @classmethod
-    # def _detect(cls, algorithm, image, mask=False, **kws):
 
     @classmethod
     def detect(cls, image, mask=None, dilate=0, **kws):
@@ -877,23 +506,8 @@ class SegmentedImage(SegmentationImage,     # base
         # otherwise `np.max` borks with empty sequence
         return super().max_label if self.labels.size else 0
 
-    def make_cmap(self, background_color='#000000', seed=seed):
-        # this function fails for all zero data since `make_random_cmap`
-        # squeezes the rgb values into an array with shape (3,). The parent
-        # tries to set the background colour (a tuple) in the 0th position of
-        # this array and fails. This overwrite would not be necessary if
-        # `make_random_cmap` did not squeeze
-
-        from photutils.utils.colormaps import make_random_cmap
-        from matplotlib import colors
-
-        cmap = make_random_cmap(self.max_label + 1, seed=seed)
-        cmap.colors = np.atleast_2d(cmap.colors)
-
-        if background_color is not None:
-            cmap.colors[0] = colors.hex2color(background_color)
-
-        return cmap
+    def make_cmap(self, background_color='#000000', seed=None):
+        return make_cmap(self.max_label + 1, background_color, seed)
 
     def resolve_labels(self, labels=None, ignore=None, allow_zero=False):
         """

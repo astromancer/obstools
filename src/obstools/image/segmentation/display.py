@@ -20,20 +20,49 @@ import motley.image
 from scrawl.utils import embossed
 from recipes.functionals import echo
 from recipes.pprint import formatters as fmt
-from recipes import api, duplicate_if_scalar, pprint, string
+from recipes import api, duplicate_if_scalar, pprint
+from ..utils import isdict
+
+# ---------------------------------------------------------------------------- #
+CONTOUR_STYLE = dict(cmap='hot',
+                     lw=1.5)
+
+LABEL_TEXT_STYLE = dict(color='w',
+                        alpha=0.5,
+                        weight='heavy',
+                        va='center',
+                        ha='center')
 
 
 STAT_FMT = {
-    'flux': ('Flux [ADU]',
-             lambda x: pprint.uarray(*x, thousands=' ')),
+    'flux':      ('Flux [ADU]',
+                  lambda x: pprint.uarray(*x, thousands=' ')),
     # fmt.Measurement(fmt.Decimal(0), thousands=' ', unit='ADU').unicode.starmap
-    'com': ('Position (y, x) [px]',
-            fmt.Collection(fmt.Decimal(1, short=False), brackets='()').map),
-    'areas': ('Area [px²]',
-              fmt.Decimal(0).map),
+    'com':       ('Position (y, x) [px]',
+                  fmt.Collection(fmt.Decimal(1, short=False), brackets='()').map),
+    'areas':     ('Area [px²]',
+                  fmt.Decimal(0).map),
     'roundness': ('Roundness',
                   fmt.Decimal(3).map)
 }
+
+
+# ---------------------------------------------------------------------------- #
+
+def make_cmap(n, background_color='#000000', seed=None):
+    # this function fails for all zero data since `make_random_cmap`
+    # squeezes the rgb values into an array with shape (3,). The parent
+    # tries to set the background colour (a tuple) in the 0th position of
+    # this array and fails. This overwrite would not be necessary if
+    # `make_random_cmap` did not squeeze
+
+    cmap = make_random_cmap(n, seed=None)
+    cmap.colors = np.atleast_2d(cmap.colors)
+
+    if background_color is not None:
+        cmap.colors[0] = colors.hex2color(background_color)
+
+    return cmap
 
 # ---------------------------------------------------------------------------- #
 
@@ -72,7 +101,7 @@ class SegmentPlotter:
     def __init__(self, seg):
         self.seg = seg
 
-    def __call__(self, cmap=None, contours=False, bbox=False, label=True,
+    def __call__(self, cmap=None, contours=False, label=True,  bbox=False,
                  **kws):
         """
         Plot the segmented image using the `ImageDisplay` class.
@@ -106,24 +135,26 @@ class SegmentPlotter:
         # conditional here prevents bork on empty segmentation image
 
         # plot
-        im = ImageDisplay(self.seg.data,
-                          cmap=cmap,
-                          clim=(0, self.seg.max_label),
-                          **{**kws,
-                             **dict(sliders=False, hist=False, cbar=False)})
+        im = ImageDisplay(
+            self.seg.data, cmap=cmap,
+            clim=(0, self.seg.max_label),
+            **{**kws, **dict(sliders=False, hist=False, cbar=False)}
+        )
 
+        ct = None
         if contours:
-            self.contours(im.ax)
+            ct = self.contours(im.ax, **{**CONTOUR_STYLE,
+                                         **(contours if isdict(contours) else {})})
 
-        if bbox:
-            self.seg.slices.plot(im.ax)
-
+        texts = []
         if label:
             # add label text (number) on each segment
-            self.labels(im.ax, color='w', alpha=0.5,
-                        fontdict=dict(weight='bold'))
+            texts = self.labels(im.ax, {**LABEL_TEXT_STYLE,
+                                        **(label if isdict(label) else {})})
 
-        return im
+        rcol = self.seg.slices.plot(im.ax) if bbox else None
+
+        return im, ct, texts, rcol
 
     def get_cmap(self, cmap=None):
         # colour map
@@ -144,7 +175,7 @@ class SegmentPlotter:
             else:
                 raise TypeError('Please provide axes parameter `ax`.')
         #
-        kws = {**dict(va='center', ha='center'), **kws}
+        kws = {**LABEL_TEXT_STYLE, **kws}
         texts = []
         for lbl, pos in self._label_positions().items():
             for x, y in pos[:, ::-1] + offset:

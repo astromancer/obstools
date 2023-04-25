@@ -3,15 +3,14 @@ Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
 # std
-import math
 import sys
+import math
 import tempfile
 import functools as ftl
 import itertools as itt
 import contextlib as ctx
 import multiprocessing as mp
 from pathlib import Path
-from pydoc import describe
 
 # third-party
 import numpy as np
@@ -20,13 +19,10 @@ from tqdm import tqdm
 from loguru import logger
 from joblib import Parallel, delayed
 from bottleneck import nanmean, nanstd
-from scipy.spatial.distance import cdist
-from matplotlib.transforms import AffineDeltaTransform
 from astropy.utils import lazyproperty
-from astropy.stats import median_absolute_deviation as mad
+from scipy.spatial.distance import cdist
 
 # local
-import motley
 from recipes.io import load_memmap
 from recipes.pprint import describe
 from recipes.dicts import AttrReadItem
@@ -34,14 +30,16 @@ from recipes.logging import LoggingMixin
 from recipes.parallel.joblib import initialized
 
 # relative
-from ..image import SkyImage
 from ..image.noise import CCDNoiseModel
 from ..image.detect import make_border_mask
+from ..image.segmentation.user import LabelUser
+from ..image.segmentation.utils import merge_segmentations
+from ..image.segmentation import (LabelGroupsMixin, SegmentedImage,
+                                  SegmentsModelHelper)
 from ..image.registration import (ImageRegister, compute_centres_offsets,
                                   report_measurements)
-from ..image.segmentation import (LabelGroupsMixin, SegmentedImage,
-                                  SegmentsModelHelper, merge_segmentations)
-from .gui import SourceTrackerGUI
+from .config import CONFIG
+from .diagnostics import SourceTrackerPlots
 
 
 # from recipes.parallel.synced import SyncedArray, SyncedCounter
@@ -133,78 +131,7 @@ def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
                       for (xs, ys) in segImx.slices], 0)
     return mxshift, maxImage, segImx
 
-
-def boundary_proximity(seg, points, labels=None):
-    labels = seg.resolve_labels(labels)
-    return np.array([np.sqrt(np.square(xy - seg.traced[l][0][0]).sum(1).min())
-                     for l, xy in zip(labels, points)])
-    # return np.array([np.sqrt(np.square(xy - boundary).sum(1).min())
-    #                  for ((boundary,), _), xy in zip(seg.traced.values(), points)])
-
-# class NullSlice():
-#     """Null object pattern for getitem"""
 #
-#     def __getitem__(self, item):
-#         return None
-
-# constructor used for pickling
-# def _construct_SegmentedArray(*args):
-#     return SegmentedArray(*args)
-
-
-class LabelUser:
-    """
-    Mixin class for objects that use `SegmentedImage`.
-
-    Adds the `use_label` and `ignore_label` properties.  Whenever a function
-    that takes the `label` parameter is called with the default value `None`,
-    the labels in `use_labels` will be used instead. This helps with dynamically
-    including / excluding labels and with grouping labelled segments together.
-
-    If initialized without any arguments, all labels in the segmentation image
-    will be in use.
-
-    """
-
-    def __init__(self, use_labels=None, ignore_labels=None):
-        if use_labels is None:
-            use_labels = self.seg.labels
-        if ignore_labels is None:
-            ignore_labels = []
-
-        self._use_labels = np.setdiff1d(use_labels, ignore_labels)
-        self._ignore_labels = np.asarray(ignore_labels)
-
-    @property
-    def ignore_labels(self):
-        return self._ignore_labels
-
-    @ignore_labels.setter
-    def ignore_labels(self, labels):
-        self._ignore_labels = np.asarray(labels, int)
-        self._use_labels = np.setdiff1d(self.seg.labels, labels)
-
-    @property
-    def use_labels(self):
-        return self._use_labels
-
-    @use_labels.setter
-    def use_labels(self, labels):
-        self._use_labels = np.asarray(labels, int)
-        self._ignore_labels = np.setdiff1d(self.seg.labels, labels)
-
-    def resolve_labels(self, labels=None):
-        return self.use_labels if labels is None else self.seg.has_labels(labels)
-
-    @property
-    def nlabels(self):
-        return len(self.use_labels)
-
-    @property
-    def sizes(self):
-        return [len(labels) for labels in self.values()]
-
-
 # class MaskUser:
 #     """Mixin class giving masks property"""
 #
@@ -492,6 +419,9 @@ class SourceTracker(LabelUser,
         self._precision_reached = False
 
         self.noise_model = noise_model
+
+        # plotting
+        self.show = self.plot = SourceTrackerPlots(self)
 
         # masks for photometry
         # self.bad_pixel_mask = bad_pixel_mask
@@ -1075,110 +1005,9 @@ class SourceTracker(LabelUser,
         return report_measurements(xy, centres, σ_xy, counts, detect_frac_min,
                                    count_thresh, self.logger)
 
-    def plot(self, image, ax=None, points='rx', contours=True, labels=LABEL_STYLE,
-             **kws):
-
-        sim = SkyImage(image, segments=self.seg)
-        sim.xy = self.coords
-        display, art = sim.show(True, False, points, False, labels,
-                                coords='pixel', ax=ax, **kws)
-
-        if contours is False:
-            return art
-
-        if contours is True:
-            contours = {}
-
-        contours = self.seg.show.contours(
-            ax,
-            offsets=self.origin,
-            transOffset=AffineDeltaTransform(ax.transData),
-            **contours
-        )
-
-        return art
 
     # def animate(self, data):
 
-    def plot_position_measures(self, labels, section=..., **kws):
-
-        import matplotlib.pyplot as plt
-        from matplotlib.patches import Rectangle, Circle
-        from .gui import SourceTrackerGUI
-
-        delta = self.measurements[section] - self.coords
-        delta_avg = self.measure_avg[section] - self.coords
-        delta_xy = self.delta_xy[section]
-        comm = dict(lw=1, ls='--', fc='none', ec='k', zorder=10)
-
-        fig, axes = plt.subplots(len(labels), 2, sharex=True, sharey=True)
-        axes = np.atleast_2d(axes)
-        for ax in axes.ravel():
-            # add pixel size rect
-            ax.add_patch(Rectangle((-0.5, -0.5), 1, 1, **comm))
-            ax.add_patch(Circle((0, 0), self.precision, **comm))
-            ax.set_aspect('equal')
-            ax.tick_params(bottom=True, top=True, left=True, right=True)
-
-        comm = dict(ls='', mfc='none', zorder=1)
-        features = {**self.centrality, 'Weigthed Avg': 1}
-        for j in range(len(labels)):
-            ax1, ax2 = axes[j]
-
-            for i, (measure, use) in enumerate(features.items()):
-                if not use:
-                    continue
-
-                if items := SourceTrackerGUI.centroid_props.get(measure):
-                    data, (marker, label) = delta[:, i, j], items
-                else:
-                    data, marker, label = delta_avg[:, j], 'x', measure
-
-                comm = {**comm, 'marker': marker, 'label': label}
-                ax1.plot(*data.T, **comm)
-                ax2.plot(*(data + delta_xy).T, **comm)
-
-        # fig.tight_layout()
-        # fig.subplots_adjust(top=0.82, hspace=0, vspace=0)
-        axes[0, 0].legend(loc='lower left', bbox_to_anchor=(0, 1.05))
-
-    # def plot_position_measures(self, **kws):
-
-    #     import matplotlib.pyplot as plt
-    #     from matplotlib.patches import Rectangle, Circle
-    #     from .gui import SourceTrackerGUI
-
-    #     delta = self.measurements - self.coords
-
-    #     for j in range(len(self.use_labels)):
-    #         fig, axes = _, (ax1, ax2) = plt.subplots(1, 2, sharex=True, sharey=True)
-    #         for ax in axes:
-    #             # add pixel size rect
-    #             comm = dict(lw=1, ls='--', fc='none', ec='k', zorder=10)
-    #             ax.add_patch(Rectangle((-0.5, -0.5), 1, 1, **comm))
-    #             ax.add_patch(Circle((0, 0), self.precision, **comm))
-    #             ax.set_aspect('equal')
-    #             ax.tick_params(bottom=True, top=True, left=True, right=True)
-
-    #         for i, (measure, use) in enumerate(self.centrality.items()):
-    #             if not use:
-    #                 continue
-
-    #             marker, label = SourceTrackerGUI.centroid_props[measure]
-    #             comm = dict(marker=marker, label=label, ls='', mfc='none', zorder=1)
-    #             ax1.plot(*delta[:, i, j].T, **comm)
-    #             ax2.plot(*(delta[:, i, j] + self.delta_xy).T, **comm)
-
-    #         ax1.legend(loc='lower center', bbox_to_anchor=(1.05, 1.05))
-
-    # def plot_position_measures(self, **kws):
-
-        #     self.measurements
-
-        # from obstools.phot.diagnostics import plot_position_measures
-
-        # return plot_position_measures(self.measurements, self.coords,
-        #                               -self.delta_xy, **kws)
 
     # def _pad(self, image, origin, zero=0.):
     #     # make a measurement of some property of image using the segments

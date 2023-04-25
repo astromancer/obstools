@@ -161,7 +161,15 @@ def test_trace_contours():
         im.ax.plot(*boundary.T[::-1], 'r-')
 
     # TODO: test tracing for segments with multiple seperate sections.
-
+    # TODO: test:
+    # b = np.array([[ 1,  1,  1,  1,  1,  1,  1],
+    #               [ 1,  0,  1,  0,  1,  0,  1],
+    #               [ 1,  1,  1,  1,  1,  0,  0],
+    #               [ 0,  1,  0,  1,  0,  0,  0],
+    #               [ 1,  1,  0,  0,  0,  0,  0],
+    #               [ 1,  0,  1,  0,  1,  1,  1],
+    #               [ 0,  1,  1,  0,  1,  0,  1],
+    #               [ 1,  0,  0,  0,  1,  1,  1]])
 
 @pytest.mark.parametrize('stat', MaskedStatsMixin._supported)
 def test_stats(seg, sim_data, stat):

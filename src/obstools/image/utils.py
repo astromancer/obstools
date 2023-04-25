@@ -1,3 +1,5 @@
+
+
 # third-party
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
@@ -8,11 +10,17 @@ import motley
 from motley.table import Table
 
 
+# ---------------------------------------------------------------------------- #
+def isdict(obj):
+    return isinstance(obj, dict)
+
+
+is_dict = isdict
+
+
 def non_masked(xy):
     xy = np.asanyarray(xy)
-    if np.ma.is_masked(xy):
-        return xy[~xy.mask.any(-1)].data
-    return np.array(xy)
+    return xy[~xy.mask.any(-1)].data if np.ma.is_masked(xy) else np.array(xy)
 
 
 def table_coords(coo, ix_fit, ix_scale, ix_loc):
@@ -52,8 +60,7 @@ def table_coords(coo, ix_fit, ix_scale, ix_loc):
     # ts = tt.add_colourbar(str(tt), ('fit|', 'scale|', 'loc|'))
 
     # join tables
-    tbl = Table([[str(cootbl), str(tt)]], frame=False, col_borders='')
-    return tbl
+    return Table([[str(cootbl), str(tt)]], frame=False, col_borders='')
 
 
 def table_cdist(sdist, window, _print=False):
