@@ -1,5 +1,5 @@
 """
-Methods for tracking camera movements in astronomical time-series CCD photometry
+Methods for tracking camera movements in astronomical time-series CCD photometry.
 """
 
 # std
@@ -39,14 +39,14 @@ from ..image.segmentation import (LabelGroupsMixin, SegmentedImage,
 from ..image.registration import (ImageRegister, compute_centres_offsets,
                                   report_measurements)
 from .config import CONFIG
+from .proc import ContextStack
 from .diagnostics import SourceTrackerPlots
 
 
 # from recipes.parallel.synced import SyncedArray, SyncedCounter
 
-
-# TODO: CameraTrackingModel / CameraOffset / CameraPositionModel
-# ConstellationModel
+# TODO: CameraTrackingModel / CameraOffset / CameraPositionModel / DitherModel
+# SourceFieldDitherModel
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
 
@@ -54,48 +54,20 @@ from .diagnostics import SourceTrackerPlots
 #  simulate how different centre measures performs for sources with decreasing snr
 #  super resolution images
 #  lucky imaging ?
-
+# ---------------------------------------------------------------------------- #
+_original_stdout = sys.stdout
+_original_stderr = sys.stderr
 
 # ---------------------------------------------------------------------------- #
-
-
-FILENAMES = dict(
-    measurements='centroids.dat',
-    measure_avg='centroids-mean.dat',
-    measure_std='centroids-std.dat',
-    delta_xy='coords-delta.dat',
-    sigma_xy='coords-std.dat',
-    flux='flux.dat',
-    flux_std='flux-std.dat',
-    snr='snr.dat',
-    _origins='origin.dat'
-)
-
-TABLE_STYLE = dict(txt='bold', bg='g')
-LABEL_STYLE = dict(offset=(6, 6),
-                   color='w',
-                   size=10,
-                   fontweight='bold')
-
+# Multiprocessing
+sync_manager = mp.Manager()
+# check precision of computed source positions
+precision_reached = sync_manager.Value('i', -1)
+# when was the centroid distribution spread last estimated
+_last_checked = sync_manager.Value('i', -1)
+_computing_centres = sync_manager.Value('b', 0)
+# default lock - does nothing
 memory_lock = ctx.nullcontext()
-
-# ---------------------------------------------------------------------------- #
-
-
-PBAR_STYLE = dict(
-    bar_format=motley.stylize(
-        '{{desc}: {percentage:3.0f}%{bar}'
-        '{n_fmt}/{total_fmt}:|lime} '
-        '{rate_fmt:|gold} '
-        '{elapsed:|cyan} eta {remaining:|cyan}'
-    ),
-    ascii=' ╸━',
-    unit=' frames'
-)
-
-
-def write_tqdm_log(msg):
-    tqdm.write(msg, end='')
 
 
 def set_lock(mem_lock, tqdm_lock):
@@ -109,9 +81,11 @@ def set_lock(mem_lock, tqdm_lock):
 
 # ---------------------------------------------------------------------------- #
 
-def not_null(obj):
-    return (obj is not None) or bool(np.size(obj))
-
+# class NullSlice():
+#     """Null object pattern for getitem"""
+#
+#     def __getitem__(self, item):
+#         return None
 
 # ---------------------------------------------------------------------------- #
 def check_image_drift(cube, nframes, mask=None, snr=5, npixels=10):
@@ -296,7 +270,7 @@ class SourceTracker(LabelUser,
         'com':              1,
         # 'com_bg':           0,
         'geometric_median': 0,
-        'peak':             1,
+        'peak':             0,
         # 'upsample_max':     0
     }
 
@@ -318,7 +292,10 @@ class SourceTracker(LabelUser,
                  use_labels=None, label_groups=None,
                  bad_pixel_mask=None, edge_cutoffs=0,
                  weights='snr', update_weights_every=25,
-                 update_centres_every=100, measure_centres_after=None,
+                 #
+                 update_centres_every=100,
+                 measure_centres_after=None,
+                 #  measure_centres_until=1000,
                  precision=0.5,  # should be ~ diffraction limit
                  reference_index=0,
                  noise_model=None):
@@ -392,7 +369,7 @@ class SourceTracker(LabelUser,
         LabelGroupsMixin.__init__(self, label_groups)
 
         # counter for incremental update
-        self.counter = itt.count()  # SyncedCounter()
+        # self.counter = itt.count()  #
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
         self.measurements = self.measure_avg = self.measure_std = \
@@ -416,7 +393,11 @@ class SourceTracker(LabelUser,
         self._update_weights_every = int(max(update_weights_every, 0)) if snrw else 0
         self._update_centres_every = int(max(update_centres_every, 0))
         self._measure_centres_after = int(measure_centres_after or update_centres_every)
-        self._precision_reached = False
+        # self._measure_centres_until = int(measure_centres_until)
+
+        # shared memory for internal use
+        # self._precision_reached = mp.Value('i', -1)
+        # self.counter = SyncedCounter()
 
         self.noise_model = noise_model
 
@@ -478,11 +459,13 @@ class SourceTracker(LabelUser,
             shapes['measure_std'] = (n, nsources, 2)
 
         # load memory
+        filenames = CONFIG.filenames
         spec = ('f', np.nan, overwrite)
         for name, shape in shapes.items():
-            setattr(self, name, load_memmap(loc / FILENAMES[name], shape, *spec))
+            setattr(self, name, load_memmap(loc / filenames[name], shape, *spec))
 
-        self._origins = load_memmap(loc / FILENAMES['_origins'], (n, 2), 'i', 0, overwrite)
+        self._origins = load_memmap(loc / filenames['_origins'], (n, 2), 'i', 0,
+                                    overwrite)
 
     def __call__(self, data, indices=None, mask=None):
         """
@@ -555,16 +538,61 @@ class SourceTracker(LabelUser,
         weights = np.fromiter(self.centrality.values(), float)
         return (weights / weights.sum())[:, None, None]
 
-    def should_update_weights(self, count=0):
-        return ((self.snr_weighting or self.snr_cut) and
-                ((self._source_weights is None) or
-                 (count % self._update_weights_every == 0)))
+    def should_update_weights(self, request=None):
+        if request is None:
+            return ((self.snr_weighting or self.snr_cut) and
+                    (self._source_weights is None))
+        return request
 
-    def should_update_pos(self, count=0):
-        # if count % self._update_centres_every) == 0:
-        return count and (count % self._update_centres_every) == 0  # (count > 0) and
-        # ( )#and
-        # (self.sigma_xy.mean() > self.precision))
+    def should_update_pos(self, request=None):
+        if request is not None:
+            return request
+
+        return not self._check_precision_reached() and _computing_centres.value != 1
+
+    def _check_precision_reached(self):
+        self.logger.trace('Checking precision:')
+
+        # with precision_reached:
+        if (when := precision_reached.value) != -1:
+            self.logger.trace('Required precision reached at frame {}.', when)
+            return True
+
+        with memory_lock:
+            n = np.sum(self.measured)
+            if n < self._measure_centres_after:
+                self.logger.info(
+                    'Delaying centre compute until {} centroid measurements'
+                    ' have been made. This can be configured through the '
+                    '`measure_centres_after` parameter.',
+                    self._measure_centres_after)
+                return False
+
+            if n == _last_checked.value:
+                self.logger.debug('No new measurements since previous precision'
+                                  ' check - continuing...')
+                return True
+
+            if (self.sigma_xy.mean() < self.precision).all():
+                # Reached required precision
+                precision_reached.value = n
+                self.logger.opt(lazy=True).info(
+                    'Required positional accuracy of {0[0]:} < {0[1]:g} '
+                    'achieved with {0[2]:} measurements. Relative source '
+                    'positions will not be updated further.',
+                    lambda: (self.sigma_xy.mean(0), self.precision, n)
+                )
+                self.report_measurements()
+                return True
+
+            _last_checked.value = n
+
+        self.logger.opt(lazy=True).info(
+            'Precision after {0[2]:} measurements: {0[0]:} > {0[1]:g}. ',
+            lambda: (self.sigma_xy.mean(0), self.precision, n)
+        )
+
+        return False
 
     def get_coords(self, i=None):
         if i is None:
@@ -602,15 +630,10 @@ class SourceTracker(LabelUser,
         FileNotFoundError
             If memory has not been initialized prior to calling this method.
         """
-
-    #     if self.measurements is None:
-    #         raise FileNotFoundError('Initialize memory first by calling the '
-    #                                 '`init_memory` method.')
-
-    #     for i, f in enumerate(self.centrality):
-    #         getattr(self.seg, f)(data, None, n_jobs, self.measurements[:, i])
-
-    # def _run(self, data, indices=None, n_jobs=-1, progress_bar=True, **kws):
+        # preliminary checks
+        if self.measurements is None:
+            raise FileNotFoundError('Initialize memory first by calling the '
+                                    '`init_memory` method.')
 
         if indices is None:
             indices, = np.where(~self.measured)
@@ -620,98 +643,133 @@ class SourceTracker(LabelUser,
                              'you may do >>> tracker.measurements[:] = np.nan')
             return
 
-        if self.measurements is None:
-            raise FileNotFoundError('Initialize memory first by calling the '
-                                    '`init_memory` method.')
+        if n_jobs == -1:
+            n_jobs = mp.cpu_count()
 
+        # main compute
+        self._run(data, indices, n_jobs, progress_bar, backend)
+
+        # finally, recompute the positions
+        self.compute_centres_offsets(True)
+
+    def _run(self, data, indices, n_jobs, progress_bar, backend):
+
+        # init counter
+        precision_reached.value = -1
+
+        # setup compute context
+
+        context = ContextStack()
+        if n_jobs == 1:
+            worker = self.loop
+            context.add(ctx.nullcontext(list))
+        else:
+            worker = self._setup_compute(n_jobs, backend, context, progress_bar)
+
+        # execute
+        # with ctx.redirect_stdout(TqdmStreamAdapter()):
+        logger.remove()
+        logger.add(TqdmStreamAdapter(), colorize=True, enqueue=True)
+
+        with context as compute:
+            compute(worker(data, *args) for args in
+                    self._get_workload(len(data), indices, n_jobs, progress_bar))
+
+        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
+        #              backend, time.time() - t_start)
+
+    def _setup_compute(self, n_jobs, backend, context, progress_bar):
+        # locks for managing output contention
+        tqdm.set_lock(mp.RLock())
+        memory_lock = mp.Lock()
+
+        # NOTE: object serialization is about x100-150 times faster with
+        # multiprocessing backend. ~0.1s vs 10s for loky.
+        worker = delayed(self.loop)
+        executor = Parallel(n_jobs, backend)  # verbose=10
+        context.add(initialized(executor, set_lock,
+                                (memory_lock, tqdm.get_lock())))
+
+        # Adapt logging for progressbar
+        if progress_bar:
+            # These catch the print statements
+            # context.add(TqdmStreamAdapter(sys.stdout))
+            # context.add(TqdmStreamAdapter(sys.stderr))
+            context.add(TqdmLogAdapter())
+
+        return worker
+
+    def _get_workload(self, total, indices, n_jobs, progress_bar):
         # divide work
-        batch_size = max(self._update_weights_every, self._update_centres_every)
+        batch_size = min(self._update_weights_every, self._update_centres_every)
         batches = mit.chunked(indices, batch_size)
         n_batches = round(len(indices) / batch_size)
 
+        #
+        self.logger.info('Work split into {} batches of {} frames each. {} '
+                         'concurrent workers will be used.',
+                         n_batches, batch_size, n_jobs)
+
         # triggers for computing coordinate centres and weights as needed
+        triggers = np.array(
+            [(self._measure_centres_after, self._update_centres_every),
+             (0,                           self._update_weights_every)]
+        ) // batch_size
         update_centres, update_weights = (
             itt.chain(
                 # burn in
                 itt.repeat(False, burn_in - 1),
                 # compute every nth batch
-                itt.cycle(itt.chain([None], itt.repeat(False, every - 1)))
+                itt.cycle(itt.chain([val], itt.repeat(False, every - 1)))
             )
-            for burn_in, every in
-            np.array([(self._measure_centres_after, self._update_centres_every),
-                      (0, self._update_weights_every)]) // batch_size
+            for (burn_in, every), val in zip(triggers, (None, True))
         )
 
         # workload iterable with progressbar if required
-        workload = tqdm(zip(batches, update_weights, update_centres),
-                        total=n_batches, unit_scale=batch_size,
-                        disable=not progress_bar, **PBAR_STYLE)
+        return tqdm(zip(batches, update_weights, update_centres),
+                    initial=(total - len(indices)) // batch_size,
+                    total=total // batch_size, unit_scale=batch_size,
+                    disable=not progress_bar, **CONFIG.progress)
 
-        # setup compute context
-        if n_jobs == -1:
-            n_jobs = mp.cpu_count()
-
-        if n_jobs == 1:
-            worker = self.loop
-            context = ctx.nullcontext(list)
-        else:
-            # locks for managing output contention
-            tqdm.set_lock(mp.RLock())
-            memory_lock = mp.Lock()
-
-            # NOTE: object serialization is about x100-150 times faster with
-            # multiprocessing backend. ~0.1s vs 10s for loky.
-            executor = Parallel(n_jobs, backend, verbose=10)
-            context = initialized(executor, set_lock, (memory_lock, tqdm.get_lock()))
-            worker = delayed(self.loop)
-
-            # setup progressbar
-            logger.remove()
-            pbar_sink = self.logger.add(write_tqdm_log, colorize=True, enqueue=True)
-
-        # execute
-        with context as compute:
-            # t_start = time.time()
-            compute(worker(data, *args) for args in workload)
-
-            # logger.debug('With {} backend, pickle serialization took: {:.3f}s',
-            #              backend, time.time() - t_start)
-            # else:
-            #     worker_pool.starmap(self.loop,
-            #                         ((data, idx) for idx in mit.divide(n_jobs, indices)))
-            #     worker_pool.close()
-            #     worker_pool.join()
-
-        self.logger.remove(pbar_sink)
-        self.logger.add(sys.stderr)
-        # self.logger.debug('{} Processes successfully shut down.', n_jobs)
-
-    def loop(self, data, indices, update_weights=None, update_centres=None, report=True):
+    def loop(self, data, indices, update_weights=None, update_centres=None,
+             report=True):
 
         indices = np.atleast_1d(indices)
 
-        # weights
-        if update_weights or self.should_update_weights():
-            i = indices[0]
-            self.update_weights(data[i], i)
+        # # weights
+        # self.logger.info(f'{update_weights=}; '
+        #                  f'{self.should_update_weights()=}')
+
+        if self.should_update_weights(update_weights):
+            self.update_weights(data[(i := indices[0])], i)
 
         # measure
         for i in indices:
-            off = self.measure(data, i)
+            self.delta_xy[i] = off = self.measure(data, i)
 
-            with memory_lock:
-                next(self.counter)
-                self.delta_xy[i] = off
+            # with memory_lock:
+            #     # next(self.counter)
+            #     self.delta_xy[i] = off
 
         # if indices.size < 10:
-        logger.trace('OFFSETS frame {}: {}', i, off)
+        self.logger.trace('OFFSETS frame {}: {}', i, off)
         # xym = self.measure_avg[indices]
 
         # update relative positions from CoM measures
         # check here if measurements of cluster centres are good enough!
-        if update_centres or self.should_update_pos():
+
+        # self.logger.info(f'{update_centres=}; '
+        #                  f'{self.should_update_pos()=}')
+
+        if self.should_update_pos(update_centres):
             self.logger.info('Updating source positions & offsets.')
-            self.compute_centres_offsets(report)
+            if _computing_centres.value:
+                self.logger.info('Centres currently being computed by another '
+                                 'process. Skipping.')
+            else:
+                _computing_centres.value = 1
+                self.compute_centres_offsets(report)
+                _computing_centres.value = 0
 
             self.logger.opt(lazy=True).trace(
                 'Average pos stddev: {}', lambda: self.sigma_xy.mean(0))
@@ -917,41 +975,24 @@ class SourceTracker(LabelUser,
 
     def compute_centres_offsets(self, report=False):
         """
-        Measure the relative positions of sources, as well as the xy offset
-        (dither) of each image frame based on the set of centroid; measurements
-        in `xy`.
+        Measure the relative positions of sources, as well as the xy shifts
+        (dither) of each image frame based on the average centroid measurements
+        in `self.measured_avg`.
 
         Parameters
         ----------
-        xy
-
-        Returns
-        -------
-
+        report: bool
+            Whether to print a table with the current coordinates and their 
+            measurement uncertainty.
         """
-        # xy = self.measurements
-        # ok = np.logical_not(np.isnan(self.measurements).all((1, 2, 3)))
 
-        self.logger.debug('Estimating source positions from average of {} features')
-
-        with memory_lock:
-            if (self.sigma_xy.mean() < self.precision).all():
-                return self._check_precision()
+        self.logger.debug('Estimating source positions from average of {} '
+                          'features.', len(self.centrality))
 
         xym, centres, σ_pos, delta_xy, out = compute_centres_offsets(
-            self.measure_avg, self._distance_cut)
+            self.measure_avg, self._distance_cut, report=False)
 
-        # self.logger.info('compute_centres_offsets OK')
-
-        # origin = np.floor(delta_xy.min(0))
-
-        # self.zero_point
-        # note using the first non-masked point will avoid this compute
-        #  FIXME: account for difference between zero point and min off here...
-        # smallest offset as origin makes sense from global image perspective
-        # changing the zero_point means you have to update all offsets
-
-        # make the offsets relative to the global segmentation
+        # shift the coordinate system relative to the new reference point
         xy0 = centres[self.ir]
         δ = self.xy0 - xy0
 
@@ -960,31 +1001,10 @@ class SourceTracker(LabelUser,
             self.rpos = centres - xy0
             self.sigma_xy[:] = σ_pos
 
-        # self.logger.info('compute_centres_offsets SAVED')
-        # if (σ_pos < self.precision).all():
+        self.logger.debug('Updated source positions: δ = {}.', δ)
 
         if report:
             self.report_measurements(xym, centres, σ_pos)
-
-    def _check_precision(self):
-        if self._precision_reached:
-            return
-
-        n = np.sum(self.measured)
-        if n < self._measure_centres_after:
-            self.logger.info('Delaying centre compute.')
-            return
-
-        self._precision_reached = n
-        self.logger.opt(lazy=True).info(
-            'Required positional accuracy of {0[0]:} < {0[1]:g} achieved '
-            'with {0[2]:} measurements. Relative source positions will '
-            'not be updated further.',
-            lambda: (self.sigma_xy.mean(0),
-                     self.precision,
-                     self._precision_reached)
-        )
-        return
 
     def report_measurements(self, xy=None, centres=None, σ_xy=None,
                             counts=None, detect_frac_min=None,
@@ -992,12 +1012,10 @@ class SourceTracker(LabelUser,
         # TODO: rename pprint()
 
         if xy is None:
-            nans = np.isnan(self.measurements)
-            good = ~nans.all((1, 2))
-            xy = self.measurements[good]
+            xy = self.measure_avg[self.measured]
 
         if centres is None:
-            centres = self.coords
+            centres = self.coords[self.use_labels]
 
         if σ_xy is None:
             σ_xy = self.sigma_xy
@@ -1005,9 +1023,7 @@ class SourceTracker(LabelUser,
         return report_measurements(xy, centres, σ_xy, counts, detect_frac_min,
                                    count_thresh, self.logger)
 
-
     # def animate(self, data):
-
 
     # def _pad(self, image, origin, zero=0.):
     #     # make a measurement of some property of image using the segments
@@ -1225,64 +1241,58 @@ class SourceTracker(LabelUser,
 
         return snr
 
-    def is_bad(self, coo):
-        """
-        improve the robustness of the algorithm by removing centroids that are
-        bad.  Bad is inf / nan / outside segment.
-        """
+    # def is_bad(self, coo):
+    #     """
+    #     improve the robustness of the algorithm by removing centroids that are
+    #     bad.  Bad is inf / nan / outside segment.
+    #     """
 
-        # flag inf / nan values
-        lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
+    #     # flag inf / nan values
+    #     lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
 
-        # filter COM positions that are outside of detection regions
-        lbad2 = ~self.seg.inside_segment(coo, self.use_labels)
+    #     # filter COM positions that are outside of detection regions
+    #     lbad2 = ~self.seg.inside_segment(coo, self.use_labels)
 
-        return lbad | lbad2
+    #     return lbad | lbad2
 
-    def is_outlier(self, coo, mad_thresh=5, jump_thresh=5):
-        """
-        improve the robustness of the algorithm by removing centroids that are
-        outliers.  Here an outlier is any point further that 5 median absolute
-        deviations away. This helps track sources in low snr conditions.
-        """
-        # flag inf / nan values
-        lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
+    # def is_outlier(self, coo, mad_thresh=5, jump_thresh=5):
+    #     """
+    #     improve the robustness of the algorithm by removing centroids that are
+    #     outliers.  Here an outlier is any point further that 5 median absolute
+    #     deviations away. This helps track sources in low snr conditions.
+    #     """
+    #     # flag inf / nan values
+    #     lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
 
-        # filter centroid measurements that are obvious errors (large jumps)
-        r = np.sqrt(np.square(self.coords - coo).sum(1))
-        lj = r > jump_thresh
+    #     # filter centroid measurements that are obvious errors (large jumps)
+    #     r = np.sqrt(np.square(self.coords - coo).sum(1))
+    #     lj = r > jump_thresh
 
-        if len(coo) < 5:  # scatter large for small sample sizes
-            lm = np.zeros(len(coo), bool)
-        else:
-            lm = r - np.median(r) > mad_thresh * mad(r)
+    #     if len(coo) < 5:  # scatter large for small sample sizes
+    #         lm = np.zeros(len(coo), bool)
+    #     else:
+    #         lm = r - np.median(r) > mad_thresh * mad(r)
 
-        return lj | lm | lbad
+    #     return lj | lm | lbad
 
-    def update_pos_point(self, coo, weights=None):
-        # TODO: bayesian_update
-        """"
-        Incremental average of relative positions of sources (since they are
-        considered static)
-        """
-        # see: https://math.stackexchange.com/questions/106700/incremental-averageing
-        vec = coo - coo[self.ir]
-        n = self.count + 1
-        if weights is None:
-            weights = 1. / n
-        else:
-            weights = (weights / weights.max() / n)[:, None]
+    # def update_pos_point(self, coo, weights=None):
+    #     # TODO: bayesian_update
+    #     """"
+    #     Incremental average of relative positions of sources (since they are
+    #     considered static)
+    #     """
+    #     # see: https://math.stackexchange.com/questions/106700/incremental-averageing
+    #     vec = coo - coo[self.ir]
+    #     n = self.count + 1
+    #     if weights is None:
+    #         weights = 1. / n
+    #     else:
+    #         weights = (weights / weights.max() / n)[:, None]
 
-        ix = self.use_labels - 1
-        inc = (vec - self.rpos[ix]) * weights
-        self.logger.debug('rpos increment:\n{:s}', inc)
-        self.rpos[ix] += inc
-
-    # def get_shift(self, image):
-    #     com = self.seg.com_bg(image)
-    #     l = ~self.is_outlier(com)
-    #     shift = np.median(self.coords[l] - com[l], 0)
-    #     return shift
+    #     ix = self.use_labels - 1
+    #     inc = (vec - self.rpos[ix]) * weights
+    #     self.logger.debug('rpos increment:\n{:s}', inc)
+    #     self.rpos[ix] += inc
 
     def best_for_tracking(self, image, close_cut=None, snr_cut=snr_cut,
                           saturation=None):
@@ -1337,6 +1347,8 @@ class SourceTracker(LabelUser,
         return w
 
     def gui(self, hdu, **kws):
+        from obstools.phot.gui import SourceTrackerGUI
+
         return SourceTrackerGUI(self, hdu, **kws)
 
     @classmethod
