@@ -7,6 +7,13 @@ import numpy as np
 from pyxides.vectorize import vdict
 from recipes.utils import duplicate_if_scalar
 
+from collections import namedtuple
+
+# ---------------------------------------------------------------------------- #
+# simple container for 2-component objects
+yxTuple = namedtuple('yxTuple', ['y', 'x'])
+
+# ---------------------------------------------------------------------------- #
 
 class SliceDict(vdict):
     """

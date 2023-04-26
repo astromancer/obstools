@@ -1,45 +1,47 @@
 
+# source tracking
+tracking:
+    filenames:
+        measurements: centroids.dat
+        measure_avg:  centroids-mean.dat
+        measure_std:  centroids-std.dat
+        delta_xy:     coords-delta.dat
+        sigma_xy:     coords-std.dat
+        flux:         flux.dat
+        flux_std:     flux-std.dat
+        snr:          snr.dat
+        _origins:     origin.dat
 
-filenames:
-    measurements: centroids.dat
-    measure_avg:  centroids-mean.dat
-    measure_std:  centroids-std.dat
-    delta_xy:     coords-delta.dat
-    sigma_xy:     coords-std.dat
-    flux:         flux.dat
-    flux_std:     flux-std.dat
-    snr:          snr.dat
-    _origins:     origin.dat
+    centroids:
+        avg:              [x, k, Weighted Average]
+        com:              [+, r, Centre of Mass]
+        geometric_median: [o, g, Geometric Median]
+        peak:             [^, m, Maximum]
+
+    labels:
+        offset: [6, 6]
+        color:  w
+        size:   10
+        # fontweight:bold
+
+    table:
+        txt:    bold
+        bg:     g
+
+    progress:
+        bar_format: >
+            {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
+            {rate_fmt:|gold}
+            {elapsed:|cyan} eta {remaining:|cyan}
+        ascii: ╸━
+        unit: frames
 
 
-table:
-    txt:    bold
-    bg:     g
-
-labels:
-    offset: [6, 6]
-    color:  w
-    size:   10
-    # fontweight:bold
-
-progress:
-    bar_format: >
-        {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
-        {rate_fmt:|gold}
-        {elapsed:|cyan} eta {remaining:|cyan}
-    ascii: ╸━
-    unit: frames
 
 
-centroids:
-    avg:              [x, k, Weighted Average]
-    com:              [+, r, Centre of Mass]
-    geometric_median: [o, g, Geometric Median]
-    peak:             [^, m, Maximum]
 
+        
 
-    
-
-    # upsample_max:     (d Upsampled Max
-    # com_bg:           (+ Centre of Mass (Median sub
+        # upsample_max:     (d Upsampled Max
+        # com_bg:           (+ Centre of Mass (Median sub
 

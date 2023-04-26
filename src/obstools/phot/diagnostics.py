@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
-from matplotlib import ticker
-from matplotlib.patches import Circle, Rectangle
+from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 from loguru import logger
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
@@ -28,158 +28,8 @@ from scrawl.ticks import LinearRescaleFormatter
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 
 
+# ---------------------------------------------------------------------------- #
 SECONDS_PER_DAY = 86400
-
-
-class SourceTrackerPlots:
-
-    def __init__(self, tracker):
-        self.tracker = tracker
-
-    def image(self, image, ax=None, points='rx', contours=True,
-              labels=CONFIG.labels, **kws):
-
-        tracker = self.tracker
-        sim = SkyImage(image, segments=tracker.seg)
-        sim.xy = tracker.coords
-
-        display, art = sim.show(True, False, points, False, labels,
-                                coords='pixel', ax=ax, **kws)
-
-        if contours:
-            if contours is True:
-                contours = {}
-            art.contours = self.contours(**contours)
-
-        return art
-
-    def contours(self, ax, **kws):
-        return self.seg.show.contours(
-            ax, 
-            **{'offsets':     self.origin,
-               'transOffset': AffineDeltaTransform(display.ax.transData),
-               **kws}
-        )
-
-    def positions(self, labels=None, section=..., figsize=(6.5, 7),
-                  legend=True, show_weights=True, show_null_weights=False,
-                  **kws):
-        """
-        For sets of measurements (m, n, 2), plot each (m, 2) feature set as on
-        its own axes as scatter / density plot.  Additionally plot the shifted
-        points in the neighbouring axes to the right. Mark the pixel size and
-        diffraction limit for reference.
-        """
-
-        if labels is None:
-            labels = self.use_labels
-
-        points = self.coords[labels - 1] + self._origins[section, None]
-        delta = self.measurements[section] - points[:, None]
-        delta_avg = self.measure_avg[section] - points
-        delta_xy = self.delta_xy[section]
-
-        fig, axes = plt.subplots(len(labels), 2, sharex=True, sharey=True,
-                                 figsize=figsize)
-        axes = np.atleast_2d(axes)
-        style = dict(lw=1, ls='--', fc='none', ec='c', zorder=100)
-        for i, ax in enumerate(axes.ravel()):
-            pos = self._setup_scatter_axes(ax, i)
-            self._show_pixel(style)
-
-        style = dict(ls='', mfc='none', zorder=1, alpha=0.35, **kws)
-        features = self.tracker.centrality
-
-        art = defaultdict(list)
-        for feature, (marker, color, _) in CONFIG.centroids.items():
-            style = {**style,
-                     'marker': marker,
-                     'color': color,
-                     'label': captions[feature]}
-
-            if (weight := features.get(feature)) is not None:
-                if not (weight or show_null_weights):
-                    continue
-                data = delta[:, list(features).index(feature)]
-            elif feature == 'avg':
-                data = delta_avg
-            else:
-                raise ValueError(f'Unknown feature {feature!r}')
-
-            for j, data in enumerate(data.T):
-                ax1, ax2 = axes[j]
-                art[feature].extend(ax1.plot(*data, **style))
-                art[f'{feature}-delta'].extend(ax2.plot(*(data + delta_xy.T), **style))
-
-        fig.tight_layout()
-        if legend:
-            self._legend(axes[0, 0], art, show_weights)
-
-    def _setup_scatter_axes(self, ax, i):
-
-        ax.set_aspect('equal')
-        ax.tick_params(bottom=True, top=True, left=True, right=True,
-                       labelright=(lr := (i % 2)), labelleft=(not lr),
-                       labeltop=(lt := (i // 2) == 0), labelbottom=(not lt))
-
-        for x in (ax.xaxis, ax.yaxis):
-            x.set_major_locator(ticker.IndexLocator(1, -1))
-            x.set_major_formatter(ticker.FuncFormatter(
-                lambda x, pos: f'{round(x):d}'))
-
-        ax.grid()
-        return pos
-
-    def _show_pixel(self, style):
-        # add pixel size rect
-        r = Rectangle((-0.5, -0.5), 1, 1, **style)
-        c = Circle((0, 0), self.tracker.precision, **style)
-        for p in (r, c):
-            ax.add_patch(p)
-        return r, c
-
-    def _legend(self, ax, art, show_weights, **kws):
-
-        captions = dict(self._get_legend_labels(show_weights))
-
-        for key in CONFIG.centroids.items():
-            handles.append(art[key][0])
-            labels.append(caption[key])
-
-        if show_weights:
-            spacer = Line2D(*np.empty((2, 1, 1)), marker='', ls='')
-            handles.insert(spacer, -1)
-            labels.insert('\n ', -1)
-
-        fig.subplots_adjust(top=0.8)
-        ax.legend(
-            handles, labels,
-            **{**dict(ncol=2,
-                      loc='lower left',
-                      bbox_to_anchor=(-0.1, 1.2),
-                      handletextpad=0.25,
-                      labelspacing=-0.175,
-                      columnspacing=0.25),
-               **kws}
-        )
-
-    def _get_legend_labels(self, show_weights=True):
-        centroids = self.centrality
-        weights = iter(centroids.values())
-        ends = iter(vbrace(len(centroids)).splitlines())
-
-        *_, labels = zip(*map(CONFIG.centroids.get, centroids))
-        if not show_weights:
-            yield from zip(centroids, labels)
-            return
-
-        # add weight to label
-        w = max(map(len, labels)) + 1
-        for stat, (*_, label) in CONFIG.centroids.items():
-            if stat in centroids:
-                yield stat, f'{label: <{w}}$(w={next(weights)}) ${next(ends)}'
-            else:
-                yield stat, label
 
 
 def _sanitize_data(data, allow_dim):

@@ -22,4 +22,6 @@ CONFIG = ConfigNode(
 )
 
 # stylize progressbar
-CONFIG.progress['bar_format'] = motley.stylize(CONFIG.progress.bar_format)
+prg = CONFIG.tracking.progress
+prg['bar_format'] = motley.stylize(prg.bar_format)
+del prg

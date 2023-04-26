@@ -33,9 +33,6 @@ from .stats import MaskedStatsMixin
 from .groups import LabelGroupsMixin, auto_id
 
 
-# ---------------------------------------------------------------------------- #
-# simple container for 2-component objects
-yxTuple = namedtuple('yxTuple', ['y', 'x'])
 
 
 # ---------------------------------------------------------------------------- #
