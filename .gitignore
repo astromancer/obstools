@@ -83,6 +83,7 @@ doc/_build
 *.py,cover
 cover/
 .noseids
+.hypothesis/
 
 # Conda files #
 ###############
