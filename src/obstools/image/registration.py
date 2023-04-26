@@ -53,7 +53,7 @@ from ..utils import STScIServerError, get_coordinates, get_dss
 from .utils import non_masked
 from .mosaic import MosaicPlotter
 from .gmm import CoherentPointDrift
-from .segmentation import SegmentedImage
+from .segments import SegmentedImage
 from .image import ImageContainer, SkyImage
 
 

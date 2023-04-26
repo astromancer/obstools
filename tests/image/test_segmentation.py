@@ -10,9 +10,8 @@ from photutils.datasets import (make_gaussian_sources_image,
                                 make_random_gaussians_table)
 
 # local
-from obstools.image.detect import DetectionBase
-from obstools.image.segmentation import (MaskedStatsMixin, SegmentedImage,
-                                         trace_boundary)
+from obstools.image.segments import (MaskedStatsMixin, SegmentedImage,
+                                     trace_boundary)
 
 
 # ---------------------------------------------------------------------------- #

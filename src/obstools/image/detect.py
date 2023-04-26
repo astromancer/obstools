@@ -159,7 +159,7 @@ class DetectionBase(LoggingMixin):
 
         Returns
         -------
-        obstools.image.segmentation.SegmentedImage
+        obstools.image.segments.SegmentedImage
         """
 
         # self.logger.debug('Running source detection algorithm: {!r} {}', )

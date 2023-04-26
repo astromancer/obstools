@@ -1,4 +1,4 @@
 
 from .image import *
 # from .registration import ImageRegister
-from .segmentation import SegmentedImage
+from .segments import SegmentedImage

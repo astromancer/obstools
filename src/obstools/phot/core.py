@@ -20,7 +20,7 @@ from recipes.iter import split_slices
 from .. import io
 from ..lc.ascii import write
 from ..campaign import PhotCampaign
-from ..image.segmentation import display
+from ..image.segments import display
 
 
 def ragged(hdu, seg, top=5, dilate=0, filename=None):

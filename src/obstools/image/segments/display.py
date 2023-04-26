@@ -481,7 +481,7 @@ class ConsoleFormatter:
 #     ----------
 #     image : np.ndarray
 #         Image array with sources to display.
-#     seg : obstools.image.segmentation.SegmentedImage
+#     seg : obstools.image.segments.SegmentedImage
 #         The segmented image of detected sources
 #     top : int
 #         Number of brightest sources to display images for.

@@ -19,7 +19,7 @@ from scrawl.video import VideoDisplay
 
 # relative
 from ..utils import load_memmap
-from ...image.segmentation import SegmentsModelHelper, LabelGroupsMixin
+from ...image.segments import SegmentsModelHelper, LabelGroupsMixin
 from .. import Model, CompoundModel, FixedGrid
 
 

@@ -30,9 +30,9 @@ from recipes.parallel.joblib import initialized
 # relative
 from ...image.noise import CCDNoiseModel
 from ...image.detect import make_border_mask
-from ...image.segmentation.user import LabelUser
-from ...image.segmentation.masks import SegmentsMasksHelper
-from ...image.segmentation import LabelGroupsMixin, SegmentedImage
+from ...image.segments.user import LabelUser
+from ...image.segments.masks import SegmentsMasksHelper
+from ...image.segments import LabelGroupsMixin, SegmentedImage
 from ...image.registration import (ImageRegister, compute_centres_offsets,
                                    report_measurements)
 from ..proc import ContextStack
@@ -1286,7 +1286,7 @@ class SourceTracker(LabelUser,
 
         reg = ImageRegister(images)
 
-        from obstools.image.segmentation import detect_measure
+        from obstools.image.segments import detect_measure
 
         #
         # n, *ishape = np.shape(images)
