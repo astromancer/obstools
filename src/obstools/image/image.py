@@ -6,6 +6,7 @@ Image and image container classes
 # std
 import pickle
 import warnings
+from collections import abc
 
 # third-party
 import numpy as np
@@ -21,9 +22,9 @@ from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
-from recipes.utils import duplicate_if_scalar
 from recipes.oo.property import cached_property
 from recipes.dicts import AttrDict as ArtistContainer
+from recipes.utils import duplicate_if_scalar, not_null
 
 # relative
 from .detect import SourceDetectionMixin
@@ -448,41 +449,62 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         self.xy = np.delete(self.xy, label - 1, 0)
         self.counts = np.delete(self.counts, label - 1)
 
-    def show(self, image=True, frame=True, positions=False, regions=False,
+    def _resolve_points(self, points):
+        if (points is True):
+            points = {}
+            xy = self.xy
+        if isinstance(points, str):
+            colour, marker = points
+            points = dict(marker=marker, color=colour)
+            xy = self.xy
+        elif isinstance(points, abc.Container):
+            xy = np.asanyarray(points)
+            assert xy.ndim == 2
+            assert xy.shape[-1] == 2
+        else:
+            raise TypeError(f'Invalid points object {points} of type '
+                            f'{type(points)}.')
+
+        points_style = {**MARKER_STYLE,
+                        **(points if isdict(points) else {})}
+        
+        return xy, points_style
+
+    def show(self, image=True, frame=True, points=False, regions=False,
              labels=False, set_lims=None, coords='world', **kws):
         """
-        Display the image in the axes, applying the affine transformation for
-        parameters `p`
+        Display the image in the axes, applying the transformation to 
+        coordinate system given in `coords`.
         """
-        assert coords in {'pixel', 'world'}
+        assert coords in {'pixel', 'world'}  # TODO: array
 
         display, art = super().show(image, frame, set_lims, coords, **kws)
         ax = next(filter(None, mit.collapse(art.values()))).axes
 
         # add xy position markers (centre of mass)
-        if positions is not False:
-            if (positions is True):
-                xy = self.xy if coords == 'pixel' else self.transform.transform(self.xy)
-            else:
-                xy = np.asanyarray(positions)
-
-            art.points, = ax.plot(*xy.T,
-                                  **{**MARKER_STYLE,
-                                     **(positions if isdict(positions) else {})})
+        if not_null(points):
+            xy, points_style = self._resolve_points(points)
+            art.points, = ax.plot(*xy.T, **points_style)
 
         # add segmentation contours
-        transform = ax.transData if coords == 'pixel' else self.transform + ax.transData
+        tr = self.transform
+        transform = ax.transData if coords == 'pixel' else tr + ax.transData
         if regions:
             regions = regions if isdict(regions) else {}
             regions.setdefault('alpha', kws.get('alpha'))
-            art.seg = self.seg.show.contours(ax, transform=transform,
-                                             **{**CONTOUR_STYLE, **regions})
+            art.contours = self.seg.show.contours(ax, transform=transform,
+                                                  **{**CONTOUR_STYLE, **regions})
 
+        # add label artists
         if labels:
             art.texts = self.seg.show.labels(
                 ax, **{**TEXT_STYLE, 'transform': transform,
                        **(labels if isdict(labels) else {})}
             )
+
+        # add artists for blitting
+        display.add_art(art.values())
+
         return display, art
 
     # alias
