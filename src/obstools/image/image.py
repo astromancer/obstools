@@ -31,17 +31,16 @@ from .calibration import ImageCalibratorMixin
 
 
 # ---------------------------------------------------------------------------- #
-
+SCALE_DFLT = 1
 UNIT_CORNERS = np.array([[0., 0.],
                          [1., 0.],
                          [1., 1.],
                          [0., 1.]])
 
-IMAGE_STYLE = dict(cmap='cmr.voltage_r',
+IMAGE_STYLE = dict(cmap=None,  # 'cmr.voltage_r',
                    hist=False,
                    sliders=False,
-                   cbar=False,
-                   interpolation='none')
+                   cbar=False)
 
 CONTOUR_STYLE = dict(cmap='hot',
                      lw=1.5)
@@ -184,7 +183,7 @@ class TransformedImage(Image):
 
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
-    def __init__(self, data, origin=(0, 0), angle=0, scale=1, **kws):
+    def __init__(self, data, origin=(0, 0), angle=0, scale=SCALE_DFLT, **kws):
         """
         A translated, scaled, rotated image.
 
@@ -358,12 +357,12 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         return cls(image, hdu.fov, angle=hdu.pa, segments=seg, **dict(hdu.header))
 
     @classmethod
-    def from_image(cls, image, fov=None, scale=None, **kws):
+    def from_image(cls, image, fov=None, scale=SCALE_DFLT, **kws):
         return cls(image, fov, scale=scale,
                    segments=super().from_image(image, **kws))
 
     # ------------------------------------------------------------------------ #
-    def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=None,
+    def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=SCALE_DFLT,
                  segments=None, **kws):
         """
         Create and SkyImage object with a know size on sky.
