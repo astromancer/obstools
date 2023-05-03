@@ -3,7 +3,6 @@ Methods for tracking camera movements in astronomical time-series CCD photometry
 """
 
 # std
-import sys
 import math
 import tempfile
 import functools as ftl
@@ -30,12 +29,12 @@ from recipes.parallel.joblib import initialized
 # relative
 from ...image.noise import CCDNoiseModel
 from ...image.detect import make_border_mask
-from ...image.segments.user import LabelUser
-from ...image.segments.masks import SegmentsMasksHelper
-from ...image.segments import LabelGroupsMixin, SegmentedImage
+from ...image.segments import (LabelGroupsMixin, LabelUser, SegmentedImage,
+                               SegmentsMasksHelper)
 from ...image.registration import (ImageRegister, compute_centres_offsets,
                                    report_measurements)
 from ..proc import ContextStack
+from ..logging import TqdmLogAdapter, TqdmStreamAdapter
 from . import CONFIG
 from .display import SourceTrackerPlots
 
@@ -51,9 +50,7 @@ from .display import SourceTrackerPlots
 #  simulate how different centre measures performs for sources with decreasing snr
 #  super resolution images
 #  lucky imaging ?
-# ---------------------------------------------------------------------------- #
-_original_stdout = sys.stdout
-_original_stderr = sys.stderr
+
 
 # ---------------------------------------------------------------------------- #
 # Multiprocessing

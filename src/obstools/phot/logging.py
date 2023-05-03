@@ -1,4 +1,19 @@
 
+# std
+import sys
+
+# third-party
+import tqdm
+from loguru import logger
+from loguru._simple_sinks import StreamSink
+
+
+# ---------------------------------------------------------------------------- #
+_original_stdout = sys.stdout
+_original_stderr = sys.stderr
+
+# ---------------------------------------------------------------------------- #
+
 
 class TqdmStreamAdapter:
 
@@ -45,4 +60,3 @@ class TqdmLogAdapter:
     def __exit__(self):
         for id_, sink in self.sinks.items():
             sink._stream = sink._stream.stream
-
