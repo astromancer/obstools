@@ -25,7 +25,7 @@ from recipes.logging import LoggingMixin
 from ...utils import prod
 from ...stats import geometric_median
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
-from .utils import is_lazy
+from .utils import is_lazy, select_overlap
 from .slices import SliceDict
 from .trace import trace_boundary
 from .display import SegmentPlotter, make_cmap
@@ -1157,7 +1157,7 @@ class SegmentedImage(SegmentationImage,     # base
         return sigmas
 
     def com_bg(self, image, labels=None, mask=None,
-               background_estimator=np.ma.median, grid=None):
+               background_estimator=np.ma.median, grid=None, njobs='_ignored'):
         """
         Compute centre of mass of background subtracted (masked) image.
         Default is to use median statistic  as background estimator.
