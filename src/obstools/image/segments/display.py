@@ -11,6 +11,8 @@ from collections.abc import MutableMapping
 import numpy as np
 import more_itertools as mit
 from astropy.utils import lazyproperty
+from photutils.utils.colormaps import make_random_cmap
+from matplotlib import colors
 from matplotlib.lines import Line2D
 from matplotlib.collections import LineCollection
 
@@ -21,7 +23,10 @@ from scrawl.utils import embossed
 from recipes.functionals import echo
 from recipes.pprint import formatters as fmt
 from recipes import api, duplicate_if_scalar, pprint
+
+# relative
 from ..utils import isdict
+
 
 # ---------------------------------------------------------------------------- #
 CONTOUR_STYLE = dict(cmap='hot',
@@ -48,7 +53,6 @@ STAT_FMT = {
 
 
 # ---------------------------------------------------------------------------- #
-
 def make_cmap(n, background_color='#000000', seed=None):
     # this function fails for all zero data since `make_random_cmap`
     # squeezes the rgb values into an array with shape (3,). The parent
