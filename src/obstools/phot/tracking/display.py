@@ -389,8 +389,8 @@ class TrackerVideo(VideoFeatureDisplay):
             tracker(self.data[i], i)
 
         # update region offsets
-        print(tracker._origins[i])
-        self.regions.set_offsets(tracker._origins[i])
+        # print(tracker._origins[i])
+        self.regions.set_offsets(-tracker._origins[i, ::-1])
 
         return [*super().update(i, draw), self.regions, self.label_texts]
 
