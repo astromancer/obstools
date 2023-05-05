@@ -47,37 +47,9 @@ MULTI_THRESH_DEFAULTS = AttrReadItem(
     edge_cutoff=None,
     max_iter=5
 )
-# ---------------------------------------------------------------------------- #
-
-
-def make_border_mask(image, edge_cutoffs):
-    if isinstance(edge_cutoffs, int):
-        return _make_border_mask(image.shape,
-                                 edge_cutoffs, -edge_cutoffs,
-                                 edge_cutoffs, -edge_cutoffs)
-    edge_cutoffs = tuple(edge_cutoffs)
-    if len(edge_cutoffs) == 4:
-        return _make_border_mask(image.shape, *edge_cutoffs)
-
-    raise ValueError(f'Invalid edge_cutoffs {edge_cutoffs}')
-
-
-def _make_border_mask(shape, xlow=0, xhi=None, ylow=0, yhi=None):
-    """Edge mask"""
-    mask = np.zeros(shape, bool)
-
-    mask[:ylow] = True
-    if yhi is not None:
-        mask[yhi:] = True
-
-    mask[:, :xlow] = True
-    if xhi is not None:
-        mask[:, xhi:] = True
-    return mask
 
 
 # ---------------------------------------------------------------------------- #
-
 
 class DetectionBase(LoggingMixin):
     """Base class for source detection."""

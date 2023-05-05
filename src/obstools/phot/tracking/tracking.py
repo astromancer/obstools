@@ -28,7 +28,7 @@ from recipes.parallel.joblib import initialized
 
 # relative
 from ...image.noise import CCDNoiseModel
-from ...image.detect import make_border_mask
+from ...image.utils import make_border_mask
 from ...image.segments import (LabelGroupsMixin, LabelUser, SegmentedImage,
                                SegmentsMasksHelper)
 from ...image.registration import (ImageRegister, compute_centres_offsets,
@@ -773,7 +773,7 @@ class SourceTracker(LabelUser,
                           'array index {}.', origin)
 
         # select the current active region from global segmentation
-        seg = self.seg.select_overlap(origin, shape)
+        seg = self.seg.get_overlap(origin, shape)
 
         # work only with sources that are contained in this image region
         # remove detections that are partially off-frame
@@ -936,7 +936,7 @@ class SourceTracker(LabelUser,
         -------
 
         """
-        return self.seg.select_overlap(start, shape)
+        return self.seg.get_overlap(start, shape)
 
     def flux_sort(self, fluxes):
 

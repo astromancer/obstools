@@ -11,16 +11,83 @@ from motley.table import Table
 
 
 # ---------------------------------------------------------------------------- #
-def isdict(obj):
-    return isinstance(obj, dict)
-
-
-is_dict = isdict
-
 
 def non_masked(xy):
     xy = np.asanyarray(xy)
     return xy[~xy.mask.any(-1)].data if np.ma.is_masked(xy) else np.array(xy)
+
+
+def make_border_mask(image, edge_cutoffs):
+    if isinstance(edge_cutoffs, int):
+        return _make_border_mask(image.shape,
+                                 edge_cutoffs, -edge_cutoffs,
+                                 edge_cutoffs, -edge_cutoffs)
+    edge_cutoffs = tuple(edge_cutoffs)
+    if len(edge_cutoffs) == 4:
+        return _make_border_mask(image.shape, *edge_cutoffs)
+
+    raise ValueError(f'Invalid edge_cutoffs {edge_cutoffs}')
+
+
+def _make_border_mask(shape, xlow=0, xhi=None, ylow=0, yhi=None):
+    """Edge mask"""
+    mask = np.zeros(shape, bool)
+
+    mask[:ylow] = True
+    if yhi is not None:
+        mask[yhi:] = True
+
+    mask[:, :xlow] = True
+    if xhi is not None:
+        mask[:, xhi:] = True
+    return mask
+
+
+# ---------------------------------------------------------------------------- #
+
+def get_overlap(reference, image, origin, shape):
+    """
+    Get data from a sub-region of dimension `shape` from `image` array,
+    beginning at index `origin`. If the requested shape of the image
+    is such that the image only partially overlaps with the data in the
+    segmentation image, fill the non-overlapping parts with zeros (of
+    the same dtype as the image)
+
+    Parameters
+    ----------
+    image
+    origin
+    shape
+
+    Returns
+    -------
+
+    """
+    if np.ma.is_masked(origin):
+        raise ValueError('Cannot select image sub-region when `origin` value has'
+                         ' masked elements.')
+
+    hi = np.array(shape)
+    δtop = reference.shape - hi - origin
+    over_top = δtop < 0
+    hi[over_top] += δtop[over_top]
+    low = -np.min([origin, (0, 0)], 0)
+    oseg = tuple(map(slice, low, hi))
+
+    # adjust if beyond limits of global segmentation
+    start = np.max([origin, (0, 0)], 0)
+    end = start + (hi - low)
+    iseg = tuple(map(slice, start, end))
+    if image.ndim > 2:
+        iseg = (...,) + iseg
+        oseg = (...,) + oseg
+        shape = (len(image),) + shape
+
+    sub = np.zeros(shape, image.dtype)
+    sub[oseg] = image[iseg]
+    return sub
+
+# ---------------------------------------------------------------------------- #
 
 
 def table_coords(coo, ix_fit, ix_scale, ix_loc):
@@ -97,38 +164,6 @@ def table_cdist(sdist, window, _print=False):
         print(tbl)
 
     return tbl  # , c
-
-
-def rand_median(cube, ncomb, subset, nchoose=None):
-    """
-    median combine `ncomb`` frames randomly from amongst `nchoose` in the interval
-    `subset`
-
-    Parameters
-    ----------
-    cube
-    ncomb
-    subset
-    nchoose
-
-    Returns
-    -------
-
-    """
-    if isinstance(subset, int):
-        subset = (0, subset)  # treat like a slice
-
-    i0, i1 = subset
-    if nchoose is None:  # if not given, select from entire subset
-        nchoose = i1 - i0
-
-    # get frame indices
-    nfirst = min(nchoose, i1 - i0)
-    ix = np.random.randint(i0, i0 + nfirst, ncomb)
-    # create median image for init
-    logger.info('Combining {:d} frames from amongst frames ({:d}->{:d}) for '
-                'reference image.', ncomb, i0, i0 + nfirst)
-    return np.median(cube[ix], 0)
 
 
 def shift_combine(images, offsets, stat='mean', extend=False):

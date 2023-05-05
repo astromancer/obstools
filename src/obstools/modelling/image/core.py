@@ -3,24 +3,23 @@ Core tools for modelling astronomical images
 """
 
 # std
-import time
 from pathlib import Path
-from collections import defaultdict, MutableMapping
+from collections import MutableMapping, defaultdict
 
 # third-party
 import numpy as np
-from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 from photutils.segmentation import Segment
+from photutils.aperture import EllipticalAnnulus, EllipticalAperture
 
 # local
-from recipes.logging import LoggingMixin
-from recipes.dicts import Record, AttrDict
 from scrawl.video import VideoDisplay
+from recipes.io import load_memmap
+from recipes.logging import LoggingMixin
+from recipes.dicts import AttrDict, Record
 
 # relative
-from ..utils import load_memmap
-from ...image.segments import SegmentsModelHelper, LabelGroupsMixin
-from .. import Model, CompoundModel, FixedGrid
+from ...image.segments import LabelGroupsMixin, SegmentsModelHelper
+from .. import CompoundModel, FixedGrid, Model
 
 
 class ModelledSegment(Segment):

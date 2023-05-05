@@ -20,12 +20,10 @@ from matplotlib.collections import LineCollection
 import motley
 import motley.image
 from scrawl.utils import embossed
+from recipes.dicts import isdict
 from recipes.functionals import echo
 from recipes.pprint import formatters as fmt
 from recipes import api, duplicate_if_scalar, pprint
-
-# relative
-from ..utils import isdict
 
 
 # ---------------------------------------------------------------------------- #
@@ -53,7 +51,6 @@ STAT_FMT = {
 
 
 # ---------------------------------------------------------------------------- #
-
 
 def make_cmap(n, background_color='#000000', seed=None):
     # this function fails for all zero data since `make_random_cmap`

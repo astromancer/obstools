@@ -96,3 +96,4 @@ lib/z.lib
 .ipynb_checkpoints/
 
 tests/phot/test_tqdm.py
+src/obstools/image/segmentation

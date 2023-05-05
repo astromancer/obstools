@@ -28,7 +28,7 @@ from recipes.parallel.joblib import initialized
 
 # relative
 from ...image.noise import CCDNoiseModel
-from ...image.detect import make_border_mask
+from ...image.utils import make_border_mask
 from ...image.segments.user import LabelUser
 from ...image.segments.utils import merge_segmentations
 from ...image.segments import (LabelGroupsMixin, SegmentedImage,                                  SegmentsModelHelper)

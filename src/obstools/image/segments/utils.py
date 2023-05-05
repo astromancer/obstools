@@ -30,9 +30,6 @@ def radial_source_profile(image, seg, labels=None):
     return profiles
 
 
-
-
-
 def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
                         post_merge_dilate=1):
     """
@@ -110,49 +107,6 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     seg_extended.dilate(post_merge_dilate)
     seg_extended.blend()
     return seg_extended
-
-
-def select_overlap(seg, image, origin, shape):
-    """
-    Get data from a sub-region of dimension `shape` from `image` data,
-    beginning at index `origin`. If the requested shape of the image
-    is such that the image only partially overlaps with the data in the
-    segmentation image, fill the non-overlapping parts with zeros (of
-    the same dtype as the image)
-
-    Parameters
-    ----------
-    image
-    origin
-    shape
-
-    Returns
-    -------
-
-    """
-    if np.ma.is_masked(origin):
-        raise ValueError('Cannot select image sub-region when `origin` value has'
-                         ' masked elements.')
-
-    hi = np.array(shape)
-    δtop = seg.shape - hi - origin
-    over_top = δtop < 0
-    hi[over_top] += δtop[over_top]
-    low = -np.min([origin, (0, 0)], 0)
-    oseg = tuple(map(slice, low, hi))
-
-    # adjust if beyond limits of global segmentation
-    start = np.max([origin, (0, 0)], 0)
-    end = start + (hi - low)
-    iseg = tuple(map(slice, start, end))
-    if image.ndim > 2:
-        iseg = (...,) + iseg
-        oseg = (...,) + oseg
-        shape = (len(image),) + shape
-
-    sub = np.zeros(shape, image.dtype)
-    sub[oseg] = image[iseg]
-    return sub
 
 
 def inside_segment(coords, sub, grid):

@@ -7,7 +7,7 @@ Extensions for segmentation images
 import inspect
 import numbers
 import itertools as itt
-from collections import abc, defaultdict, namedtuple
+from collections import abc
 
 # third-party
 import numpy as np
@@ -24,15 +24,15 @@ from recipes.logging import LoggingMixin
 # relative
 from ...utils import prod
 from ...stats import geometric_median
+from ..utils import get_overlap
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
-from .utils import is_lazy, select_overlap
+from .utils import is_lazy, inside_segment
 from .slices import SliceDict
 from .trace import trace_boundary
-from .display import SegmentPlotter, make_cmap
 from .stats import MaskedStatsMixin
+from .masks import SegmentMasksMixin
 from .groups import LabelGroupsMixin, auto_id
-
-
+from .display import SegmentPlotter, make_cmap
 
 
 # ---------------------------------------------------------------------------- #
@@ -151,41 +151,9 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
 #     return (nd := data.ndim) == 2 or (nd == 3 and data.shape[0] == 1)
 
 
-class SegmentMasks(defaultdict):  # SegmentMasks
-    """
-    Container for segment masks
-    """
-
-    def __init__(self, seg):
-        self.seg = seg
-        defaultdict.__init__(self, None)
-
-    def __missing__(self, label):
-        # the mask is computed at lookup time here and inserted into the dict
-        # automatically after this func executes
-
-        # allow zero!
-        if label != 0:
-            self.seg.check_label(label)
-        return self.seg.sliced(label) != label
-
-
-class SegmentMasksMixin:
-    @lazyproperty
-    def masks(self):
-        """
-        A dictionary. For each label, a boolean array of the cutout segment
-        with `False` wherever pixels have different labels. The dict will
-        initially be empty - the masks are computed only when lookup happens.
-
-        Returns
-        -------
-        dict of arrays (keyed on labels)
-        """
-        return SegmentMasks(self)
-
-
 # SegmentImage
+
+
 class SegmentedImage(SegmentationImage,     # base
                      MaskedStatsMixin,      # stats methods for masked images
                      SegmentMasksMixin,     # handles masks for foreground obj
@@ -671,7 +639,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     # Data extraction
     # --------------------------------------------------------------------------
-    def select_overlap(self, origin, shape, type_=None):
+    def get_overlap(self, origin, shape, type_=None):
         """
         Select a sub-region of the segmented image starting at yx-indices
         `origin` and having dimension `shape`. If `origin` and `shape` imply a
@@ -694,10 +662,10 @@ class SegmentedImage(SegmentationImage,     # base
         """
         if type_ is None:
             type_ = self.__class__
-        return type_(select_overlap(self, self.data, origin, shape))
+        return type_(get_overlap(self, self.data, origin, shape))
 
     # alias
-    select_region = select_overlap
+    select_region = select_overlap = get_overlap
 
     @staticmethod
     def _mask_pixels(image, labels, mask0, masking_func):
@@ -1686,12 +1654,7 @@ class SegmentedImage(SegmentationImage,     # base
 #         self.groups[group] = new_labels
 #         return seg
 
-
-class CachedPixelGrids():
-    'todo'  # TODO
-
-
-class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
+class SegmentsModelHelper(SegmentedImage):
     """Mixin class for image models with piecewise domains"""
 
     def __init__(self, data, grid=None, domains=None):
@@ -1743,3 +1706,73 @@ class SegmentsModelHelper(SegmentedImage):  # SegmentationModelHelper
     #         yst = (sy.stop - sy.start) * 1j
     #         xst = (sx.stop - sx.start) * 1j
     #     return np.mgrid[ylo:yhi:yst, xlo:xhi:xst]
+
+
+
+class SegmentsMasksHelper(SegmentsModelHelper, LabelGroupsMixin):
+
+    def __init__(self, data, grid=None, domains=None, groups=None,
+                 **persistent_masks):
+        #
+        SegmentsModelHelper.__init__(self, data, grid, domains)
+        LabelGroupsMixin.__init__(self, groups)
+        self._masks = None
+        self._persistent_masks = persistent_masks
+
+    def set_groups(self, groups):
+        LabelGroupsMixin.set_groups(self, groups)
+        del self.group_masks  #
+
+    @lazyproperty
+    # making group_masks a lazyproperty means it will reset auto-magically when
+    # the segmentation data changes
+    def group_masks(self):
+        return MaskContainer(self, self.groups, **self._persistent_masks)
+
+
+class GlobalSegmentation(SegmentsMasksHelper):
+    @classmethod
+    def merge(cls, segmentations, delta_xy, extend=True, f_accept=0.5,
+              post_dilate=1):
+        # zero point correspond to minimum offset from initializer and serves as
+        # coordinate reference
+        # make int type to avoid `Cannot cast with casting rule 'same_kind'
+        # downstream
+        return cls(merge_segmentations(segmentations, delta_xy,
+                                       extend, f_accept, post_dilate),
+                   zero_point=np.floor(delta_xy.min(0)).astype(int))
+
+    def __init__(self, data, zero_point):
+        super().__init__(data)
+        self.zero_point = zero_point
+
+    def get_start_indices(self, delta_xy):
+        if np.ma.is_masked(delta_xy):
+            raise ValueError('Cannot get start indices for masked offsets.')
+
+        return np.abs((delta_xy + self.zero_point).round().astype(int))
+
+    def get_overlap(self, start, shape, type_=SegmentedImage):
+        return super().get_overlap(start, shape, type_)
+
+    def for_offset(self, delta_xy, shape, type_=SegmentedImage):
+        if np.ma.is_masked(delta_xy):
+            raise ValueError('Cannot get segmented image for masked offsets.')
+
+        return self.get_overlap(
+            self.get_start_indices(delta_xy), shape, type_)
+
+    def flux(self, image, origin, labels=None, labels_bg=(0,), bg_stat='median'):
+        sub = self.get_overlap(origin, image.shape)
+        return sub.flux(image, labels, labels_bg, bg_stat)
+
+    def sort(self, measure, descend=False):
+        if (n := len(measure)) != self.nlabels:
+            raise ValueError('Cannot reorder labels for measure with '
+                             f'incompatable size {n}. {describe(self)} has '
+                             f'{self.nlabels} labels.')
+
+        o = slice(None, None, -1) if descend else ...
+        order = np.ma.argsort(measure, endwith=False)[o]
+        self.relabel_many(order + 1, self.labels)
+        return order
