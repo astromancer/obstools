@@ -53,6 +53,8 @@ STAT_FMT = {
 
 
 # ---------------------------------------------------------------------------- #
+
+
 def make_cmap(n, background_color='#000000', seed=None):
     # this function fails for all zero data since `make_random_cmap`
     # squeezes the rgb values into an array with shape (3,). The parent
@@ -153,8 +155,8 @@ class SegmentPlotter:
         texts = []
         if label:
             # add label text (number) on each segment
-            texts = self.labels(im.ax, {**LABEL_TEXT_STYLE,
-                                        **(label if isdict(label) else {})})
+            texts = self.labels(im.ax, **{**LABEL_TEXT_STYLE,
+                                          **(label if isdict(label) else {})})
 
         rcol = self.seg.slices.plot(im.ax) if bbox else None
 
