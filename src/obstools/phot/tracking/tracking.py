@@ -642,13 +642,16 @@ class SourceTracker(LabelUser,
         # if np.any(np.abs(dxy) > 20):
         #     raise ValueError('')
 
-        # self.logger.info('OFFSET: {}', dxy)
+        self.logger.debug('OFFSET: {}', dxy)
 
         # Update origin
-        # if np.any(np.abs(shift := dxy[::-1] - self.origin) >= 1):
-        if np.abs(dxy > 1).any():
-            dxy = self.update_origin(dxy, i, data)
-
+        if (np.ma.abs(dxy) > 1).any():
+            new = self.update_origin(dxy, i, data)
+            self.logger.debug('UPDATED OFFSET {}: {} {}', i, dxy, new)
+            return new
+        
+        # same origin
+        self._origins[i] = self.origin
         return dxy
 
     def update_origin(self, dxy, i, data):
