@@ -22,7 +22,7 @@ tracking:
             {rate_fmt:|gold}
             {elapsed:|cyan} eta {remaining:|cyan}
         ascii: " ╸━"
-        unit: frames
+        unit:  " frames"
 
     plots:
         centroids:
