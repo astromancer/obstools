@@ -51,6 +51,8 @@ from .display import SourceTrackerPlots
 #  super resolution images
 #  lucky imaging ?
 
+# ---------------------------------------------------------------------------- #
+_s0 = slice(None)
 
 # ---------------------------------------------------------------------------- #
 # Multiprocessing
@@ -81,6 +83,13 @@ def set_lock(mem_lock, tqdm_lock):
 #     def __getitem__(self, item):
 #         return None
 
+def wrap_int(obj):
+    return [obj] if isinstance(obj, numbers.Integral) else obj
+
+
+def keep_dims(*args):
+    return tuple(map(wrap_int, args))
+# ---------------------------------------------------------------------------- #
 
 class SourceTracker(LabelUser,
                     LabelGroupsMixin,
@@ -433,18 +442,40 @@ class SourceTracker(LabelUser,
         )
 
         return False
-    
+
     # ------------------------------------------------------------------------ #
-    def get_coords(self, i=None):
-        if i is None:
-            return self.coords[None] + self.delta_xy[:, None]
-        return self.coords + self.delta_xy[i]
+    def get_coords(self, section=_s0, source=_s0):
+        cast = ([np.newaxis] * (source is _s0))
+        return self.coords[source] + self.delta_xy[(section, *cast)]
 
-    def get_coord(self, i):
-        return self.coords + self.delta_xy[i]
+    def get_coords_residual(self, section=_s0, feature=_s0, source=_s0,
+                            shifted=True):
 
-    def get_coords_residual(self, section=...):
-        return self.measurements[section] - self.coords - self.delta_xy[section, None]
+        source = (self.use_labels - 1)[source]
+
+        if (feature == 'avg'):
+            data = self.measure_avg[keep_dims(section, source)]
+        else:
+            if feature is not _s0:
+                # feature is str - index
+                feature = list(self.centrality).index(feature)
+
+            data = self.measurements[keep_dims(section, feature, source)]
+
+        return np.squeeze(
+            data - self.coords[np.newaxis, source]
+            - (self.delta_xy[section, np.newaxis, :] if shifted else 0)
+        )
+
+        # na = [np.newaxis]
+        # updel = na * ((feature is ...) + (source is ...))
+        # upcoo = (*(na * (feature is ...)),
+        #          (self.use_labels - 1)[source],
+        #          *(na * (isinstance(source, numbers.Integral))))
+
+        # return (self.measurements[keep_dims(section, feature, source)]
+        #         - self.coords[np.newaxis, source]
+        #         - (self.delta_xy[section, np.newaxis, :] if shifted else 0))
 
     # ------------------------------------------------------------------------ #
     # @api.synonyms({'njobs': 'n_jobs'})
