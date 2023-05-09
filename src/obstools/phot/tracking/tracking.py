@@ -1,9 +1,11 @@
 """
-Methods for tracking camera movements in astronomical time-series CCD photometry.
+Methods for tracking camera movements (dither) in astronomical time-series CCD
+photometry.
 """
 
 # std
 import math
+import numbers
 import tempfile
 import functools as ftl
 import itertools as itt
@@ -23,20 +25,19 @@ from scipy.spatial.distance import cdist
 
 # local
 from recipes.io import load_memmap
-from recipes.logging import LoggingMixin
 from recipes.parallel.joblib import initialized
 
 # relative
 from ...image.noise import CCDNoiseModel
 from ...image.utils import make_border_mask
+from ...image.registration import ImageRegister, report_measurements
 from ...image.segments import (LabelGroupsMixin, LabelUser, SegmentedImage,
                                SegmentsMasksHelper)
-from ...image.registration import (ImageRegister, compute_centres_offsets,
-                                   report_measurements)
 from ..proc import ContextStack
 from ..logging import TqdmLogAdapter, TqdmStreamAdapter
 from . import CONFIG
 from .display import SourceTrackerPlots
+from .dither import PointSourceDitherModel
 
 
 # from recipes.parallel.synced import SyncedArray, SyncedCounter
@@ -91,10 +92,13 @@ def keep_dims(*args):
     return tuple(map(wrap_int, args))
 # ---------------------------------------------------------------------------- #
 
+# FIXME: remove redundant code
+# TODO: bayesian version
+
+
 class SourceTracker(LabelUser,
                     LabelGroupsMixin,
-                    # SourceDetectionMixin,
-                    LoggingMixin):
+                    PointSourceDitherModel):
     """
     A class to track sources in a CCD image frame to aid in doing time series
     photometry.
@@ -109,14 +113,12 @@ class SourceTracker(LabelUser,
     coordinate positions of the sources with respect to the brightest source are
     updated upon each iteration.
     """
-    # FIXME: remove redundant code
-    # TODO: bayesian version
 
     centrality = {
-        'com':              1,
-        # 'com_bg':           0,
+        'com':              0,
+        'com_bg':           1,  # use if data not calibrated / background subbed
         'geometric_median': 0,
-        'peak':             0,
+        'peak':             1,
         # 'upsample_max':     0
     }
 
@@ -213,9 +215,8 @@ class SourceTracker(LabelUser,
         # label include / exclude logic
         LabelUser.__init__(self, use_labels)
         LabelGroupsMixin.__init__(self, label_groups)
+        PointSourceDitherModel.__init__(self, self._distance_cut)
 
-        # counter for incremental update
-        # self.counter = itt.count()  #
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
         self.measurements = self.measure_avg = self.measure_std = \
@@ -228,9 +229,6 @@ class SourceTracker(LabelUser,
         self.xy0 = coords[self.ir]
         self.rpos = coords - coords[self.ir]
 
-        region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
-        self.origin = -self.compute_offsets(region_centres)[::-1].round(0).astype(int)
-
         # algorithmic details
         self.precision = float(precision)
         self.edge_cutoffs = edge_cutoffs
@@ -240,6 +238,10 @@ class SourceTracker(LabelUser,
         self._update_centres_every = int(max(update_centres_every, 0))
         self._measure_centres_after = int(measure_centres_after or update_centres_every)
         # self._measure_centres_until = int(measure_centres_until)
+
+        region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
+        self.origin = self.compute_offsets(region_centres)[::-1].round(0).astype(int)
+        self.logger.debug('Origin set to: {}', self.origin)
 
         # shared memory for internal use
         # self._precision_reached = mp.Value('i', -1)
@@ -339,7 +341,10 @@ class SourceTracker(LabelUser,
     def __str__(self):
         nl = '\n'
         pre = f'{type(self).__name__}('  # coords=
-        cx = np.array2string(self.coords, precision=2, separator=', ')
+        cx = np.array2string(self.coords[self.use_labels - 1],
+                             precision=2, separator=', ')
+        # ppr.mapping({'coords': cx,
+        #              'source_weights'})
         return f'{pre}{cx.replace(nl, nl.ljust(len(pre) + 1))})'
 
     __repr__ = __str__
@@ -431,7 +436,7 @@ class SourceTracker(LabelUser,
                     'positions will not be updated further.',
                     lambda: (self.sigma_xy.mean(0), self.precision, n)
                 )
-                self.report_measurements()
+                self.report()
                 return True
 
             _last_checked.value = n
@@ -523,7 +528,7 @@ class SourceTracker(LabelUser,
         self._run(data, indices, n_jobs, progress_bar, backend)
 
         # finally, recompute the positions
-        self.compute_centres_offsets(True)
+        self.compute_centres_offsets(report=True)
 
     def _run(self, data, indices, n_jobs, progress_bar, backend):
 
@@ -579,9 +584,8 @@ class SourceTracker(LabelUser,
         n_batches = round(len(indices) / batch_size)
 
         #
-        self.logger.info('Work split into {} batches of {} frames each. {} '
-                         'concurrent workers will be used.',
-                         n_batches, batch_size, n_jobs)
+        self.logger.info('Work split into {} batches of {} frames each, using {} '
+                         'concurrent workers.', n_batches, batch_size, n_jobs)
 
         # triggers for computing coordinate centres and weights as needed
         triggers = np.array(
@@ -665,7 +669,7 @@ class SourceTracker(LabelUser,
 
     def measure(self, data, i):
         xym = self._measure(data[i], i)
-        dxy = self.compute_offsets(xym, self._source_weights)  #
+        dxy = self.compute_offsets(xym, self._source_weights)
 
         if np.ma.is_masked(dxy) or ~np.isfinite(dxy).all():
             raise ValueError('Masked or nan in xy offsets.')
@@ -673,18 +677,22 @@ class SourceTracker(LabelUser,
         # if np.any(np.abs(dxy) > 20):
         #     raise ValueError('')
 
-        self.logger.debug('OFFSET: {}', dxy)
+        self.logger.trace('OFFSET: {}', dxy)
 
         # Update origin
         if (np.ma.abs(dxy) > 1).any():
-            new = self.update_origin(dxy, i, data)
-            self.logger.debug('UPDATED OFFSET {}: {} {}', i, dxy, new)
+            new = -self.update_origin(dxy, i, data)
+            self.logger.trace('UPDATED OFFSET {}: {} {}', i, dxy, new)
             return new
-        
+
         # same origin
         self._origins[i] = self.origin
         return dxy
 
+    
+    def compute_offsets(self, xy, weights=None):
+        return super().compute_offsets(xy, self.coords[self.use_labels - 1], weights)
+        
     def update_origin(self, dxy, i, data):
         self.logger.trace('Frame {}: \norigin = {}\nδxy = {}',
                           i, self.origin, np.array2string(dxy, precision=2))
@@ -697,25 +705,6 @@ class SourceTracker(LabelUser,
         self.logger.trace('re-measuring centroids.')
         xym = self._measure(data[i], i)
         return self.compute_offsets(xym, self._source_weights)
-
-    def compute_offsets(self, xy, weights=None):
-        """
-        Calculate the xy offset of coordinate `coo` from centre reference
-
-        Parameters
-        ----------
-        coo
-        weights
-
-        Returns
-        -------
-
-        """
-        # shift calculated as snr weighted mean of individual CoM shifts
-        xy = np.ma.MaskedArray(xy, np.isnan(xy))
-        # if weights is None:
-        #     weights = self._source_weights
-        return np.ma.average(self.coords[self.use_labels - 1] - xy, 0, weights)
 
     def _measure(self, image, index, mask=None, origin=None):
         # self.logger.debug('Measuring centroids')
@@ -792,23 +781,25 @@ class SourceTracker(LabelUser,
         """
         assert data.ndim in {2, 3}
 
+        # NOTE origin in array coordinates yx!!
         if origin is None:
             origin = self.origin
 
         if np.any((np.abs(origin) > (shape := data.shape[-2:]))):
-            raise ValueError(f'Image of shape {shape} does not overlap with'
-                             ' segmentation image: Tracker origin is at array '
-                             f'index: {origin}.')
+            raise ValueError(f'Image of shape {shape} does not overlap with '
+                             f'segmented image with origin at array index: '
+                             f'{origin}.')
 
         self.logger.trace('Measuring source locations for frame relative to '
                           'array index {}.', origin)
 
         # select the current active region from global segmentation
         seg = self.seg.get_overlap(origin, shape)
+        # NOTE: the segmented image returned here is in the image array
+        # coordinates, so image stats below are in image array coords
 
         # work only with sources that are contained in this image region
         # remove detections that are partially off-frame
-        # NOTE origin in image coordinates yx!!
         # labels = set(self.seg.labels)
         # for k, corner in zip((1, -1), (origin, origin + image.shape)):
         #     for i, j in  zip((1, -1), np.clip(corner, 0, None)):
@@ -847,9 +838,7 @@ class SourceTracker(LabelUser,
 
     # def check_measurement(self, xy):
 
-    # def _compute_centres_offset(self):
-
-    def compute_centres_offsets(self, report=False):
+    def fit(self, report=False):
         """
         Measure the relative positions of sources, as well as the xy shifts
         (dither) of each image frame based on the average centroid measurements
@@ -865,33 +854,43 @@ class SourceTracker(LabelUser,
         self.logger.debug('Estimating source positions from average of {} '
                           'features.', len(self.centrality))
 
-        xym, centres, σ_pos, delta_xy, out = compute_centres_offsets(
-            self.measure_avg, self._distance_cut, report=False)
+        xym, centres, σ_pos, delta_xy, out = super().fit(
+            self.measure_avg, self._distance_cut, report=False
+        )
 
         # shift the coordinate system relative to the new reference point
         xy0 = centres[self.ir]
         δ = self.xy0 - xy0
 
         with memory_lock:
-            self.delta_xy[:] = delta_xy + δ
+            self.delta_xy[:] = delta_xy - δ
             self.rpos = centres - xy0
             self.sigma_xy[:] = σ_pos
 
         self.logger.debug('Updated source positions: δ = {}.', δ)
 
         if report:
-            self.report_measurements(xym, centres, σ_pos)
+            self.report(xym, centres, σ_pos)
 
-    def report_measurements(self, xy=None, centres=None, σ_xy=None,
-                            counts=None, detect_frac_min=None,
-                            count_thresh=None):
-        # TODO: rename pprint()
+    def pprint(self):
+        self.report()
 
+    #     xy = pprint.uarray(self.coords[self.use_labels - 1], self.sigma_xy)
+    #     return Table.from_columns(xy, self._source_weights,
+    #                               title=self.__class__.__name__,
+    #                               chead=['x', 'y', 'w'],
+    #                               rhead = self.use_labels,
+    #                               ) # formatters={'label': int}
+
+    def report(self, xy=None, centres=None, σ_xy=None, counts=None,
+               detect_frac_min=None, count_thresh=None):
+
+        # TODO: current origin?
         if xy is None:
             xy = self.measure_avg[self.measured]
 
         if centres is None:
-            centres = self.coords[self.use_labels]
+            centres = self.coords[self.use_labels - 1]
 
         if σ_xy is None:
             σ_xy = self.sigma_xy
@@ -988,19 +987,6 @@ class SourceTracker(LabelUser,
         self.use_labels = new_order + 1
 
         return brightness_order
-
-    def pprint(self):
-        from motley.table import Table
-
-        # TODO: say what is being ignored
-        # TODO: include uncertainties
-        # TODO: print wrt current origin
-
-        # coo = [:, ::-1]  # , dtype='O')
-        return Table(self.coords,
-                     col_headers=list('xy'),
-                     col_head_style=dict(bg='g'),
-                     row_headers=self.use_labels)
 
     def sdist(self):
         coo = self.coords
@@ -1437,7 +1423,7 @@ class SourceTracker(LabelUser,
         if report:
             # TODO: can probs also highlight large uncertainties
             #  and bright targets!
-            tracker.report_measurements(xy, centres, σ_xy, counts_med,
-                                        f_detect_measure)
+            tracker.report(xy, centres, σ_xy, counts_med,
+                           f_detect_measure)
 
         return tracker, xy, centres, delta_xy, counts, counts_med
