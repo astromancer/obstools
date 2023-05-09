@@ -1,20 +1,59 @@
 
 # source tracking
 tracking:
+    centroids:
+        com:                0
+        com_bg:             1  # use if data not calibrated / background subbed
+        geometric_median:   0
+        peak:               1
+        # 'upsample_max':     0
+
+    precision:          0.5
+    # Required positional accuracy in pixels
+    weights:            snr 
+    # Per-source weights for frame offset calculation. Use "snr" for
+    # signal-to-noise weighting.
+
+    cutoffs:
+        edge:           0
+        snr:            3.
+        # Sources with signal-to-noise ratio less than this will not be 
+        # considered when solving for image dither
+        distance:       10
+        # For outlier detection: maximum distance allowed for point measurements
+        # from centre of distribution.
+        saturation:     95
+        # If we know the saturation value of the CCD chip, we discard source
+        # measurements with saturated pixels.
+
+    compute:
+        weights: [null , 1000, 25  ]
+        centres: [null , 1000, 100 ]
+
     filenames:
-        measurements: centroids.dat
-        measure_avg:  centroids-mean.dat
-        measure_std:  centroids-std.dat
-        delta_xy:     coords-delta.dat
-        sigma_xy:     coords-std.dat
-        flux:         flux.dat
-        flux_std:     flux-std.dat
-        snr:          snr.dat
-        _origins:     origin.dat
+        measurements:   centroids.dat
+        measure_avg:    centroids-avg.dat
+        measure_std:    centroids-std.dat
+        delta_xy:       coords-delta.dat
+        sigma_xy:       coords-std.dat
+        flux:           flux.dat
+        snr:            snr.dat
+        _origins:       origin.dat
 
     table:
-        txt:    bold
-        bg:     g
+        title:          Measured source coordinates
+        title_style: 
+            fg:         [B,  _,  w]
+            bg:         darkslategrey
+        col_head_style:
+            fg:         [B,  _    ]
+            bg:         lightgrey
+        col_head_align: ^ 
+        precision:      3
+        align:          r
+        row_nrs:        True
+        max_rows:       25
+
 
     progress:
         bar_format: >-
@@ -30,6 +69,7 @@ tracking:
             com_bg:           [r, x, CoM (bg sub)]
             geometric_median: [g, o, Geometric Median]
             peak:             [m, ^, Maximum]
+            # upsample_max:     (d Upsampled Max
             avg:              [k, x, Weighted Average]  # NOTE: sould be last
 
         labels:
@@ -52,9 +92,13 @@ tracking:
                 zorder: 1
                 alpha:  0.35
 
-            legend:             True
+            legend:             False
             show:               [avg, weights]  #  nulls
-            figsize:            [7.5, 7]
+            figsize:            [5, 8]
+            
+            cbar:
+                # shrink: 0.9
+                pad:    0.025
 
 
             pixel: 
@@ -63,11 +107,3 @@ tracking:
                 fc:         none
                 ec:         lime
                 zorder:     100
-
-
-
-        
-
-        # upsample_max:     (d Upsampled Max
-        # com_bg:           (+ Centre of Mass (Median sub
-

@@ -1,13 +1,21 @@
 
+# std
+import re
+import math
+import operator as op
+
 # third-party
 import numpy as np
 from loguru import logger
 
 # local
+from recipes import pprint
 from recipes.logging import LoggingMixin
+from motley.table import Table
+from motley.formatters import Conditional, Decimal, Numeric
 
 # relative
-from ...image.registration import report_measurements
+from . import CONFIG
 
 
 # ---------------------------------------------------------------------------- #
@@ -87,6 +95,10 @@ def _select_data(xy, good, use_sources, nans):
         xyc[nansc] = np.ma.masked
     return xyc
 
+# ---------------------------------------------------------------------------- #
+
+
+# ---------------------------------------------------------------------------- #
 
 class PointSourceDitherModel(LoggingMixin):
 
@@ -123,7 +135,9 @@ class PointSourceDitherModel(LoggingMixin):
         Parameters
         ----------
         xy:     array, shape (n_points, n_sources, 2)
-
+            Coordinate points to fit.
+        report: bool
+            Whether to report on the measured results.
 
         Returns
         -------
@@ -155,8 +169,8 @@ class PointSourceDitherModel(LoggingMixin):
         # pprint!
         if report:
             try:
-                #                                          counts
-                report_measurements(xy, centres, σxy, δxy, None, self.d_frq)
+                #                                  counts
+                self.report(xy, centres, σxy, δxy, None, self.d_frq)
 
             except Exception as err:
                 self.logger.exception('Report failed')
@@ -197,14 +211,14 @@ class PointSourceDitherModel(LoggingMixin):
         # concept of "outlier" to be meaningful
         if (self.d_cut is None) or len(xy) < 10:
             return centres, sigma_xy, delta_xy.squeeze(), ()
-        
+
         # remove outliers here
         return self._clip_outliers(xy)
 
     def _compute_centres_offsets(self, xy, centres, weights):
 
         # xy position offset in each frame  (mean combined across sources)
-        delta_xy = self.compute_offsets(xy, centres, weights, keepdims=True)
+        delta_xy = self.compute_offset(xy, centres, weights, keepdims=True)
 
         # shifted cluster centers (all sources)
         xy_shifted = xy - delta_xy
@@ -214,7 +228,7 @@ class PointSourceDitherModel(LoggingMixin):
 
         return centres, xy_shifted.std(0), delta_xy
 
-    def compute_offsets(self, xy, centres, weights=None, **kws):
+    def compute_offset(self, xy, centres, weights=None, **kws):
         """
         Calculate the xy offset of coordinate points `xy` from reference
         `centre` for sources.
@@ -271,3 +285,102 @@ class PointSourceDitherModel(LoggingMixin):
             xym[out] = np.ma.masked
 
         raise ValueError('Emergency stop!')
+
+    def report(self, xy, centres, σ_xy, counts=None,
+               detect_frac_min=None, count_thresh=None):
+        # report on position measurement
+
+        # from obstools.stats import mad
+        # TODO: probably mask nans....
+        n_points, n_sources, _ = xy.shape
+        n_points_tot = n_points * n_sources
+
+        if np.ma.is_masked(xy):
+            bad = xy.mask.any(-1)
+            good = np.logical_not(bad)
+            points_per_source = good.sum(0)
+            sources_per_image = good.sum(1)
+            n_bad = bad.sum()
+            no_detection, = np.where(np.equal(sources_per_image, 0))
+            if len(no_detection):
+                self.logger.debug('There are no sources in frames: {!s}', no_detection)
+
+            if n_bad:
+                extra = (f'\nn_masked = {n_bad}/{n_points_tot} '
+                         f'({n_bad / n_points_tot :.1%})')
+        else:
+            points_per_source = np.tile(n_points, n_sources)
+            extra = ''
+
+        # check if we managed to reduce the variance
+        # sigma0 = xy.std(0)
+        # var_reduc = (sigma0 - σ_xy) / sigma0
+        # mad0 = mad(xy, axis=0)
+        # mad1 = mad((xy - xy_offsets[:, None]), axis=0)
+        # mad_reduc = (mad0 - mad1) / mad0
+
+        # # overall variance report
+        # s0 = xy.std((0, 1))
+        # s1 = (xy - xy_offsets[:, None]).std((0, 1))
+        # # Fractional variance change
+        # self.logger.info('Differencing change overall variance by {!r:}',
+        #             np.array2string((s0 - s1) / s0, precision=3))
+
+        # FIXME: percentage format in total wrong
+        # TODO: align +- values
+        col_headers = ['x', 'y', 'n']  # '(px.)'
+        n_min = (detect_frac_min or -math.inf) * n_points
+        formatters = {
+            'n': Conditional('y', op.le, n_min,
+                             Decimal.as_percentage_of(total=n_points,
+                                                      precision=0))}
+
+        # get array with number ± std representations
+        columns = [pprint.uarray(centres, σ_xy, 2), points_per_source]
+        # FIXME: don't print uncertainties if less than 6 measurement points
+
+        # x, y = pprint.uarray(centres, σ_xy, 2)
+        # columns = {
+        #     'x': Column(x, unit='pixels'),
+        #     'y': Column(y, unit='pixels'),
+        #     'n': Column(points_per_source,
+        #                 fmt=Conditional('y', op.le, n_min,
+        #                                     Decimal.as_percentage_of(total=n_points,
+        #                                                                  precision=0)),
+        #                 total='{}')
+        # }
+
+        if counts is not None:
+            # columns['counts'] = Column(
+            #     counts, unit='ADU',
+            #     fmt=Conditional('y', op.le, n_min,
+            #                         Percentage(total=n_points,
+            #                                        precision=0))
+            #     )
+
+            formatters['counts'] = Conditional(
+                'c', op.ge, (count_thresh or math.inf),
+                Numeric(thousands=' ', precision=1, shorten=False))
+            columns.append(counts)
+            col_headers += ['counts']
+
+        # add variance columns
+        # col_headers += ['r_σx', 'r_σy'] + ['mr_σx', 'mr_σy']
+        # columns += [var_reduc[:, ::-1], mad_reduc[:, ::-1]]
+
+        #
+        tbl = Table.from_columns(*columns,
+                                 units=['pixels', 'pixels', ''],
+                                 col_headers=col_headers,
+                                 totals=[-1],
+                                 formatters=formatters,
+                                 **CONFIG.table)
+
+        # fix formatting with percentage in total.
+        # TODO Still need to think of a cleaner solution for this
+        tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
+        # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
+
+        self.logger.info('\n{:s}{:s}', tbl, extra)
+
+        return tbl
