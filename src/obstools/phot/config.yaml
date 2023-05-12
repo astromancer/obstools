@@ -27,8 +27,8 @@ tracking:
         # measurements with saturated pixels.
 
     compute:
-        weights: [null , 1000, 25  ]
-        centres: [null , 1000, 100 ]
+        weights: [0 , 1000, 25  ]
+        centres: [0 , 1000, 100 ]
 
     filenames:
         measurements:   centroids.dat
@@ -46,8 +46,8 @@ tracking:
             fg:         [B,  _,  w]
             bg:         darkslategrey
         col_head_style:
-            fg:         [B,  _    ]
-            bg:         lightgrey
+            fg:         [B,  _,  k]
+            bg:         grey
         col_head_align: ^ 
         precision:      3
         align:          r
