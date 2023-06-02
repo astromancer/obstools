@@ -21,12 +21,10 @@ from loguru import logger
 from joblib import Parallel, delayed
 from bottleneck import nanmean, nanstd
 from astropy.utils import lazyproperty
-from recipes.string import pluralize
 # local
 from recipes.io import load_memmap
 from recipes.dicts import AttrReadItem
 from recipes.parallel.joblib import initialized
-from recipes import api
 
 # relative
 from ...image.noise import CCDNoiseModel
@@ -96,11 +94,7 @@ def keep_dims(*args):
 # TODO: bayesian version
 
 
-class SourceTracker(LabelUser,
-                    PointSourceDitherModel):
     """
-    A class to track sources in a CCD image frame to aid in doing time series
-    photometry.
 
     Stellar positions in each new frame are calculated as the background
     subtracted centroids of the chosen image segments. Centroid positions of
@@ -121,10 +115,7 @@ class SourceTracker(LabelUser,
     # `rpos` property will return relative positions with respect to this source.
     noise_model = None
 
-    def __init__(self, coords, seg, labels=None,
                  features=CONFIG.centroids,
-                 bg = 'median',
-                 bad_pixel_mask=None,
                  weights=CONFIG.weights,
                  precision=CONFIG.precision,  # should be ~ diffraction limit
                  cutoffs=CONFIG.cutoffs,
@@ -155,14 +146,8 @@ class SourceTracker(LabelUser,
             positions for all sources, but that the frame-to-frame shift will be
             computed using only the sources in `labels`, by default this
             includes all sources for the default `snr` weighting scheme.
-        bad_pixel_mask : np.ndarray, optional
             Ignore these pixels in centroid computation.
-        weights : bool, str, optional
             Per-source weights for computing frame offset by weighted average.
-            By default all sources are weighted equally. To activate
-            signal-to-noise ratio weighting, `use weights='snr'`. The frequency
-            of the weight update calculation is controlled by the
-            `update_weights_every` parameter.
         precision : float, optional
             Required positional accuracy of soures in units of pixels, by
             default 0.5.
@@ -181,17 +166,14 @@ class SourceTracker(LabelUser,
             # used
             self.seg = seg
         else:
-            self.seg = SegmentsMasksHelper(seg, bad_pixels=bad_pixel_mask)
 
         # label include / exclude logic
         LabelUser.__init__(self, labels)
         PointSourceDitherModel.__init__(self, cutoffs.get('distance'))
 
         # Measures of central tendency
-        self.features = dict(features)
 
         self.bg = resolve_bg(bg)
-        
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
         self.measurements = self.measure_avg = self.measure_std = \
@@ -213,9 +195,6 @@ class SourceTracker(LabelUser,
         self.origin = origin[::-1].round(0).astype(int)
         self.logger.debug('Origin set to: {}', self.origin)
 
-        # shared memory for internal use
-        # self.counter = SyncedCounter()
-
         self.noise_model = noise_model
         self.cutoffs = AttrReadItem(cutoffs)
         self._compute = AttrReadItem({k: slice(*v) for k, v, in compute.items()})
@@ -226,7 +205,6 @@ class SourceTracker(LabelUser,
         self.show = self.plot = SourceTrackerPlots(self)
 
         # masks for photometry
-        # self.bad_pixel_mask = bad_pixel_mask
 
         #     edge_cutoffs : int or list of int, optional
         # Ignore labels that are (at most) this close to the edges of the
@@ -238,7 +216,6 @@ class SourceTracker(LabelUser,
 
         # extended masks
         # self.masks = MaskContainer(self.seg, self.groups,
-        #                            bad_pixels=bad_pixel_mask)
 
         # label logic
         # if use_labels is None:
@@ -274,7 +251,6 @@ class SourceTracker(LabelUser,
             delta_xy=(n, 2),
             sigma_xy=(nsources, 2),
             flux=(n, nsources, 2),
-            # _origins=(n, 2)
         )
         if self.snr_weighting or self.cutoffs.snr:
             shapes['snr'] = (math.ceil(n / self._compute.weights.step), nsources)
@@ -287,8 +263,6 @@ class SourceTracker(LabelUser,
         for name, shape in shapes.items():
             setattr(self, name, load_memmap(loc / filenames[name], shape, *spec))
 
-        self._origins = load_memmap(loc / filenames['_origins'], (n, 2), 'i', 0,
-                                    overwrite)
 
     def __call__(self, data, indices=None, mask=None):
         """
@@ -361,11 +335,6 @@ class SourceTracker(LabelUser,
         return self.seg.group_masks
 
     # ------------------------------------------------------------------------ #
-    @lazyproperty
-    def feature_weights(self):
-        weights = np.fromiter(self.features.values(), float)
-        return (weights / weights.sum())[:, None, None]
-
     def should_update_weights(self, request=None):
         if request is None:
             return ((self.snr_weighting or self.cutoffs.snr) and
@@ -434,7 +403,6 @@ class SourceTracker(LabelUser,
         source = (self.use_labels - 1)[source]
 
         if (feature == 'avg'):
-            data = self.measure_avg[(*keep_dims(section, source), np.newaxis)]
         else:
             if feature is not _s0:
                 # feature is str - index
@@ -442,10 +410,6 @@ class SourceTracker(LabelUser,
             # (*keep_dims(section, feature, source), np.newaxis)
             data = self.measurements[keep_dims(section, feature, source)]
 
-        return np.squeeze(
-            data - self.coords[np.newaxis, source]
-            - (self.delta_xy[section, np.newaxis, np.newaxis, :] if shifted else 0)
-        )
 
         # na = [np.newaxis]
         # updel = na * ((feature is ...) + (source is ...))
@@ -706,7 +670,6 @@ class SourceTracker(LabelUser,
             return new
 
         # same origin
-        self._origins[i] = self.origin
         return dxy
 
     def _measure(self, image, index, origin):
@@ -733,7 +696,6 @@ class SourceTracker(LabelUser,
     def measure_positions(self, image, mask=None, origin=None):
         """
         Calculate measure of central tendency (centre-of-mass) for the objects
-        in the segmentation image
 
         Parameters
         ----------
@@ -757,11 +719,6 @@ class SourceTracker(LabelUser,
         # get segmented image for current origin
         seg = self.get_segments(origin, image.shape)
 
-        image = np.ma.MaskedArray(image, mask)
-        yx = self._measure_positions(image, seg)
-        yx = self._check_measurement(yx, image.shape)
-
-        return seg, yx[..., ::-1]
 
     def _measure_positions(self, data, seg):
         """
@@ -811,9 +768,6 @@ class SourceTracker(LabelUser,
         labels = self.use_labels
         yx = np.full((len(self.features), len(labels), 2), np.nan)
         for i, stat in enumerate(self.features):
-            # labels - 1
-            yx[i] = c = getattr(seg, stat)(data, labels, njobs=1)[:, :2]
-            self.logger.trace('stat: {}\n{}', stat, c)
 
         # TODO: check if using grid + offset then com is faster
         # TODO: can do FLUX estimate here!!!
@@ -847,7 +801,6 @@ class SourceTracker(LabelUser,
 
         # NOTE: `origin` in image yx coords
         self.origin = np.array(np.round(dxy[::-1])).astype(int)
-        self._origins[i] = self.origin
         self.logger.trace('Updated origin = {}.', self.origin)
 
         # re-measure
@@ -895,7 +848,6 @@ class SourceTracker(LabelUser,
         Parameters
         ----------
         report: bool
-            Whether to print a table with the current coordinates and their 
             measurement uncertainty.
         """
 
@@ -1147,7 +1099,6 @@ class SourceTracker(LabelUser,
         xy = seg.com_bg(image, mask)[:, ::-1]
 
         # cls.best_for_tracking(image)
-        obj = cls(xy, seg, labels, bad_pixel_mask=mask, **kws)
 
         # log nice table with what's been found.
         obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
@@ -1188,7 +1139,6 @@ class SourceTracker(LabelUser,
 
     # TODO:
     # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
-    #                flux_sort=True, dilate=1, bad_pixel_mask=None, edge_mask=None)
 
     @classmethod
     def from_images(cls, images, mask=None,
@@ -1328,8 +1278,6 @@ class SourceTracker(LabelUser,
         use_labels = np.where(use_source)[0] + 1
 
         # init
-        tracker = cls(cxx, seg_glb, use_labels=use_labels,
-                      bad_pixel_mask=mask)
         tracker.sigma_xy = σ_xy
         # tracker.clustering = clf
         # tracker.xy_off_min = xy_off_min
