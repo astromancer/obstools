@@ -50,6 +50,6 @@ class LabelUser:
     def nlabels(self):
         return len(self.use_labels)
 
-    @property
-    def sizes(self):
-        return [len(labels) for labels in self.values()]
+    # @property
+    # def sizes(self):
+    #     return [len(labels) for labels in self.values()]

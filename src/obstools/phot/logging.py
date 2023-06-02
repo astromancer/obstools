@@ -3,7 +3,7 @@
 import sys
 
 # third-party
-import tqdm
+from tqdm import tqdm
 from loguru import logger
 from loguru._simple_sinks import StreamSink
 
@@ -40,13 +40,11 @@ class TqdmStreamAdapter:
 
 class TqdmLogAdapter:
     def __init__(self, sink_ids=()):
-        sink_ids = list(sink_ids)
-        if not sink_ids:
-            sink_ids = [
-                id_
-                for id_, handler in logger._core.handlers.items()
-                if isinstance(handler._sink, StreamSink)
-            ]
+        sink_ids = list(sink_ids or [
+            id_
+            for id_, handler in logger._core.handlers.items()
+            if isinstance(handler._sink, StreamSink)
+        ])
 
         self.streams = {
             id_: logger._core.handlers[id_]._sink._stream

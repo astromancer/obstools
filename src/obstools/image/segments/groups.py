@@ -23,6 +23,7 @@ class LabelGroups(Record):
     """
     Makes sure values (labels) are always arrays.
     """
+
     auto_key_template = 'group%i'
 
     def check_item(self, item):
@@ -42,7 +43,9 @@ class LabelGroups(Record):
 
 
 class LabelGroupsMixin:
-    """Mixin class for grouping and labelling image segments"""
+    """
+    Mixin class for grouping and labelling image segments.
+    """
 
     _groups = ()
 

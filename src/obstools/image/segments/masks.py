@@ -56,6 +56,7 @@ class SegmentMasksMixin:
 
 
 class MaskContainer(AttrReadItem):
+
     def __init__(self, seg, groups, **persistent):
         assert isinstance(groups, dict)  # else __getitem__ will fail
         super().__init__(persistent)

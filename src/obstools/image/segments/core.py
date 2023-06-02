@@ -26,16 +26,30 @@ from ...utils import prod
 from ...stats import geometric_median
 from ..utils import get_overlap
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
-from .utils import is_lazy, inside_segment
 from .slices import SliceDict
 from .trace import trace_boundary
 from .stats import MaskedStatsMixin
-from .masks import SegmentMasksMixin
+from .utils import inside_segment, is_lazy
 from .groups import LabelGroupsMixin, auto_id
 from .display import SegmentPlotter, make_cmap
-
+from .masks import MaskContainer, SegmentMasksMixin
 
 # ---------------------------------------------------------------------------- #
+KNOWN_BG_STATS = {'mean', 'median'}
+
+
+def resolve_bg(stat):
+    if (stat := stat.lower()) in KNOWN_BG_STATS:
+        return stat
+
+    # if callable(stat):
+    #     return stat
+
+    raise ValueError(f'Unknown statistic {stat!r} for computing background '
+                     f'flux. Valid choices are: {KNOWN_BG_STATS}, or '
+                     f'a custom callable.')
+
+
 def image_sub(background_estimator):
     if background_estimator in (None, False):
         return echo0
@@ -196,7 +210,6 @@ class SegmentedImage(SegmentationImage,     # base
 
     # Constructors
     # --------------------------------------------------------------------------
-
     @classmethod
     def empty_like(cls, image):
         """
@@ -317,6 +330,8 @@ class SegmentedImage(SegmentationImage,     # base
 
         return new
 
+    # Initialize
+    # ------------------------------------------------------------------------ #
     def __init__(self, data, label_groups=None):
         # self awareness
         if isinstance(data, SegmentationImage):
@@ -512,8 +527,10 @@ class SegmentedImage(SegmentationImage,     # base
         if isinstance(labels, abc.Hashable):
             # interpret as a group label
             if labels not in self.groups:
-                raise ValueError(f'Could not interpret object {labels!r} as a '
-                                 'set of labels, or as a key to any label group.')
+                raise ValueError(
+                    f'Could not interpret object {labels!r} as a set of labels,'
+                    ' or as a key to any label group.'
+                )
 
             labels = self.groups[labels]
 
@@ -587,10 +604,7 @@ class SegmentedImage(SegmentationImage,     # base
         have been masked
         """
         m = self.to_binary_3d(labels, ignore_labels)
-        if expand:
-            return m
-
-        return m.any(0)
+        return m if expand else m.any(0)
 
     def to_binary_3d(self, labels=None, ignore_labels=()):
         """
@@ -955,6 +969,7 @@ class SegmentedImage(SegmentationImage,     # base
             return [np.ma.MaskedArray(image[_], mask[_]) for _ in slices]
         return [image[_] for _ in slices]
 
+    @api.synonyms({'stat': 'statistic_bg'})
     def flux(self, image, labels=None, bg=(0,), statistic_bg='median'):
         """
         An estimate of the net (background subtracted) source counts, and its
@@ -1014,12 +1029,7 @@ class SegmentedImage(SegmentationImage,     # base
             seg_bg = self
 
         # resolve background counts estimate function
-        stat = stat.lower()
-        known_estimators = ('mean', 'median')
-        if stat not in known_estimators:
-            # TODO: allow callable?
-            raise ValueError('Invalid value for parameter background statistic '
-                             f'`stat`: {stat}')
+        stat = resolve_bg(stat)
 
         # get background stat
         counts_bg_pp = getattr(seg_bg, stat)(image, bg)
@@ -1078,24 +1088,7 @@ class SegmentedImage(SegmentationImage,     # base
         self.relabel_many(old_labels, new_labels)
         return counts[order]
 
-    # def com(self, image=None, labels=None):
-    #     """
-    #     Center of Mass for each labelled segment
-    #
-    #     Parameters
-    #     ----------
-    #     image: 2d array or None
-    #         if None, center of mass of segment for constant image is returned
-    #     labels
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #     image = self.data.astype(bool) if image is None else image
-    #     labels = self.resolve_labels(labels)
-    #     return np.array(ndimage.center_of_mass(image, self.data, labels))
-
+    # ------------------------------------------------------------------------ #
     def geometric_median(self, image, labels=None, mask=None, njobs='_ignored'):
         data = np.dstack([*np.indices(image.shape)[::-1], image]).swapaxes(0, -1)
         return np.array([geometric_median(xyz.T)
@@ -1201,11 +1194,15 @@ class SegmentedImage(SegmentationImage,     # base
 
         return com
 
-    centroids = com_bg
-
-    def upsample_max(self, image, labels=None, rescale=2):
+    def peak(self, image, labels=None, upsample=1, n_jobs='_ignored'):
+        upsample = int(upsample)
+        assert upsample > 0
+        
+        if upsample == 1:
+            return self.maximum_position(image, labels)
+        
+        
         from PIL import Image
-        from scipy import ndimage
 
         labels = self.resolve_labels(labels)
 
@@ -1644,18 +1641,10 @@ class SegmentedImage(SegmentationImage,     # base
         )
 
 
-# class SegmentationGroups(SegmentedImage, LabelGroupsMixin):
-#
-#     def __init__(self, data, use_zero=False):
-#         super().__init__(data, use_zero)
-#
-#     def add_segments(self, data, label_insert=None, group=None, copy=False):
-#         seg, new_labels = super().add_segments(data, label_insert, copy)
-#         self.groups[group] = new_labels
-#         return seg
-
 class SegmentsModelHelper(SegmentedImage):
-    """Mixin class for image models with piecewise domains"""
+    """
+    Mixin class for image models with piecewise domains.
+    """
 
     def __init__(self, data, grid=None, domains=None):
         # initialize parent
@@ -1708,8 +1697,7 @@ class SegmentsModelHelper(SegmentedImage):
     #     return np.mgrid[ylo:yhi:yst, xlo:xhi:xst]
 
 
-
-class SegmentsMasksHelper(SegmentsModelHelper, LabelGroupsMixin):
+class SegmentsMasksHelper(SegmentsModelHelper):
 
     def __init__(self, data, grid=None, domains=None, groups=None,
                  **persistent_masks):
@@ -1731,6 +1719,7 @@ class SegmentsMasksHelper(SegmentsModelHelper, LabelGroupsMixin):
 
 
 class GlobalSegmentation(SegmentsMasksHelper):
+
     @classmethod
     def merge(cls, segmentations, delta_xy, extend=True, f_accept=0.5,
               post_dilate=1):
@@ -1776,3 +1765,14 @@ class GlobalSegmentation(SegmentsMasksHelper):
         order = np.ma.argsort(measure, endwith=False)[o]
         self.relabel_many(order + 1, self.labels)
         return order
+
+
+# class SegmentationGroups(SegmentedImage, LabelGroupsMixin):
+#
+#     def __init__(self, data, use_zero=False):
+#         super().__init__(data, use_zero)
+#
+#     def add_segments(self, data, label_insert=None, group=None, copy=False):
+#         seg, new_labels = super().add_segments(data, label_insert, copy)
+#         self.groups[group] = new_labels
+#         return seg

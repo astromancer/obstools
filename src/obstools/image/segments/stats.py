@@ -64,6 +64,7 @@ class MaskedStatistic(LoggingMixin):
 
         result, mask = self._run(data, seg, labels, njobs, *results, **kws)
 
+        # sourcery skip: assign-if-exp, reintroduce-else
         if mask is None:
             return np.array(result)
 
@@ -183,7 +184,6 @@ class MaskedStatsMixin:
     # attach to inheritors of this class that invoke the method via attribute
     # lookup eg:
     # >>> obj.sum(image)
-    #
 
     # define supported statistics
     _supported = ['sum',
@@ -200,13 +200,12 @@ class MaskedStatsMixin:
                     'maximum_position': (2,)}
 
     # define some convenient aliases for the ndimage functions
-    _aliases = {'minimum': 'min',
-                'maximum': 'max',
-                'minimum_position': 'argmin',
-                'maximum_position': 'argmax',
-                'maximum_position': 'peak',
-                'standard_deviation': 'std',
-                'center_of_mass': 'com'}
+    _aliases = {'minimum':              'min',
+                'maximum':              'max',
+                'minimum_position':     'argmin',
+                'maximum_position':     'argmax',
+                'standard_deviation':   'std',
+                'center_of_mass':       'com'}
 
     def __init_subclass__(cls, **kws):
         super().__init_subclass__(**kws)

@@ -286,9 +286,11 @@ class PointSourceDitherModel(LoggingMixin):
 
             # no new outliers
             if (outliers == out).all():
-                self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
+                if outliers.any():
+                    self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
                                  n_out, n_points, (n_out / n_points), self.d_cut)
-
+                else:
+                    self.logger.info('No outliers detected for position measures.')
                 return centres, sigma_xy, delta_xy.squeeze(), outliers
 
             # mask outliers
