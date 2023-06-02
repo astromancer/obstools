@@ -1,9 +1,6 @@
 
 
 # std
-from motley.utils import vbrace
-from matplotlib.transforms import AffineDeltaTransform
-from collections import defaultdict
 from collections import namedtuple
 
 # third-party
@@ -16,12 +13,12 @@ from mpl_multitab import MplMultiTab
 from pyxides.typing import ListOf
 from recipes.dicts import AttrDict as ArtistContainer
 from scrawl.image import Image3D
-from scrawl.video import VideoFeatureDisplay
 from scrawl.moves.callbacks import CallbackManager, mpl_connect
 
 # relative
 from ...image.image import ImageContainer, SkyImage
-from ..config import CONFIG
+from .display import TrackerVideo
+
 
 # ---------------------------------------------------------------------------- #
 
@@ -159,111 +156,6 @@ class SourceImages(ImageContainer, ListOf(SourceImage)):
 
 
 # ---------------------------------------------------------------------------- #
-
-
-class TrackerVideo(VideoFeatureDisplay):
-
-    # style = AttrDict()
-
-    default_marker_style = {
-        **VideoFeatureDisplay.default_marker_style,
-        'cmap': 'rainbow',
-        'emboss': 1.5
-    }
-    # default_marker_style.pop('edgecolor')
-    # default_marker_style.pop('facecolor')
-
-    label_style = {
-        'offset': 5,
-        'size': 'x-small',
-        'alpha': 1
-    }
-
-    def __init__(self, tracker, data, marker_cycle=(), marker_style=(),
-                 update=True, **kws):
-
-        self.tracker = tracker
-
-        # setup scatter property cycle
-        marker_cycle = defaultdict(list)
-        weights = iter(tracker.feature_weights.squeeze())
-
-        for stat, style in CONFIG.centroids.items():
-            style = dict(zip(('marker', 'color', 'label'), style))
-            for key, val in style.items():
-                marker_cycle[key].append(val)
-
-        # kws passed to ImageDisplay
-        kws.setdefault('clim_every', 0)
-
-        # init video + feature marks
-        _n, *shape = tracker.measurements.shape
-        VideoFeatureDisplay.__init__(self, data, np.full(shape + 1, np.nan),
-                                     marker_cycle, marker_style, **kws)
-
-        # Source segments
-        seg = self.tracker.seg
-        contour_style = dict(marker_style)
-        contour_style.pop('s', None)
-
-        self.regions = tracker.show.contours(self.ax, **contour_style)
-        self.label_texts = seg.show.labels(self.ax, **self.label_style)
-
-        if self.cbar:
-            # NOTE, we don't want the cmap to switch for these when scrolling,
-            # so add directly to artists
-            self.cbar.scroll.artists.add(self.regions)
-
-        # update for frame 0
-        if update:
-            self.update(0)
-
-        # Link segment contours and labels to redraw upon slider move (since
-        # image redraws)
-        #self.sliders.add_art(self.regions, self.label_texts, self.marks)
-        self.sliders.link(self.regions, self.label_texts, self.marks)
-
-    def get_coords(self, i):
-        # logger.debug('GETCOO', i)
-        tracker = self.tracker
-        if np.isnan(tracker.delta_xy[i]).any():
-            self.logger.debug('No measurements yet for frame {}.', i)
-            tracker(self.data[i], i)
-
-        # tracker.get_coords(i)
-        if 'avg' in CONFIG.centroids:
-            return np.vstack([tracker.measurements[i],
-                            #   np.full((1, 2, 2), np.nan),
-                              tracker.measure_avg[i, None]])
-        return tracker.measurements[i]
-
-    def update(self, i, draw=False):
-        # logger.debug('UPDATE', i)
-        # logger.debug('GRUMBLE' * np.isnan(tracker.delta_xy[i]).any())
-        i = int(i)
-        tracker = self.tracker
-        if np.isnan(tracker.measurements[i]).any():
-            self.logger.debug('No measurements yet for frame {}.', i)
-            tracker(self.data[i], i)
-
-        # update region offsets
-        self.regions.set_offsets(tracker._origins[i])
-
-        return [*super().update(i, draw), self.regions, self.label_texts]
-
-    # def mark(self, xy, marker_cycle, emboss=1.5, alpha=1, **style):
-    #     art = super().mark(xy, marker_cycle, emboss, alpha, **style)
-    #     self.ax.plot()
-    #     return art
-
-    def legend(self, **kws):
-        spacer = self.divider.append_axes('top', 1.25, pad=0.05)
-        spacer.set_axis_off()
-        art = dict(zip(self.tracker.centroids, zip(*self.marks)))
-        self.tracker.legend(spacer,
-                            art,
-                            bbox_to_anchor=(-0.02, 1), **kws)
-
 
 class SourceTrackerGUI(TrackerVideo):
 

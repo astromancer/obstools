@@ -1,13 +1,17 @@
+
 # std
+import sys
 import itertools as itt
-from collections import defaultdict
-from IPython import embed
+from collections import defaultdict, deque
 
 # third-party
 import numpy as np
-import matplotlib.pyplot as plt
+from mpl_multitab import MplMultiTab
+from mpl_toolkits.axes_grid1.mpl_axes import Axes
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib import ticker
 from matplotlib.lines import Line2D
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.transforms import AffineDeltaTransform
 
@@ -18,14 +22,20 @@ from scrawl.video import VideoFeatureDisplay
 
 # relative
 from ...image import SkyImage
-from ..config import CONFIG
-from recipes import pprint
-from mpl_multitab import MplTabGUI
+from . import CONFIG
+
 
 # ---------------------------------------------------------------------------- #
-CONFIG = CONFIG.tracking
 CENTROIDS = CONFIG.plots.centroids
 
+SUBPLOTSPEC = dict(
+    bottom=0.05,
+    top=0.8,
+    left=0.075,
+    right=0.85,
+    hspace=0.05,
+    wspace=0.05
+)
 
 # ---------------------------------------------------------------------------- #
 
@@ -40,6 +50,10 @@ CENTROIDS = CONFIG.plots.centroids
 
 
 # ---------------------------------------------------------------------------- #
+
+class HackAxesToNotShare(Axes):
+    def __init__(self, fig, rect, **kws):
+        super().__init__(fig, rect, **{**kws, **dict(sharex=None, sharey=None)})
 
 
 def _format_int(x, pos):
@@ -62,7 +76,17 @@ class IntLocator(ticker.IndexLocator):
 def format_coord(x, y):
     return f'{x = :4.3f}; {y = :4.3f}'
 
-# ---------------------------------------------------------------------------- #
+
+def add_colorbar(mappable, aspect=20, pad_fraction=0.5, **kws):
+    """Add a vertical colour bar to a plot."""
+
+    # Adapted from https://stackoverflow.com/a/33505522/1098683
+    ax = mappable.axes
+    divider = make_axes_locatable(ax)
+    # width = axes_size.AxesY(ax, aspect=1. / aspect)
+    # pad = axes_size.Fraction(pad_fraction, width)
+    cax = divider.append_axes('right', size=0.1, pad=1)
+    return ax.figure.colorbar(mappable, cax, **kws)
 
 # ---------------------------------------------------------------------------- #
 
@@ -104,7 +128,17 @@ class SourceTrackerPlots:
                **kws}
         )
 
-    def positions(self, labels=None, section=...,
+    def _get_figure(self, ui, label):
+        if ui:
+            tab = ui.add_tab(f'Source {label}')
+            return tab.figure
+        
+        if plt := sys.modules.get('matplotlib.pyplot'):
+            return plt.figure()
+        
+        return Figure()
+
+    def positions(self, labels=None, section=slice(None),
                   show=(cfg := CONFIG.plots.position).show,  # 'nulls',
                   legend=cfg.legend, figsize=cfg.figsize, **kws):
         """
@@ -115,68 +149,151 @@ class SourceTrackerPlots:
         """
         # trk = self.tracker
 
+        # print(figsize, 'BITCHES')
+
         if labels is None:
             labels = self.tracker.use_labels
 
         ui = None
-        if _ui := len(labels) > 1:
-            ui = MplTabGUI(title='Position Measurements')
+        if len(labels) > 1:
+            ui = MplMultiTab(title='Position Measurements', pos='WN')
 
+        art = {}
         for label in labels:
-            if _ui:
-                tab = ui.add_tab(f'Source {label}', fig={'figsize': figsize})
-                fig = tab.figure
-            else:
-                fig = plt.figure(figsize=figsize)
+            fig = self._get_figure(ui, label)
 
-            art = self._positions_source(fig, label - 1, section, show, legend,
-                                         **kws)
+            art[label] = self._positions_source(
+                fig, label - 1, section, show, legend, **kws
+            )
             # fig.tight_layout()
-
-        return ui
+        # fig.set_size_inches(figsize)
+        return ui, art
 
     def _positions_source(self, fig, source, section, show, legend, **kws):
 
         tracker = self.tracker
-        features = tracker.centrality
+        weights = dict(zip(tracker.features, tracker.feature_weights.squeeze()))
+        features = list(self._get_features(show, weights))
+        n_cols = len(features)
 
-        if ('nulls' in show):
-            n_feats = len(features)
-        else:
-            n_feats = sum(np.fromiter(features.values(), float) > 0)
+        axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
+                            gridspec_kw=SUBPLOTSPEC)
 
-        n_rows = n_feats + (('avg' in show) and (n_feats > 1))
-
-        axes = fig.subplots(n_rows, 2,
-                            sharex=True, sharey=True)
-        fig.subplots_adjust(bottom=0.05,
-                            left=0.05,
-                            right=1,
-                            hspace=0.05,
-                            wspace=0.05)
-
-        axes = np.atleast_2d(axes)
-        for i, ax in enumerate(axes.ravel()):
-            self._setup_scatter_axes(ax, i, i >= (n_rows - 1) * 2)
+        for idx, ax in np.ndenumerate(axes):
+            self._setup_scatter_axes(ax, idx, n_cols, features[idx[1]],
+                                     'weights' in show)
             self._show_pixel(ax, **CONFIG.plots.position.pixel)
+            self._show_precision(ax, **CONFIG.plots.position.precision)
 
         # loop features
         count = itt.count()
         art = defaultdict(list)
-        scatter = dict(**CONFIG.plots.position.scatter, **kws)
 
-        captions = {}
-        if legend:
-            captions = dict(self._get_legend_labels('weights' in show))
+        scatter = dict({**CONFIG.plots.position.scatter, **kws})
+        captions = dict(self._get_legend_labels('weights' in show)) if legend else {}
 
-        for feature, (color, marker, label) in CENTROIDS.items():
+        for feature in features:
+            # plot residuals vs shifted residuals
+            color, marker, label = CENTROIDS[feature]
+            art[feature] = tuple(self._compare_scatter_density(
+                axes[:, next(count)],
+                (section, feature, source),
+                {**dict(color=color,
+                        marker=marker,
+                        label=captions.get(feature, label)),
+                 **scatter},
+                legend
+            ))
+
+        polys = next(zip(*deque(art.values())[-1]))
+        # add_colorbar(polys[0])
+
+        for i, poly in enumerate(polys):
+            l, b, w, h = axes[i, -1].get_position().bounds
+            cax = fig.add_axes([l + w + 0.075, b, 0.01, h])
+            fig.colorbar(poly, cax=cax, label='Density')
+
+        #     # cax = grids[i].cbar_axes[0]
+        #     cax = grid.cbar_axes[i]
+        #     cax.colorbar(poly, label='Density')
+        #     cax.toggle_label(True)
+        #     cax.axis[cax.orientation].set_label()
+
+        # share x axes between rows
+        # for row in axes:
+        #     first, *rest = row
+        #     for ax in rest:
+        #         ax.sharex(first)
+        #         ax.sharey(first)
+
+        #
+        # view = axes[1, 0].viewLim.get_points()
+        # view = view.mean(0) + view.ptp(0).max() * np.array([[-0.5], [0.5]])
+        # axes[1, 0].viewLim.set_points(view)
+
+
+#        **CONFIG.plots.position.cbar
+        # cbar.ax.set_ylabel('Density')
+
+        # x, y = pprint.uarray(tracker.coords[source], tracker.sigma_xy[source], 2)
+        # Source {tracker.use_labels[source]}:
+        # cap = dict(CONFIG.plots.position.caption)
+        # fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
+
+        return art
+        # if legend:
+        #     self._legend(axes[0, 0], art, show_weights)
+
+    def _setup_scatter_axes(self, ax, index, n_cols, feature, show_weights):
+
+        row, col = index
+        ax.tick_params(
+            bottom=True, top=True, left=True, right=True,
+            labelright=(right := (col == n_cols - 1)),
+            labelleft=(left := (col == 0)),
+            labeltop=(top := (row == 0)),
+            labelbottom=(bot := (row == 1)),
+            direction='inout',
+            length=7
+        )
+
+        # for axx in (ax.xaxis, ax.yaxis):
+        #     axx.set_major_locator(IntLocator(1, 0))
+        #     axx.set_major_formatter(ticker.FuncFormatter(_format_int))
+
+        # ax.format_coord=format_coord
+
+        delta = '' if top else ' - \delta'
+        ax.set(xlabel=f'$x{delta}$')  # , aspect='equal'
+
+        if top:
+            ax.xaxis.set_label_position('top')
+            
+            title = CONFIG.plots.centroids[feature][-1]
+            if show_weights:
+                title += '\n'
+                if (i := index[1]) < len(weights := self.tracker.feature_weights):
+                    title += f'(w = {weights[i].item():3.2f})'
+            ax.set_title(title, size='small', fontweight='bold')
+            
+
+        if left or right:
+            ax.set_ylabel(f'$y{delta}$')
+        if right:
+            ax.yaxis.set_label_position('right')
+
+        ax.grid()
+
+    def _get_features(self, show, weights):
+
+        for feature in CENTROIDS:
             #
             if feature == 'avg':
                 if 'avg' not in show:
                     continue
 
             # check requested feature was part of compute
-            elif (weight := features.get(feature)) is not None:
+            elif (weight := weights.get(feature)) is not None:
                 # have weight
                 if not (weight or ('nulls' in show)):
                     # zero weight
@@ -185,69 +302,35 @@ class SourceTrackerPlots:
             else:
                 raise ValueError(f'Unknown feature {feature!r}')
 
-            # get data
-            residue = tracker.get_coords_residual(section, feature, source)
-            shifted = tracker.get_coords_residual(section, feature, source, False)
-            # shifted = residue + tracker.delta_xy[section]
+            yield feature
 
-            # plot residuals vs shifted residuals
-            art[feature] = self._compare_scatter_density(
-                axes[next(count)], residue, shifted,
-                {**dict(color=color,
-                        marker=marker,
-                        label=captions.get(feature, label)),
-                 **scatter},
-                legend
-            )
-
-        x, y = pprint.uarray(tracker.coords[source], tracker.sigma_xy[source], 2)
-        fig.suptitle(f'Source {tracker.use_labels[source]}:    {x = :s}; {y = :s}')
-
-        return art
-
-        # if legend:
-        #     self._legend(axes[0, 0], art, show_weights)
-
-    def _compare_scatter_density(self, axes, xy, shifted,
+    def _compare_scatter_density(self, axes, index,
                                  scatter_kws=CONFIG.plots.position.scatter,
-                                 legend=True, **kws):
-        ax1, ax2 = axes
-        common = dict(CONFIG.plots.position.density, **kws,
-                      scatter_kws=scatter_kws)
-        # print(common)
-        _, *art = scatter.density(ax1, xy, **common)
+                                 legend=False, **kws):
+
+        #
+        scatter_kws = dict(CONFIG.plots.position.density,
+                           scatter_kws=scatter_kws,
+                           **kws)
+        for i, ax in enumerate(axes):
+            data = self.tracker.get_coords_residual(*index, bool(i))
+            _, *art = scatter.density(ax, data, **scatter_kws)
+            yield art
 
         if legend:
-            ax1.legend()  # loc='lower left', bbox_to_anchor=(0, 1.05)
+            ax2.legend(loc='upper left')  # , bbox_to_anchor=(0, 1.05)
 
-        _, polys, points = scatter.density(ax2, shifted, **common)
-        ax1.figure.colorbar(polys, ax=axes, shrink=0.7, pad=0.025)
-
-        return art, (polys, points)
-
-    def _setup_scatter_axes(self, ax, i, last):
-
-        ax.set_aspect('equal')
-        ax.tick_params(bottom=True, top=True, left=True, right=True,
-                       labelright=False,  # (lr := (i % 2))
-                       labelleft=(i % 2) == 0,
-                       labeltop=(lt := (i // 2) == 0), labelbottom=last)
-
-        # for axx in (ax.xaxis, ax.yaxis):
-        #     axx.set_major_locator(IntLocator(1, 0))
-        #     axx.set_major_formatter(ticker.FuncFormatter(_format_int))
-
-        # ax.set(xlabel='$\delta x$', ylabel=)
-        # ax.format_coord=format_coord
-        ax.grid()
-
-    def _show_pixel(self, ax, **style):
+    def _show_pixel(self, ax, pos=(0, 0), **style):
         # add pixel size rect
-        r = Rectangle((-0.5, -0.5), 1, 1, **style)
-        c = Circle((0, 0), self.tracker.precision, **style)
-        for p in (r, c):
-            ax.add_patch(p)
-        return r, c
+        r = Rectangle(np.array(pos) - 0.5, 1, 1, **style)
+        ax.add_patch(r)
+        return r
+
+    def _show_precision(self, ax, pos=(0, 0), **style):
+        # add pixel size rect
+        c = Circle(pos, self.tracker.precision, **style)
+        ax.add_patch(c)
+        return c
 
     def _legend(self, ax, art, show_weights, **kws):
 
@@ -280,7 +363,7 @@ class SourceTrackerPlots:
         )
 
     def _get_legend_labels(self, show_weights=True, braced=False, align=None):
-        centroids = self.tracker.centrality
+        centroids = self.tracker.features
         * _, labels = zip(*map(CENTROIDS.get, centroids))
         if not show_weights:
             yield from zip(centroids, labels)
@@ -327,7 +410,7 @@ class TrackerVideo(VideoFeatureDisplay):
         # setup scatter property cycle
         marker_cycle = defaultdict(list)
         # weights = iter(tracker.feature_weights.squeeze())
-        for stat in (*tracker.centrality, 'avg'):
+        for stat in (*tracker.features, 'avg'):
             for key, val in zip(('color', 'marker', 'label'), CENTROIDS[stat]):
                 marker_cycle[key].append(val)
 
@@ -386,11 +469,11 @@ class TrackerVideo(VideoFeatureDisplay):
         tracker = self.tracker
         if np.isnan(tracker.measurements[i]).any():
             self.logger.debug('No measurements yet for frame {}.', i)
-            tracker(self.data[i], i)
+            tracker(self.data, i)
 
         # update region offsets
         # print(tracker._origins[i])
-        self.regions.set_offsets(-tracker._origins[i, ::-1])
+        self.regions.set_offsets(tracker._origins[i, ::-1])
 
         return [*super().update(i, draw), self.regions, self.label_texts]
 
@@ -403,7 +486,7 @@ class TrackerVideo(VideoFeatureDisplay):
         spacer = self.divider.append_axes('top', 1.25, pad=0.05)
         spacer.set_axis_off()
 
-        art = dict(zip((*self.tracker.centrality, 'avg'), zip(self.marks)))
+        art = dict(zip((*self.tracker.features, 'avg'), zip(self.marks)))
         self.tracker.show._legend(spacer, art, show_weights,
                                   bbox_to_anchor=(-0.02, 0),)
         # labels = dict(self.tracker.show._get_legend_labels(show_weights))
