@@ -21,8 +21,11 @@ from loguru import logger
 from joblib import Parallel, delayed
 from bottleneck import nanmean, nanstd
 from astropy.utils import lazyproperty
+
 # local
+from recipes import api
 from recipes.io import load_memmap
+from recipes.string import pluralize
 from recipes.dicts import AttrReadItem
 from recipes.parallel.joblib import initialized
 
@@ -82,6 +85,17 @@ def keep_dims(*args):
     return tuple(map(wrap_int, args))
 
 
+def resolve_weights(features):
+    feature_kws = {}
+    weights = np.empty(len(features))
+    for i, (centroid, weight) in enumerate(features.items()):
+        if isinstance(weight, dict):
+            feature_kws[centroid] = kws =  weight.copy()
+            weight = kws.pop('weight')
+        weights[i] = weight
+
+    return (weights / weights.sum()), feature_kws
+
 # class NullSlice():
 #     """Null object pattern for getitem"""
 #
@@ -94,7 +108,9 @@ def keep_dims(*args):
 # TODO: bayesian version
 
 
+class SourceTracker(LabelUser, PointSourceDitherModel):
     """
+    A class to track sources in CCD video to aid time series photometry.
 
     Stellar positions in each new frame are calculated as the background
     subtracted centroids of the chosen image segments. Centroid positions of
@@ -115,6 +131,11 @@ def keep_dims(*args):
     # `rpos` property will return relative positions with respect to this source.
     noise_model = None
 
+    def __init__(self, coords, seg,
+                 labels=None,
+                 mask=None,
+                 pre_subtract=CONFIG.pre_subtract,
+                 bg=CONFIG.bg,
                  features=CONFIG.centroids,
                  weights=CONFIG.weights,
                  precision=CONFIG.precision,  # should be ~ diffraction limit
@@ -146,8 +167,14 @@ def keep_dims(*args):
             positions for all sources, but that the frame-to-frame shift will be
             computed using only the sources in `labels`, by default this
             includes all sources for the default `snr` weighting scheme.
+        mask : np.ndarray, optional
             Ignore these pixels in centroid computation.
+        weights : array-like or str, optional
             Per-source weights for computing frame offset by weighted average.
+            If None, sources are weighted equally. To activate
+            signal-to-noise ratio weighting, use `weights='snr'`. The frequency
+            of the weight update calculation is controlled by the `compute`
+            parameter.
         precision : float, optional
             Required positional accuracy of soures in units of pixels, by
             default 0.5.
@@ -166,14 +193,20 @@ def keep_dims(*args):
             # used
             self.seg = seg
         else:
+            self.seg = SegmentsMasksHelper(seg, bad_pixels=mask)
 
         # label include / exclude logic
         LabelUser.__init__(self, labels)
         PointSourceDitherModel.__init__(self, cutoffs.get('distance'))
 
         # Measures of central tendency
+        self.features = list(features)
+        feature_weights, self.feature_kws = resolve_weights(features)
+        self.feature_weights = feature_weights[:, None, None]
 
+        self.presub = bool(pre_subtract)
         self.bg = resolve_bg(bg)
+
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
         self.measurements = self.measure_avg = self.measure_std = \
@@ -195,6 +228,7 @@ def keep_dims(*args):
         self.origin = origin[::-1].round(0).astype(int)
         self.logger.debug('Origin set to: {}', self.origin)
 
+        #
         self.noise_model = noise_model
         self.cutoffs = AttrReadItem(cutoffs)
         self._compute = AttrReadItem({k: slice(*v) for k, v, in compute.items()})
@@ -205,6 +239,7 @@ def keep_dims(*args):
         self.show = self.plot = SourceTrackerPlots(self)
 
         # masks for photometry
+        # self.mask = mask
 
         #     edge_cutoffs : int or list of int, optional
         # Ignore labels that are (at most) this close to the edges of the
@@ -216,6 +251,7 @@ def keep_dims(*args):
 
         # extended masks
         # self.masks = MaskContainer(self.seg, self.groups,
+        #                            bad_pixels=mask)
 
         # label logic
         # if use_labels is None:
@@ -251,6 +287,7 @@ def keep_dims(*args):
             delta_xy=(n, 2),
             sigma_xy=(nsources, 2),
             flux=(n, nsources, 2),
+            # origins=(n, 2)
         )
         if self.snr_weighting or self.cutoffs.snr:
             shapes['snr'] = (math.ceil(n / self._compute.weights.step), nsources)
@@ -263,6 +300,8 @@ def keep_dims(*args):
         for name, shape in shapes.items():
             setattr(self, name, load_memmap(loc / filenames[name], shape, *spec))
 
+        self.origins = load_memmap(loc / filenames['origins'], (n, 2), 'i', 0,
+                                   overwrite)
 
     def __call__(self, data, indices=None, mask=None):
         """
@@ -403,6 +442,7 @@ def keep_dims(*args):
         source = (self.use_labels - 1)[source]
 
         if (feature == 'avg'):
+            data = self.measure_avg[keep_dims(section, source)]
         else:
             if feature is not _s0:
                 # feature is str - index
@@ -410,6 +450,13 @@ def keep_dims(*args):
             # (*keep_dims(section, feature, source), np.newaxis)
             data = self.measurements[keep_dims(section, feature, source)]
 
+        residual = data - self.coords[np.newaxis, source]
+
+        if shifted:
+            extra_dims = [np.newaxis] * (residual.ndim - self.delta_xy.ndim)
+            residual -= self.delta_xy[(section, *extra_dims, slice(None))]
+
+        return residual.squeeze()
 
         # na = [np.newaxis]
         # updel = na * ((feature is ...) + (source is ...))
@@ -670,6 +717,7 @@ def keep_dims(*args):
             return new
 
         # same origin
+        self.origins[i] = self.origin
         return dxy
 
     def _measure(self, image, index, origin):
@@ -696,6 +744,7 @@ def keep_dims(*args):
     def measure_positions(self, image, mask=None, origin=None):
         """
         Calculate measure of central tendency (centre-of-mass) for the objects
+        in the segmentation image.
 
         Parameters
         ----------
@@ -718,7 +767,10 @@ def keep_dims(*args):
 
         # get segmented image for current origin
         seg = self.get_segments(origin, image.shape)
+        yx = self._measure_positions(np.ma.MaskedArray(image, mask), seg)
+        xy = self._check_measurement(yx, image.shape)[..., ::-1]
 
+        return seg, xy
 
     def _measure_positions(self, data, seg):
         """
@@ -767,7 +819,15 @@ def keep_dims(*args):
         # compute centroids
         labels = self.use_labels
         yx = np.full((len(self.features), len(labels), 2), np.nan)
+
+        if self.presub:
+            data = data - getattr(seg, self.bg)(data, 0)
+
         for i, stat in enumerate(self.features):
+            centroid = getattr(seg, stat)(data, labels, njobs=1,
+                                          **self.feature_kws.get(stat, {}))
+            self.logger.trace('centroid: {}\n{}', stat, centroid)
+            yx[i] = centroid[:, :2]
 
         # TODO: check if using grid + offset then com is faster
         # TODO: can do FLUX estimate here!!!
@@ -801,6 +861,7 @@ def keep_dims(*args):
 
         # NOTE: `origin` in image yx coords
         self.origin = np.array(np.round(dxy[::-1])).astype(int)
+        self.origins[i] = self.origin
         self.logger.trace('Updated origin = {}.', self.origin)
 
         # re-measure
@@ -848,6 +909,7 @@ def keep_dims(*args):
         Parameters
         ----------
         report: bool
+            Whether to print a table with the current coordinates and their
             measurement uncertainty.
         """
 
@@ -1099,6 +1161,7 @@ def keep_dims(*args):
         xy = seg.com_bg(image, mask)[:, ::-1]
 
         # cls.best_for_tracking(image)
+        obj = cls(xy, seg, labels, mask=mask, **kws)
 
         # log nice table with what's been found.
         obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
@@ -1139,6 +1202,7 @@ def keep_dims(*args):
 
     # TODO:
     # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
+    #                flux_sort=True, dilate=1, mask=None, edge_mask=None)
 
     @classmethod
     def from_images(cls, images, mask=None,
@@ -1278,6 +1342,7 @@ def keep_dims(*args):
         use_labels = np.where(use_source)[0] + 1
 
         # init
+        tracker = cls(cxx, seg_glb, use_labels=use_labels, mask=mask)
         tracker.sigma_xy = σ_xy
         # tracker.clustering = clf
         # tracker.xy_off_min = xy_off_min

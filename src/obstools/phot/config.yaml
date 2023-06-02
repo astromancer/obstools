@@ -1,13 +1,22 @@
 
 # source tracking
 tracking:
+    # ------------------------------------------------------------------------ #
     centroids:
-        com:                0
-        com_bg:             1  # use if data not calibrated / background subbed
-        geometric_median:   0
-        peak:               1
-        # 'upsample_max':     0
+        # features used for tracking
+        com:                            1
+        geometric_median:               1
+        peak:               
+            weight: 1
+            upsample: 4
+            filter: lanczos
+        
 
+    pre_subtract:       True
+    # subtract background from image prior to computing features
+    bg:                 median
+    # statistic used for background
+    
     precision:          0.5
     # Required positional accuracy in pixels
     weights:            snr 
@@ -31,6 +40,7 @@ tracking:
         centres: [0 , 1000, 100 ]
 
     filenames:
+        origins:        origin.dat
         measurements:   centroids.dat
         measure_avg:    centroids-avg.dat
         measure_std:    centroids-std.dat
@@ -38,8 +48,8 @@ tracking:
         sigma_xy:       coords-std.dat
         flux:           flux.dat
         snr:            snr.dat
-        _origins:       origin.dat
 
+    # ------------------------------------------------------------------------ #
     table:
         title:          Measured source coordinates
         title_style: 
@@ -54,7 +64,6 @@ tracking:
         row_nrs:        True
         max_rows:       25
 
-
     progress:
         bar_format: >-
             {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
@@ -62,14 +71,13 @@ tracking:
             {elapsed:|cyan} eta {remaining:|cyan}
         ascii: " ╸━"
         unit:  " frames"
-
+    
+    # ------------------------------------------------------------------------ #
     plots:
         centroids:
             com:              [r, +, Centre of Mass]
-            com_bg:           [r, x, CoM (bg sub)]
-            geometric_median: [g, o, Geometric Median]
-            peak:             [m, ^, Maximum]
-            # upsample_max:     (d Upsampled Max
+            geometric_median: [g, o, "Projected\n Geometric Median"]
+            peak:             [m, ^, Peak(upsample=4)]
             avg:              [k, x, Weighted Average]  # NOTE: sould be last
 
         labels:
@@ -82,28 +90,46 @@ tracking:
             density:
                 cmap:               null
                 tessellation:       hex
-                min_count:          7
+                min_count:          3
 
             scatter:
                 marker: x
+                ms:     3
                 ls:     ''
                 color:  null
                 # mfc:    none
                 zorder: 1
                 alpha:  0.35
 
+            caption:
+                pos:    [0.5, 0.01]
+                text:   >-
+                    Origin: x = {x:s}
+                            y = {y:s}
+                va:     bottom
+                ha:     center
+                bbox:       # these are matplotlib.patch.Patch properties
+                    boxstyle:    round
+                    facecolor:  lightgrey
+
             legend:             False
             show:               [avg, weights]  #  nulls
-            figsize:            [5, 8]
+            figsize:            [6.5, 8]
             
             cbar:
                 # shrink: 0.9
-                pad:    0.025
-
+                pad:    0.01
 
             pixel: 
                 lw:         1
-                ls:         --
+                ls:         ':'
                 fc:         none
                 ec:         lime
+                zorder:     100
+
+            precision:
+                lw:         1
+                ls:         ':'
+                fc:         none
+                ec:         darkgreen
                 zorder:     100
