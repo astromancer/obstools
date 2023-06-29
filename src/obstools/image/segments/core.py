@@ -585,7 +585,7 @@ class SegmentedImage(SegmentationImage,     # base
         matches the order of the ``labels`` attribute.
         """
         slices = iter(self.slices.values())
-        next(slices) # full image slice for zero label
+        next(slices)  # full image slice for zero label
         return np.array([
             np.count_nonzero(self._data[slices] == label)
             for label, slices in zip(self.labels, slices)
@@ -794,7 +794,7 @@ class SegmentedImage(SegmentationImage,     # base
         labels
 
         Yields
-        -------
+        ------
 
         """
         yield from self.cutouts(image, labels=labels, flatten=True)
@@ -1211,24 +1211,26 @@ class SegmentedImage(SegmentationImage,     # base
 
         return com
 
-    def peak(self, image, labels=None, upsample=1, n_jobs='_ignored'):
+    def peak(self, image, labels=None, upsample=1, filter='lanczos', pixel_centre=0.5,
+             njobs='_ignored'):
+
         upsample = int(upsample)
         assert upsample > 0
-        
+
         if upsample == 1:
-            return self.maximum_position(image, labels)
-        
-        
+            return self.maximum_position(image, labels) + pixel_centre
+
         from PIL import Image
 
         labels = self.resolve_labels(labels)
 
         im = Image.fromarray(image.astype('f'))
-        newsize = np.multiply(im.size, rescale)
-        im1 = im.resize(newsize, Image.LANCZOS)
+        newsize = np.multiply(im.size, upsample)
+        im1 = im.resize(newsize, getattr(Image, filter.upper()))
         seg1 = Image.fromarray(self.data * 1.).resize(newsize)
         peaks = ndimage.maximum_position(np.array(im1), seg1, labels)
-        return np.array(peaks) / rescale
+
+        return (np.array(peaks) / upsample) + pixel_centre
 
     # --------------------------------------------------------------------------
 
