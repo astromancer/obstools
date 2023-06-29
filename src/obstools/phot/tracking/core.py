@@ -5,6 +5,7 @@ photometry.
 
 # std
 import math
+import time
 import numbers
 import tempfile
 import functools as ftl
@@ -20,7 +21,6 @@ from tqdm import tqdm
 from loguru import logger
 from joblib import Parallel, delayed
 from bottleneck import nanmean, nanstd
-from astropy.utils import lazyproperty
 
 # local
 from recipes import api
@@ -90,7 +90,7 @@ def resolve_weights(features):
     weights = np.empty(len(features))
     for i, (centroid, weight) in enumerate(features.items()):
         if isinstance(weight, dict):
-            feature_kws[centroid] = kws =  weight.copy()
+            feature_kws[centroid] = kws = weight.copy()
             weight = kws.pop('weight')
         weights[i] = weight
 
@@ -103,6 +103,7 @@ def resolve_weights(features):
 #         return None
 
 # ---------------------------------------------------------------------------- #
+
 
 # FIXME: remove redundant code
 # TODO: bayesian version
@@ -224,7 +225,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         self._source_weights = None if snrw else weights
 
         region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
-        origin = self.compute_offset(region_centres, weights=self._source_weights)
+        origin = self.compute_offset(region_centres, weights=self._source_weights, axis=0)
         self.origin = origin[::-1].round(0).astype(int)
         self.logger.debug('Origin set to: {}', self.origin)
 
@@ -303,6 +304,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         self.origins = load_memmap(loc / filenames['origins'], (n, 2), 'i', 0,
                                    overwrite)
 
+        self._source_weights = nanmean(self.snr, 0)
+
     def __call__(self, data, indices=None, mask=None):
         """
         Track the shift of the image frame from initial coordinates
@@ -373,7 +376,14 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
     def masks(self):  # extended masks
         return self.seg.group_masks
 
+    @property
+    def n_sources(self):
+        return self.use_labels.sum()
+
     # ------------------------------------------------------------------------ #
+    def get_weight(self, feature):
+        return self.feature_weights[self.features.index(feature)].item()
+    
     def should_update_weights(self, request=None):
         if request is None:
             return ((self.snr_weighting or self.cutoffs.snr) and
@@ -416,7 +426,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
                 self.logger.opt(lazy=True).info(
                     'Required positional accuracy of {0[0]:} < {0[1]:g} '
                     'achieved with {0[2]:} measurements. Relative source '
-                    'positions will not be updated further.',
+                    'positions will not be updated again until all measurements'
+                    ' have been completed.',
                     lambda: (self.sigma_xy.mean(0), self.precision, n)
                 )
                 self.report()
@@ -447,6 +458,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
             if feature is not _s0:
                 # feature is str - index
                 feature = list(self.features).index(feature)
+
             # (*keep_dims(section, feature, source), np.newaxis)
             data = self.measurements[keep_dims(section, feature, source)]
 
@@ -470,8 +482,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
     # ------------------------------------------------------------------------ #
 
-    @api.synonyms({'njobs': 'n_jobs'})
-    def run(self, data, indices=None, n_jobs=-1, backend='multiprocessing',
+    @api.synonyms({'(n_)?jobs': 'njobs'})
+    def run(self, data, indices=None, njobs=-1, backend='multiprocessing',
             progress_bar=True):
         """
         Start a worker pool of source trackers. The workload will be split into
@@ -484,7 +496,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         indices : Iterable, optional
             Indices of frames to compute, the default None, runs through all the
             data.
-        n_jobs : int, optional
+        njobs : int, optional
             Number of concurrent woorker processes to launch, by default -1
 
         progress_bar : bool, optional
@@ -508,28 +520,29 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
                              'you may do >>> tracker.measurements[:] = np.nan')
             return
 
-        if n_jobs == -1:
-            n_jobs = mp.cpu_count()
+        if njobs == -1:
+            njobs = mp.cpu_count()
 
         # main compute
-        self._run(data, indices, n_jobs, progress_bar, backend)
+        self._run(data, indices, njobs, progress_bar, backend)
 
         # finally, recompute the positions
-        self.fit(report=True)
+        with memory_lock:
+            self.logger.info('Final fit, starting: {}', time.strftime('%H:%M:%S'))
+            self.fit(report=True)
 
-    def _run(self, data, indices, n_jobs, progress_bar, backend):
+    def _run(self, data, indices, njobs, progress_bar, backend):
 
         # init counter
         precision_reached.value = -1
 
         # setup compute context
-
         context = ContextStack()
-        if n_jobs == 1:
+        if njobs == 1:
             worker = self.loop
             context.add(ctx.nullcontext(list))
         else:
-            worker = self._setup_compute(n_jobs, backend, context, progress_bar)
+            worker = self._setup_compute(njobs, backend, context, progress_bar)
 
         # execute
         # with ctx.redirect_stdout(TqdmStreamAdapter()):
@@ -538,12 +551,12 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         with context as compute:
             compute(worker(data, *args) for args in
-                    self._get_workload(indices, n_jobs, progress_bar))
+                    self._get_workload(indices, njobs, progress_bar))
 
         # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
         #              backend, time.time() - t_start)
 
-    def _setup_compute(self, n_jobs, backend, context, progress_bar):
+    def _setup_compute(self, njobs, backend, context, progress_bar):
         # locks for managing output contention
         tqdm.set_lock(mp.RLock())
         memory_lock = mp.Lock()
@@ -551,7 +564,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         # NOTE: object serialization is about x100-150 times faster with
         # multiprocessing backend. ~0.1s vs 10s for loky.
         worker = delayed(self.loop)
-        executor = Parallel(n_jobs, backend)  # verbose=10
+        executor = Parallel(njobs, backend)  # verbose=10
         context.add(initialized(executor, set_lock,
                                 (memory_lock, tqdm.get_lock())))
 
@@ -564,7 +577,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         return worker
 
-    def _get_workload(self, indices, n_jobs, progress_bar):
+    def _get_workload(self, indices, njobs, progress_bar):
         # divide work
         batch_size = min(self._compute.weights.step, self._compute.centres.step)
         if batch_size == 1:
@@ -575,8 +588,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         #
         self.logger.info('Work split into {} batches of {} frames each, using {} '
-                         'concurrent {}.', n_batches, batch_size, n_jobs,
-                         pluralize('worker', n=n_jobs))
+                         'concurrent {}.', n_batches, batch_size, njobs,
+                         pluralize('worker', n=njobs))
 
         # triggers for computing coordinate centres and weights as needed
         triggers = np.array(
@@ -608,7 +621,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         # self.logger.info(f'{update_weights=}; '
         #                  f'{self.should_update_weights()=}')
         if self.should_update_weights(update_weights):
-            self.update_weights(data[(i := indices[0])], i)
+            self.update_source_weights(data[(i := indices[0])], i)
 
         # measure
         for i in indices:
@@ -653,7 +666,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         # finally return the new coordinates
         return self.coords + self.delta_xy[indices, None]
 
-    def update_weights(self, image, i):
+    def update_source_weights(self, image, i):
         self.logger.trace('Updating weights')
         self.snr[i // self._compute.weights.step] = self.get_snr_weights(image, i)
         self._source_weights = nanmean(self.snr, 0)
@@ -699,7 +712,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         #
         image = np.ma.MaskedArray(data[i], mask)
         xy = self._measure(image, i, self.origin)
-        dxy = self.compute_offset(xy, weights=self._source_weights)
+        dxy = self.compute_offset(xy, weights=self._source_weights, axis=0)
 
         if np.ma.is_masked(dxy) or ~np.isfinite(dxy).all():
             raise ValueError(f'Masked or nan in xy offsets, frame {i}.')
@@ -736,6 +749,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
                 xy[0], image, self.noise_model(image), self.use_labels
             )
 
+        # Q factor
+        if 'peak' in self.features:
+            idx = (xy[self.features.index('peak')] - 0.5).astype(int)
+            i - 1,
+
         # Flux with uncertainty
         self.flux[index] = seg.flux(image, self.use_labels, [0], self.bg)
 
@@ -767,8 +785,10 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         # get segmented image for current origin
         seg = self.get_segments(origin, image.shape)
+        # NOTE: the segmented image returned here is in the image array
+        # coordinates, so image stats below are in image array coords
         yx = self._measure_positions(np.ma.MaskedArray(image, mask), seg)
-        xy = self._check_measurement(yx, image.shape)[..., ::-1]
+        xy = self._sanitize_measurement(yx, image.shape)[..., ::-1]
 
         return seg, xy
 
@@ -841,7 +861,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         return yx
 
-    def _check_measurement(self, yx, shape):
+    def _sanitize_measurement(self, yx, shape):
         # check if any measurements out of frame
         ec = np.array(self.cutoffs.edge)
         yx[((yx < ec) | (yx > shape - ec)).any(-1)] = np.nan
@@ -867,7 +887,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         # re-measure
         self.logger.trace('re-measuring centroids.')
         xym = self._measure(image, i, self.origin)
-        return self.compute_offset(xym, weights=self._source_weights)
+        return self.compute_offset(xym, weights=self._source_weights, axis=0)
 
     def get_segments(self, origin=None, shape=None):
         """
@@ -916,23 +936,24 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         self.logger.debug('Estimating source positions from average of {} '
                           'features.', len(self.features))
 
-        xym, centres, σ_pos, delta_xy, out = super().fit(
-            self.measure_avg, self._source_weights, report=False
+        fweights, xy, δ_xy, centres, σ_pos, out = super().fit(
+            self.measurements, self._source_weights, report=False
         )
+        self.feature_weights = fweights[:, None, None]
 
         # shift the coordinate system relative to the new reference point
         xy0 = centres[self.reference_index]
         δ = self.xy0 - xy0
 
         with memory_lock:
-            self.delta_xy[:] = delta_xy - δ
+            self.delta_xy[:] = δ_xy - δ
             self.rpos = centres - xy0
             self.sigma_xy[:] = σ_pos
 
         self.logger.debug('Updated source positions: δ = {}.', δ)
 
         if report:
-            self.report(xym, centres, σ_pos)
+            self.report(xy, centres, σ_pos)
 
     def report(self, xy=None, centres=None, σ_xy=None, counts=None,
                detect_frac_min=None, count_thresh=None):

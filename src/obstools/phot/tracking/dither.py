@@ -7,6 +7,7 @@ import operator as op
 # third-party
 import numpy as np
 from loguru import logger
+from scipy.optimize import minimize
 
 # local
 from recipes import pprint
@@ -22,21 +23,6 @@ from . import CONFIG
 
 def _sanitize_data(xy, detect_freq_min):
 
-    assert 0 < detect_freq_min <= 1
-
-    n, n_sources, _ = xy.shape
-    nans = np.isnan(np.ma.getdata(xy))
-
-    # mask nans.  masked
-    xy = np.ma.MaskedArray(xy, nans)
-
-    bad = (nans | np.ma.getmask(xy)).any(-1)
-    ignore_frames = nans.all((1, 2))
-    n_ignore = ignore_frames.sum()
-    n_use = n - n_ignore
-    if n_ignore == n:
-        raise ValueError('All points are masked!')
-
     # Due to varying image quality and or camera/telescope drift,
     # some  sources (those near edges of the frame, or variable ones) may
     # not be detected in many frames. Cluster centroids are not an accurate
@@ -49,6 +35,21 @@ def _sanitize_data(xy, detect_freq_min):
     # of the relative positions of sources when the camera offsets are
     # taken into account.
 
+    assert 0 < detect_freq_min <= 1
+
+    n, n_features, n_sources, _ = xy.shape
+    nans = np.isnan(np.ma.getdata(xy))
+
+    # mask nans.  masked
+    xy = np.ma.MaskedArray(xy, nans)
+
+    bad = (nans | np.ma.getmask(xy)).any(-1).all(1)
+    ignore_frames = nans.all((1, 2, 3))
+    n_ignore = ignore_frames.sum()
+    n_use = n - n_ignore
+    if n_use == 0:
+        raise ValueError('All points are masked!')
+
     if n_ignore:
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
                     'measurements.', n_ignore, n, n_ignore / n)
@@ -56,7 +57,9 @@ def _sanitize_data(xy, detect_freq_min):
     # filter
     good = ~ignore_frames
     use_sources = _filter_sources(n_sources, bad, n_use, detect_freq_min)
-    return _select_data(xy, good, use_sources, nans), good, use_sources
+    xy = _nan_to_masked(xy[good][..., use_sources, :],
+                        nans[good][..., use_sources, :])
+    return xy, good, use_sources
 
 
 def _filter_sources(n_sources, bad, n_use, detect_freq_min):
@@ -86,17 +89,41 @@ def _filter_sources(n_sources, bad, n_use, detect_freq_min):
     return use
 
 
-def _select_data(xy, good, use_sources, nans):
-    xyc = xy[good][:, use_sources]
-    nansc = nans[good][:, use_sources]
-    if nansc.any():
+def _nan_to_masked(data, nans):
+
+    # replace nan with masked 0
+    if nans.any():
         # prevent warnings
-        xyc[nansc] = 0
-        xyc[nansc] = np.ma.masked
-    return xyc
+        data[nans] = 0
+        data[nans] = np.ma.masked
+
+    return data
+
+
+def sum1(w):
+    return np.sum(w) - 1
+
+
+# def estimate_positions_offsets(data, feature_weights, source_weights):
+#     d0 = 0
+#     while True:
+#         r, d1 = _estimate_positions_offsets(data, feature_weights, source_weights, d0)
+#         if np.max(d1 - d0) < 1e-6:
+#             break
+#         d0 = d1
+#     return r, d1
+
+
+# def _estimate_positions_offsets(data, feature_weights, source_weights, xy_deltas=0):
+#     # positions (frame, source, axis)
+#     xy = np.average(data, 1, feature_weights)
+#     xy_deltas = np.expand_dims(xy_deltas, tuple(range(1, np.ndim(xy_deltas))))
+#     r0 = (xy - xy_deltas).mean(0)
+#     return r0, np.average(xy - r0, 1, source_weights)
 
 
 # ---------------------------------------------------------------------------- #
+
 
 class PointSourceDitherModel(LoggingMixin):
 
@@ -120,20 +147,19 @@ class PointSourceDitherModel(LoggingMixin):
         # computing their centroids which will have larger scatter.
         if d_cut:
             assert d_cut > 0
-            self.d_cut = float(d_cut) 
+            self.d_cut = float(d_cut)
         else:
             self.d_cut = None
-        
 
         self.d_frq = float(detect_freq_min) if detect_freq_min else 0
         assert 0 < self.d_frq <= 1
-            
+
         assert callable(centre_func)
         self.centre_func = centre_func
 
-    def fit(self, xy, weights=None, report=True):
+    def fit(self, xy, source_weights=None, report=True):
         """
-        Measure the centre positions  of detected sources from the individual
+        Measure the centre positions of detected sources from the individual
         location measurements in xy. Use the locations of the most-often
         detected individual objects.
 
@@ -146,46 +172,48 @@ class PointSourceDitherModel(LoggingMixin):
 
         Returns
         -------
-        xy, centres, σxy, δxy, outlier_indices
+        xy, centres, σxy, δxy, outlier_indices, feature_weights
         """
 
-        n, n_sources, _ = xy.shape
-        xys, good, use_sources = _sanitize_data(xy, self.d_frq)
+        n, _, n_sources, _ = xy.shape
+        xy, good, use_sources = _sanitize_data(xy, self.d_frq)
 
         # Compute cluster centres
         # first estimate of relative positions comes from unshifted cluster centers
         # delay centre compute for fainter sources until after re-centering
 
         # ensure output same size as input
-        centres = np.ma.masked_all((n_sources, 2))
-        σxy = np.empty((n_sources, 2))
+        centres = np.ma.masked_all((2, n_sources, 2))
+        # σxy = np.empty((n_sources, 2))
         δxy = np.ma.masked_all((n, 2))
-        # compute positions of all sources with frame offsets measured from best
-        # and brightest sources
-        centres[use_sources], σxy[use_sources], δxy[good], out = \
-            self._fit(xys, weights=weights)
 
-        if len(out):
+        # compute positions of all sources with frame offsets measured
+        results = self._fit(xy, None, source_weights)
+        feature_weights, xy, δxy[good], *centres[use_sources], out = results.values()
+
+        if out.any():
             # fix outlier indices
-            idxf, idxs = np.where(out)
+            idxf, idxs = np.where(out.any(1))
             idxg, = np.where(good)
             idxu, = np.where(use_sources)
             outlier_indices = (idxg[idxf], idxu[idxs])
+        else:
+            outlier_indices = ()
 
         # pprint!
         if report:
             try:
                 #                                  counts
-                self.report(xy, centres, σxy, δxy, None, self.d_frq)
-
+                self.report(xy, *centres, δxy, None, self.d_frq)
             except Exception as err:
                 self.logger.exception('Report failed')
 
-        return xy, centres, σxy, δxy, outlier_indices
+        return feature_weights, xy, δxy, *centres, outlier_indices
 
-    def _fit(self, xy, centres=None, weights=None):
+    def _fit(self, xy, centres=None, source_weights=None):
         """
-        _summary_
+        Fit for feature weights that minimize overall scatter in shifted
+        per-frame source positions.
 
         Parameters
         ----------
@@ -198,34 +226,63 @@ class PointSourceDitherModel(LoggingMixin):
 
         Returns
         -------
+        feature_weights, (centres, sigma_xy), delta_xy, outliers
         _type_
             _description_
         """
 
-        # compute centes if not given
+        # estimate source centres if not given from mean of unshifted positions
         if centres is None:
-            centres = self.centre_func(xy, axis=0)
+            centres = self.centre_func(xy, axis=(0, 1))
 
         # ensure we have at least some centres
         assert not np.all(np.ma.getmask(centres))
 
-        # main comutation
-        centres, sigma_xy, delta_xy = self.compute_centres_offsets(
-            xy, centres, weights)
+        # fit weights
+        results = {}
+        res = minimize(self._objective_feature_weights,
+                       np.ones(xy.shape[1]) / xy.shape[1],
+                       args=(xy, centres, source_weights, results),
+                       bounds=[(0, 1)] * 3,
+                       constraints={'type': 'eq', 'fun': sum1})
+
+        assert res.success
+        results = dict(feature_weights=res.x, **results, outliers=[])
 
         # break out here  without removing any points if no outlier clipping
         # requested (`d_cut is None`) or there are too few points for the
         # concept of "outlier" to be meaningful
         if (self.d_cut is None) or len(xy) < 10:
-            return centres, sigma_xy, delta_xy.squeeze(), ()
+            return results
 
         # remove outliers here
-        return self._clip_outliers(xy, centres, weights)
+        return self._clip_outliers(**{**results, 'xy': xy}, source_weights=source_weights)
 
-    def compute_centres_offsets(self, xy, centres, weights, axis=-2):
+    def _objective_feature_weights(self, weights, xy, centres, source_weights, results):
+
+        r, σ, xy, δ = self.compute_centres_offsets(xy, centres, weights, source_weights)
+
+        # save results
+        results.update(xy=xy, delta_xy=δ.squeeze(), centres=r, sigma_xy=σ)
+
+        return np.var(xy - δ - r, 0).sum()
+
+    def compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
+
+        while True:
+            r, σ, _xy, δ = self._compute_centres_offsets(
+                xy, centres, feature_weights, source_weights)
+            if np.abs(centres - r).max() < 1e-6:
+                return r, σ, _xy, δ
+            centres = r
+
+    def _compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
+
+        # weigted average across features to get (frame, source, axis) positions
+        xy = np.average(xy, 1, feature_weights)
 
         # xy position offset in each frame  (mean combined across sources)
-        delta_xy = self.compute_offset(xy, centres, weights, axis=axis,
+        delta_xy = self.compute_offset(xy, centres, source_weights, axis=-2,
                                        keepdims=True)
 
         # shifted cluster centers (all sources)
@@ -234,7 +291,7 @@ class PointSourceDitherModel(LoggingMixin):
         # Compute cluster centres of shifted point clusters
         centres = self.centre_func(xy_shifted, axis=0)
 
-        return centres, xy_shifted.std(0), delta_xy
+        return centres, xy_shifted.std(0), xy, delta_xy
 
     def compute_offset(self, xy, centres, weights=None, **kws):
         """
@@ -258,13 +315,12 @@ class PointSourceDitherModel(LoggingMixin):
             source positions for the frame.
         """
         # shift calculated as snr weighted mean of individual CoM shifts
-        kws.setdefault('axis', 0)
         return np.ma.average(xy - centres, weights=weights, **kws)
 
-    def _clip_outliers(self, xy, centres, weights):
+    def _clip_outliers(self, xy, centres, feature_weights, source_weights, **ignored):
         # remove outliers
 
-        n, n_sources, _ = xy.shape
+        n, _, n_sources, _ = xy.shape
         n_points = n * n_sources
 
         outliers = np.zeros(xy.shape[:-1], bool)
@@ -272,26 +328,33 @@ class PointSourceDitherModel(LoggingMixin):
 
         for _ in range(5):
             #
-            centres, sigma_xy, delta_xy = self.compute_centres_offsets(
-                xy, centres, weights)
+            centres, sigma_xy, xy, delta_xy = self.compute_centres_offsets(
+                xy, centres, feature_weights, source_weights)
 
             # flag outliers
             # compute position residuals after recentre
-            dr = np.ma.sqrt(((xym - centres - delta_xy) ** 2).sum(-1))
+            dr = np.ma.sqrt(((xym - centres - delta_xy[:, None]) ** 2).sum(-1))
+
             out = (dr >= self.d_cut)
             out = np.ma.getdata(out) | np.ma.getmask(out)
             n_out = out.sum()
             if n_out / n_points > 0.5:
                 raise ValueError('Too many outliers!!')
 
-            # no new outliers
             if (outliers == out).all():
+                # no new outliers
                 if outliers.any():
                     self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
-                                 n_out, n_points, (n_out / n_points), self.d_cut)
+                                     n_out, n_points, (n_out / n_points), self.d_cut)
                 else:
                     self.logger.info('No outliers detected for position measures.')
-                return centres, sigma_xy, delta_xy.squeeze(), outliers
+
+                return dict(feature_weights=feature_weights,
+                            xy=xy,
+                            delta_xy=delta_xy.squeeze(),
+                            centres=centres,
+                            sigma_xy=sigma_xy,
+                            outliers=outliers)
 
             # mask outliers
             xym[out] = np.ma.masked
@@ -392,6 +455,14 @@ class PointSourceDitherModel(LoggingMixin):
         # TODO Still need to think of a cleaner solution for this
         tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
         # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
+
+        # produce message
+        self.logger.opt(lazy=True).info(
+            'Positions for sources estimated from the following features: \n{}',
+            lambda: pprint.pformat(dict(zip(self.features,
+                                            self.feature_weights.squeeze())),
+                                   brackets='')
+        )
 
         self.logger.info('\n{:s}{:s}', tbl, extra)
 
