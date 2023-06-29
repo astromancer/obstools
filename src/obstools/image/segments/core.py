@@ -574,6 +574,23 @@ class SegmentedImage(SegmentationImage,     # base
     def fractional_areas(self):
         return self.areas / prod(self.shape)
 
+    @lazyproperty
+    def areas(self):
+        """
+        A 1D array of areas (in pixel**2) of the non-zero labeled
+        regions.
+
+        The `~numpy.ndarray` starts with the *non-zero* label.  The
+        returned array has a length equal to the number of labels and
+        matches the order of the ``labels`` attribute.
+        """
+        slices = iter(self.slices.values())
+        next(slices) # full image slice for zero label
+        return np.array([
+            np.count_nonzero(self._data[slices] == label)
+            for label, slices in zip(self.labels, slices)
+        ])
+
     # @lazyproperty
     # def areas(self):
     #     areas = np.bincount(self.data.ravel())

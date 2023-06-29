@@ -63,7 +63,7 @@ def make_cmap(n, background_color='#000000', seed=None):
     cmap.colors = np.atleast_2d(cmap.colors)
 
     if background_color is not None:
-        cmap.colors[0] = colors.hex2color(background_color)
+        cmap.colors[0, :3] = colors.hex2color(background_color)
 
     return cmap
 
