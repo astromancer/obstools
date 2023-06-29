@@ -2,13 +2,14 @@
 # std
 import sys
 import itertools as itt
+import functools as ftl
+import contextlib as ctx
 from collections import defaultdict, deque
 
 # third-party
 import numpy as np
 from mpl_multitab import MplMultiTab
 from mpl_toolkits.axes_grid1.mpl_axes import Axes
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib import ticker
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
@@ -17,23 +18,31 @@ from matplotlib.transforms import AffineDeltaTransform
 
 # local
 from motley.utils import vbrace
-from scrawl import scatter
+from scrawl import density
 from scrawl.video import VideoFeatureDisplay
 
 # relative
 from ...image import SkyImage
 from . import CONFIG
 
+# ---------------------------------------------------------------------------- #
+__all__ = ['SourceTrackerPlots', 'TrackerVideo']
+
 
 # ---------------------------------------------------------------------------- #
-CENTROIDS = CONFIG.plots.centroids
+with ctx.suppress(AttributeError):  # autoreload hack
+    CONFIG = CONFIG.plots
+
+CENTROIDS = CONFIG.centroids
+LABEL_CONFIG = CONFIG.labels
+CONFIG = CONFIG.position
 
 SUBPLOTSPEC = dict(
-    bottom=0.05,
-    top=0.8,
+    bottom=0.075,
+    top=0.9,
     left=0.075,
     right=0.85,
-    hspace=0.05,
+    hspace=0.025,
     wspace=0.05
 )
 
@@ -51,9 +60,9 @@ SUBPLOTSPEC = dict(
 
 # ---------------------------------------------------------------------------- #
 
-class HackAxesToNotShare(Axes):
-    def __init__(self, fig, rect, **kws):
-        super().__init__(fig, rect, **{**kws, **dict(sharex=None, sharey=None)})
+# class HackAxesToNotShare(Axes):
+#     def __init__(self, fig, rect, **kws):
+#         super().__init__(fig, rect, **{**kws, **dict(sharex=None, sharey=None)})
 
 
 def _format_int(x, pos):
@@ -69,24 +78,13 @@ def _format_int(x, pos):
 class IntLocator(ticker.IndexLocator):
     def __call__(self):
         """Return the locations of the ticks"""
-        dmin, dmax = self.axis.get_data_interval()
-        return self.tick_values(np.floor(dmin), np.ceil(dmax))
+        dmin, dmax = self.axis.get_view_interval()
+        return self.tick_values(np.ceil(dmin), np.floor(dmax))
 
 
 def format_coord(x, y):
     return f'{x = :4.3f}; {y = :4.3f}'
 
-
-def add_colorbar(mappable, aspect=20, pad_fraction=0.5, **kws):
-    """Add a vertical colour bar to a plot."""
-
-    # Adapted from https://stackoverflow.com/a/33505522/1098683
-    ax = mappable.axes
-    divider = make_axes_locatable(ax)
-    # width = axes_size.AxesY(ax, aspect=1. / aspect)
-    # pad = axes_size.Fraction(pad_fraction, width)
-    cax = divider.append_axes('right', size=0.1, pad=1)
-    return ax.figure.colorbar(mappable, cax, **kws)
 
 # ---------------------------------------------------------------------------- #
 
@@ -97,7 +95,7 @@ class SourceTrackerPlots:
         self.tracker = tracker
 
     def image(self, image, ax=None, points='rx', contours=True,
-              labels=CONFIG.plots.labels, **kws):
+              labels=LABEL_CONFIG, **kws):
 
         tracker = self.tracker
         sim = SkyImage(image, segments=tracker.seg)
@@ -128,19 +126,19 @@ class SourceTrackerPlots:
                **kws}
         )
 
-    def _get_figure(self, ui, label):
+    def _get_figure(self, ui=None, label='', **kws):
         if ui:
-            tab = ui.add_tab(f'Source {label}')
+            tab = ui.add_tab(f'Source {label}', fig=kws)
             return tab.figure
-        
+
         if plt := sys.modules.get('matplotlib.pyplot'):
-            return plt.figure()
-        
-        return Figure()
+            return plt.figure(**kws)
+
+        return Figure(**kws)
 
     def positions(self, labels=None, section=slice(None),
-                  show=(cfg := CONFIG.plots.position).show,  # 'nulls',
-                  legend=cfg.legend, figsize=cfg.figsize, **kws):
+                  show=CONFIG.show,  # 'nulls',
+                  legend=CONFIG.legend, figsize=CONFIG.figsize, **kws):
         """
         For sets of measurements (m, n, 2), plot each (n, 2) feature set as on
         its own axes as scatter / density plot. Additionally plot the shifted
@@ -148,8 +146,6 @@ class SourceTrackerPlots:
         diffraction limit for reference.
         """
         # trk = self.tracker
-
-        # print(figsize, 'BITCHES')
 
         if labels is None:
             labels = self.tracker.use_labels
@@ -161,57 +157,79 @@ class SourceTrackerPlots:
         art = {}
         for label in labels:
             fig = self._get_figure(ui, label)
+            fig.set_size_inches(figsize)
 
-            art[label] = self._positions_source(
-                fig, label - 1, section, show, legend, **kws
+            art[label] = self.positions_source(
+                fig, label - 1, (), section, show, legend, **kws
             )
             # fig.tight_layout()
-        # fig.set_size_inches(figsize)
+        #
+        # if ui:
+        #     ui.resize(*np.multiply(figsize, 200).astype(int))
+        # else:
+
         return ui, art
 
-    def _positions_source(self, fig, source, section, show, legend, **kws):
+    def positions_source(self, fig, source, features=(), section=slice(None),
+                         show=('weights',), legend=False, **kws):
+        if fig is None:
+            fig = self._get_figure()
 
-        tracker = self.tracker
-        weights = dict(zip(tracker.features, tracker.feature_weights.squeeze()))
-        features = list(self._get_features(show, weights))
-        n_cols = len(features)
+        if features:
+            if isinstance(features, str):
+                features = [features]
+        else:
+            tracker = self.tracker
+            weights = dict(zip(tracker.features, tracker.feature_weights.squeeze()))
+            features = list(self._get_features(show, weights))
+
+        #
+        assert (n_cols := len(features))
+
+        if n_cols == 1:
+            gridspec_kw = dict(right=0.8, top=0.82)
+        else:
+            gridspec_kw = SUBPLOTSPEC
 
         axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
-                            gridspec_kw=SUBPLOTSPEC)
+                            gridspec_kw=gridspec_kw)
+        if n_cols == 1:
+            axes = axes[:, None]
 
         for idx, ax in np.ndenumerate(axes):
             self._setup_scatter_axes(ax, idx, n_cols, features[idx[1]],
                                      'weights' in show)
-            self._show_pixel(ax, **CONFIG.plots.position.pixel)
-            self._show_precision(ax, **CONFIG.plots.position.precision)
+            # if idx[0]:  # bottom row
+            # self._show_pixel(ax, **CONFIG.pixel)
+            # self._show_precision(ax, **CONFIG.precision)
 
         # loop features
         count = itt.count()
         art = defaultdict(list)
 
-        scatter = dict({**CONFIG.plots.position.scatter, **kws})
+        scatter = {**CONFIG.scatter, **kws}
         captions = dict(self._get_legend_labels('weights' in show)) if legend else {}
 
         for feature in features:
             # plot residuals vs shifted residuals
             color, marker, label = CENTROIDS[feature]
-            art[feature] = tuple(self._compare_scatter_density(
+            art[feature] = tuple(self._compare_density_maps(
                 axes[:, next(count)],
                 (section, feature, source),
                 {**dict(color=color,
                         marker=marker,
                         label=captions.get(feature, label)),
                  **scatter},
-                legend
+                legend,
+
             ))
 
         polys = next(zip(*deque(art.values())[-1]))
         # add_colorbar(polys[0])
 
-        for i, poly in enumerate(polys):
-            l, b, w, h = axes[i, -1].get_position().bounds
-            cax = fig.add_axes([l + w + 0.075, b, 0.01, h])
-            fig.colorbar(poly, cax=cax, label='Density')
+        self._cid = fig.canvas.mpl_connect(
+            'draw_event', ftl.partial(self._on_first_draw, polys=polys)
+        )
 
         #     # cax = grids[i].cbar_axes[0]
         #     cax = grid.cbar_axes[i]
@@ -232,12 +250,12 @@ class SourceTrackerPlots:
         # axes[1, 0].viewLim.set_points(view)
 
 
-#        **CONFIG.plots.position.cbar
+#        **CONFIG.cbar
         # cbar.ax.set_ylabel('Density')
 
         # x, y = pprint.uarray(tracker.coords[source], tracker.sigma_xy[source], 2)
         # Source {tracker.use_labels[source]}:
-        # cap = dict(CONFIG.plots.position.caption)
+        # cap = dict(CONFIG.caption)
         # fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
 
         return art
@@ -247,42 +265,65 @@ class SourceTrackerPlots:
     def _setup_scatter_axes(self, ax, index, n_cols, feature, show_weights):
 
         row, col = index
+        multicol = (n_cols != 1)
         ax.tick_params(
             bottom=True, top=True, left=True, right=True,
-            labelright=(right := (col == n_cols - 1)),
+            labelright=(right := (col == n_cols - 1)) and multicol,
             labelleft=(left := (col == 0)),
-            labeltop=(top := (row == 0)),
-            labelbottom=(bot := (row == 1)),
+            labeltop=False,
+            labelbottom=True,  # (bot := (row == 1)) or (n_cols == 1),
             direction='inout',
             length=7
         )
 
-        # for axx in (ax.xaxis, ax.yaxis):
-        #     axx.set_major_locator(IntLocator(1, 0))
-        #     axx.set_major_formatter(ticker.FuncFormatter(_format_int))
-
         # ax.format_coord=format_coord
-
+        top = (row == 0)
         delta = '' if top else ' - \delta'
-        ax.set(xlabel=f'$x{delta}$')  # , aspect='equal'
+        ax.set(xlabel=f'$x - x_0{delta}$', aspect='equal')
 
         if top:
             ax.xaxis.set_label_position('top')
-            
-            title = CONFIG.plots.centroids[feature][-1]
+
+            title = CENTROIDS[feature][-1]
             if show_weights:
-                title += '\n'
-                if (i := index[1]) < len(weights := self.tracker.feature_weights):
-                    title += f'(w = {weights[i].item():3.2f})'
-            ax.set_title(title, size='small', fontweight='bold')
-            
+                title += '\n' + '\n' * (1 - title.count('\n')) * multicol
+                
+                if feature != 'avg':
+                    title += f'(w = {self.tracker.get_weight(feature):3.2f})'
+            ax.set_title(title, **CONFIG.title)
+        else:
+            for axis in (ax.xaxis, ax.yaxis):
+                axis.set_major_locator(IntLocator(1, 0))
+                axis.set_major_formatter(ticker.FuncFormatter(_format_int))
 
         if left or right:
-            ax.set_ylabel(f'$y{delta}$')
-        if right:
+            ax.set_ylabel(f'$y - y_0{delta}$')
+        if right and n_cols != 1:
             ax.yaxis.set_label_position('right')
 
         ax.grid()
+
+    def _on_first_draw(self, event, polys):
+
+        # match axes ranges ottom axes
+        ax = polys[1].axes
+        view = ax.viewLim._points
+        xlim, ylim = view.mean(0, keepdims=1).T + view.ptp(0).max(keepdims=1) * [-0.5, 0.5]
+        ax.set(xlim=xlim, ylim=ylim)
+
+        # add colorbar
+        self._add_colorbars(polys)
+
+        event.canvas.mpl_disconnect(self._cid)
+        event.canvas.draw()
+
+    def _add_colorbars(self, polys):
+        for i, poly in enumerate(polys):
+            ax = poly.axes
+            fig = ax.figure
+            l, b, w, h = ax.get_position().bounds
+            cax = fig.add_axes([l + w + 0.075, b, 0.01, h])
+            fig.colorbar(poly, cax=cax, label=CONFIG.cbar[f'label{i}'])
 
     def _get_features(self, show, weights):
 
@@ -304,21 +345,31 @@ class SourceTrackerPlots:
 
             yield feature
 
-    def _compare_scatter_density(self, axes, index,
-                                 scatter_kws=CONFIG.plots.position.scatter,
-                                 legend=False, **kws):
+    def _compare_density_maps(self, axes, index,
+                              scatter_kws=CONFIG.scatter,
+                              legend=False, **kws):
 
         #
-        scatter_kws = dict(CONFIG.plots.position.density,
-                           scatter_kws=scatter_kws,
-                           **kws)
+        density_kws = {**CONFIG.density, **kws}
+
         for i, ax in enumerate(axes):
-            data = self.tracker.get_coords_residual(*index, bool(i))
-            _, *art = scatter.density(ax, data, **scatter_kws)
+            data = self.tracker.get_coords_residual(*index, shifted=bool(i))
+
+            # special case
+            special_case = {}
+            feature = index[1]
+            if (i == 0) and (feature == 'peak'):
+                special_case = dict(tessellation='rect',
+                                    bins=data.ptp(0).astype(int))
+
+            # plot
+            _, *art = density.scatter_map(ax, data, scatter_kws=scatter_kws,
+                                          **{**density_kws, **special_case})
+
             yield art
 
         if legend:
-            ax2.legend(loc='upper left')  # , bbox_to_anchor=(0, 1.05)
+            ax.legend(loc='upper left')  # , bbox_to_anchor=(0, 1.05)
 
     def _show_pixel(self, ax, pos=(0, 0), **style):
         # add pixel size rect

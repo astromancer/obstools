@@ -8,7 +8,7 @@ tracking:
         geometric_median:               1
         peak:               
             weight: 1
-            upsample: 4
+            upsample: 1     # note, changing this will siginificantly affect compute times
             filter: lanczos
         
 
@@ -56,7 +56,7 @@ tracking:
             fg:         [B,  _,  w]
             bg:         darkslategrey
         col_head_style:
-            fg:         [B,  _,  k]
+            fg:         [B,  _,  black]
             bg:         grey
         col_head_align: ^ 
         precision:      3
@@ -75,10 +75,11 @@ tracking:
     # ------------------------------------------------------------------------ #
     plots:
         centroids:
-            com:              [r, +, Centre of Mass]
+            com:              [r, +, "Centre of Mass"]
             geometric_median: [g, o, "Projected\n Geometric Median"]
-            peak:             [m, ^, Peak(upsample=4)]
-            avg:              [k, x, Weighted Average]  # NOTE: sould be last
+            peak:             [m, ^, "Peak"]
+            avg:              [k, x, "Weighted Centroid"] 
+             # NOTE: avg sould be last
 
         labels:
             offset: [6, 6]
@@ -87,6 +88,10 @@ tracking:
             # fontweight:bold
 
         position:
+            figsize:            [12, 6.5]
+            legend:             False
+            show:               [avg, weights]  #  nulls, pixel
+
             density:
                 cmap:               null
                 tessellation:       hex
@@ -94,12 +99,16 @@ tracking:
 
             scatter:
                 marker: x
-                ms:     3
+                s:      5
                 ls:     ''
                 color:  null
-                # mfc:    none
                 zorder: 1
                 alpha:  0.35
+            
+            title:
+                size:       13
+                fontweight: bold
+                pad:        10
 
             caption:
                 pos:    [0.5, 0.01]
@@ -112,24 +121,22 @@ tracking:
                     boxstyle:    round
                     facecolor:  lightgrey
 
-            legend:             False
-            show:               [avg, weights]  #  nulls
-            figsize:            [6.5, 8]
-            
             cbar:
                 # shrink: 0.9
                 pad:    0.01
+                label0:  Counts
+                label1:  Counts (Recentred)
 
             pixel: 
-                lw:         1
-                ls:         ':'
+                lw:         0.75
+                ls:         '--'
                 fc:         none
                 ec:         lime
                 zorder:     100
 
             precision:
-                lw:         1
-                ls:         ':'
+                lw:         0.75
+                ls:         '--'
                 fc:         none
                 ec:         darkgreen
                 zorder:     100
