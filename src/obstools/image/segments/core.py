@@ -1220,6 +1220,7 @@ class SegmentedImage(SegmentationImage,     # base
         if upsample == 1:
             return self.maximum_position(image, labels) + pixel_centre
 
+        #
         from PIL import Image
 
         labels = self.resolve_labels(labels)
@@ -1232,6 +1233,8 @@ class SegmentedImage(SegmentationImage,     # base
 
         return (np.array(peaks) / upsample) + pixel_centre
 
+    # def qfactor(self, image, labels, size, connectivity)
+    
     # --------------------------------------------------------------------------
 
     def relabel_many(self, *label_sets):
