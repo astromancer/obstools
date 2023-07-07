@@ -87,7 +87,7 @@ tracking:
         position:
             figsize:            [12, 6.5]
             legend:             False
-            show:               [avg, weights]  #  nulls, pixel
+            show:               [avg, weights, caption]  #  nulls, pixel
 
             density:
                 cmap:               null
@@ -108,12 +108,12 @@ tracking:
                 pad:        10
 
             caption:
-                pos:    [0.5, 0.01]
+                pos:    [0.075, 0.01]
                 text:   >-
-                    Origin: x = {x:s}
-                            y = {y:s}
+                    $x_0 = {x:s}$
+                    $y_0 = {y:s}$
                 va:     bottom
-                ha:     center
+                ha:     left
                 bbox:       # these are matplotlib.patch.Patch properties
                     boxstyle:    round
                     facecolor:  lightgrey

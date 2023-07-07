@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 # third-party
 import numpy as np
 from mpl_multitab import MplMultiTab
-from mpl_toolkits.axes_grid1.mpl_axes import Axes
+from bottleneck import nanmax, nanmin
 from matplotlib import ticker
 from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
@@ -18,12 +18,15 @@ from matplotlib.transforms import AffineDeltaTransform
 
 # local
 from motley.utils import vbrace
+from recipes import pprint
+from recipes.logging import LoggingMixin
 from scrawl import density
 from scrawl.video import VideoFeatureDisplay
 
 # relative
 from ...image import SkyImage
 from . import CONFIG
+
 
 # ---------------------------------------------------------------------------- #
 __all__ = ['SourceTrackerPlots', 'TrackerVideo']
@@ -86,10 +89,14 @@ def format_coord(x, y):
     return f'{x = :4.3f}; {y = :4.3f}'
 
 
+def nanptp(a, axis):
+    return nanmax(a, axis) - nanmin(a, axis)
+
+
 # ---------------------------------------------------------------------------- #
 
 
-class SourceTrackerPlots:
+class SourceTrackerPlots(LoggingMixin):
 
     def __init__(self, tracker):
         self.tracker = tracker
@@ -137,8 +144,8 @@ class SourceTrackerPlots:
         return Figure(**kws)
 
     def positions(self, labels=None, section=slice(None),
-                  show=CONFIG.show,  # 'nulls',
-                  legend=CONFIG.legend, figsize=CONFIG.figsize, **kws):
+                  show=CONFIG.show, legend=CONFIG.legend, figsize=CONFIG.figsize,
+                  ui=None, **kws):
         """
         For sets of measurements (m, n, 2), plot each (n, 2) feature set as on
         its own axes as scatter / density plot. Additionally plot the shifted
@@ -150,28 +157,27 @@ class SourceTrackerPlots:
         if labels is None:
             labels = self.tracker.use_labels
 
-        ui = None
-        if len(labels) > 1:
+        if len(labels) > 1 and ui or (ui is None):
             ui = MplMultiTab(title='Position Measurements', pos='WN')
 
         art = {}
+        figures = []
         for label in labels:
             fig = self._get_figure(ui, label)
             fig.set_size_inches(figsize)
+            figures.append(fig)
 
             art[label] = self.positions_source(
                 fig, label - 1, (), section, show, legend, **kws
             )
-            # fig.tight_layout()
-        #
-        # if ui:
-        #     ui.resize(*np.multiply(figsize, 200).astype(int))
-        # else:
 
-        return ui, art
+        return (ui or figures), art
 
     def positions_source(self, fig, source, features=(), section=slice(None),
-                         show=('weights',), legend=False, **kws):
+                         show=('weights', 'caption'), legend=False, **kws):
+
+        self.logger.debug('Plotting position measurements for source {}.', source)
+
         if fig is None:
             fig = self._get_figure()
 
@@ -190,6 +196,8 @@ class SourceTrackerPlots:
             gridspec_kw = dict(right=0.8, top=0.82)
         else:
             gridspec_kw = SUBPLOTSPEC
+            if 'caption' in show:
+                SUBPLOTSPEC['bottom'] += 0.125
 
         axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
                             gridspec_kw=gridspec_kw)
@@ -208,7 +216,7 @@ class SourceTrackerPlots:
         art = defaultdict(list)
 
         scatter = {**CONFIG.scatter, **kws}
-        captions = dict(self._get_legend_labels('weights' in show)) if legend else {}
+        legends = dict(self._get_legend_labels('weights' in show)) if legend else {}
 
         for feature in features:
             # plot residuals vs shifted residuals
@@ -218,7 +226,7 @@ class SourceTrackerPlots:
                 (section, feature, source),
                 {**dict(color=color,
                         marker=marker,
-                        label=captions.get(feature, label)),
+                        label=legends.get(feature, label)),
                  **scatter},
                 legend,
 
@@ -231,32 +239,14 @@ class SourceTrackerPlots:
             'draw_event', ftl.partial(self._on_first_draw, polys=polys)
         )
 
-        #     # cax = grids[i].cbar_axes[0]
-        #     cax = grid.cbar_axes[i]
-        #     cax.colorbar(poly, label='Density')
-        #     cax.toggle_label(True)
-        #     cax.axis[cax.orientation].set_label()
-
-        # share x axes between rows
-        # for row in axes:
-        #     first, *rest = row
-        #     for ax in rest:
-        #         ax.sharex(first)
-        #         ax.sharey(first)
-
-        #
-        # view = axes[1, 0].viewLim.get_points()
-        # view = view.mean(0) + view.ptp(0).max() * np.array([[-0.5], [0.5]])
-        # axes[1, 0].viewLim.set_points(view)
-
-
-#        **CONFIG.cbar
-        # cbar.ax.set_ylabel('Density')
-
-        # x, y = pprint.uarray(tracker.coords[source], tracker.sigma_xy[source], 2)
-        # Source {tracker.use_labels[source]}:
-        # cap = dict(CONFIG.caption)
-        # fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
+        # Add caption
+        if 'caption' in show:
+            coords = self.tracker.coords
+            x, y = pprint.uarray(coords['xy'][source],
+                                 coords['sigma'][source], 2)
+            # Source {tracker.use_labels[source]}:
+            cap = dict(CONFIG.caption)
+            fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
 
         return art
         # if legend:
@@ -287,7 +277,7 @@ class SourceTrackerPlots:
             title = CENTROIDS[feature][-1]
             if show_weights:
                 title += '\n' + '\n' * (1 - title.count('\n')) * multicol
-                
+
                 if feature != 'avg':
                     title += f'(w = {self.tracker.get_weight(feature):3.2f})'
             ax.set_title(title, **CONFIG.title)
@@ -315,9 +305,10 @@ class SourceTrackerPlots:
         self._add_colorbars(polys)
 
         event.canvas.mpl_disconnect(self._cid)
-        event.canvas.draw()
+        # event.canvas.draw()
 
     def _add_colorbars(self, polys):
+        self.logger.debug('Adding colorbars')
         for i, poly in enumerate(polys):
             ax = poly.axes
             fig = ax.figure
@@ -360,7 +351,7 @@ class SourceTrackerPlots:
             feature = index[1]
             if (i == 0) and (feature == 'peak'):
                 special_case = dict(tessellation='rect',
-                                    bins=data.ptp(0).astype(int))
+                                    bins=nanptp(data, 0).astype(int))
 
             # plot
             _, *art = density.scatter_map(ax, data, scatter_kws=scatter_kws,
@@ -508,9 +499,9 @@ class TrackerVideo(VideoFeatureDisplay):
 
         # tracker.get_coords(i)
         if 'avg' in CENTROIDS:
-            return np.vstack([tracker.measurements[i],
+            return np.vstack([tracker.measurements['xy'][i],
                               #   np.full((1, 2, 2), np.nan),
-                              tracker.measure_avg[i, None]])
+                              tracker.soure_info['xy'][i, None]])
         return tracker.measurements[i]
 
     def update(self, i, draw=False):
@@ -518,7 +509,7 @@ class TrackerVideo(VideoFeatureDisplay):
         # logger.debug('GRUMBLE' * np.isnan(tracker.delta_xy[i]).any())
         i = int(i)
         tracker = self.tracker
-        if np.isnan(tracker.measurements[i]).any():
+        if np.isnan(tracker.measurements['xy'][i]).any():
             self.logger.debug('No measurements yet for frame {}.', i)
             tracker(self.data, i)
 
