@@ -36,18 +36,15 @@ tracking:
         # measurements with saturated pixels.
 
     compute:
-        weights: [0 , 1000, 25  ]
         centres: [0 , 1000, 100 ]
 
     filenames:
-        origins:        origin.dat
-        measurements:   centroids.dat
-        measure_avg:    centroids-avg.dat
-        measure_std:    centroids-std.dat
-        delta_xy:       coords-delta.dat
-        sigma_xy:       coords-std.dat
-        flux:           flux.dat
-        snr:            snr.dat
+        measurements:       centroids.dat       # (n, nstats, nsources, 2)
+        coords:             coords.dat          # (nsources, 2) struct ['xy', 'std']
+        frame_info:         frame-info.dat      # (n, 2) structured
+        feature_weights:    feature-weights.dat # (nstats, 1, 1)
+        source_weights:     source-weights.dat  # nsources
+        source_info:        source-info.dat     # (n, nsources) structured
 
     # ------------------------------------------------------------------------ #
     table:

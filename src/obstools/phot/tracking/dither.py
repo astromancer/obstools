@@ -126,6 +126,7 @@ def sum1(w):
 
 
 class PointSourceDitherModel(LoggingMixin):
+    # A class for modelling image dither based on a set of centroid features
 
     def __init__(self, d_cut=None, detect_freq_min=0.9, centre_func=np.mean):
         """
@@ -137,8 +138,8 @@ class PointSourceDitherModel(LoggingMixin):
         d_cut:  float
             centre distance cutoff for clipping outliers
         detect_freq_min: float
-            Required detection frequency of individual sources in order for
-            them to be used
+            Required detection frequency of individual sources across frames in
+            order for them to be used in computing the dither.
         centre_func : _type_, optional
             _description_, by default np.mean
         """
@@ -260,6 +261,7 @@ class PointSourceDitherModel(LoggingMixin):
 
     def _objective_feature_weights(self, weights, xy, centres, source_weights, results):
 
+        # calculate
         r, σ, xy, δ = self.compute_centres_offsets(xy, centres, weights, source_weights)
 
         # save results
@@ -268,12 +270,30 @@ class PointSourceDitherModel(LoggingMixin):
         return np.var(xy - δ - r, 0).sum()
 
     def compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
+        """
+        Compute source position center as weighted average of features.
+        Compute frame offset from centre as weighted average of source position
+        deltas across sources given source_weights. 
+        Loop until deltas don't change appreciably (usually 2 loops)
+
+        Return
+        centres
+        centres_std
+        average measured positions (nframes, nsources, 2)
+        frame_deltas (nframes, 2)
+        """
+
+        assert not np.isnan(source_weights).any()
 
         while True:
             r, σ, _xy, δ = self._compute_centres_offsets(
                 xy, centres, feature_weights, source_weights)
-            if np.abs(centres - r).max() < 1e-6:
+
+            delta = np.abs(centres - r).max()
+
+            if delta < 1e-6:
                 return r, σ, _xy, δ
+
             centres = r
 
     def _compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
@@ -282,8 +302,8 @@ class PointSourceDitherModel(LoggingMixin):
         xy = np.average(xy, 1, feature_weights)
 
         # xy position offset in each frame  (mean combined across sources)
-        delta_xy = self.compute_offset(xy, centres, source_weights, axis=-2,
-                                       keepdims=True)
+        delta_xy = self.compute_frame_offset(xy, centres, source_weights, axis=-2,
+                                             keepdims=True)
 
         # shifted cluster centers (all sources)
         xy_shifted = xy - delta_xy
@@ -293,7 +313,7 @@ class PointSourceDitherModel(LoggingMixin):
 
         return centres, xy_shifted.std(0), xy, delta_xy
 
-    def compute_offset(self, xy, centres, weights=None, **kws):
+    def compute_frame_offset(self, xy, centres, weights=None, **kws):
         """
         Calculate the xy offset of coordinate points `xy` from reference
         `centre` for sources.
@@ -455,14 +475,6 @@ class PointSourceDitherModel(LoggingMixin):
         # TODO Still need to think of a cleaner solution for this
         tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
         # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
-
-        # produce message
-        self.logger.opt(lazy=True).info(
-            'Positions for sources estimated from the following features: \n{}',
-            lambda: pprint.pformat(dict(zip(self.features,
-                                            self.feature_weights.squeeze())),
-                                   brackets='')
-        )
 
         self.logger.info('\n{:s}{:s}', tbl, extra)
 
