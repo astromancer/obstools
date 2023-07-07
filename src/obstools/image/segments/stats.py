@@ -75,7 +75,7 @@ class MaskedStatistic(LoggingMixin):
         # result shape and dtype
         nlabels = len(labels)
         shape = (nlabels, *seg._result_dims.get(self.__name__, ()))
-        dtype = 'i' if 'position' in self.__name__ else 'f'
+        dtype = int if 'position' in self.__name__ else float
 
         is2d = (data.ndim == 2)
         if not is2d:
