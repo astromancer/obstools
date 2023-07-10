@@ -61,23 +61,23 @@ def image_sub(background_estimator):
 
 
 # ---------------------------------------------------------------------------- #
-def _unpack(label, section, unpack, itr):
-    return unpack(itr)
+def _unpack(label, section, itemgetter, itr):
+    return itemgetter(itr)
 
 
-def _unpack_with_label(label, section, unpack, itr):
-    return label, unpack(itr)
+def _unpack_with_label(label, section, itemgetter, itr):
+    return label, itemgetter(itr)
 
 
-def _unpack_with_slice(label, section, unpack, itr):
-    return section, unpack(itr)
+def _unpack_with_slice(label, section, itemgetter, itr):
+    return section, itemgetter(itr)
 
 
-def _unpack_with_label_and_slice(label, section, unpack, itr):
-    return label, section, unpack(itr)
+def _unpack_with_label_and_slice(label, section, itemgetter, itr):
+    return label, section, itemgetter(itr)
 
 
-def _get_unpack(with_label, with_slice):
+def _get_unpacker(with_label, with_slice):
     return (
         (_unpack, _unpack_with_slice),
         (_unpack_with_label, _unpack_with_label_and_slice)
@@ -867,8 +867,8 @@ class SegmentedImage(SegmentationImage,     # base
             raise ValueError("Use either `masked` or `compress`. Can't do both.")
 
         # function that yields the result. neat little trick avoid unit tuples
-        unpack = (next if n == 1 else tuple)
-        yielder = _get_unpack(labelled, with_slices)
+        _next = (next if n == 1 else tuple)
+        yielder = _get_unpacker(labelled, with_slices)
 
         # flag which determined arrays in the sequence are to mask
         if compress:
@@ -890,7 +890,7 @@ class SegmentedImage(SegmentationImage,     # base
                                   compress)
                        for _, flag in zip(arrays, flags))
 
-            yield yielder(label, section, unpack, cutouts)
+            yield yielder(label, section, _next(cutouts))
 
     # alias
     coslice = cutout = cutouts
@@ -1107,9 +1107,20 @@ class SegmentedImage(SegmentationImage,     # base
 
     # ------------------------------------------------------------------------ #
     def geometric_median(self, image, labels=None, mask=None, njobs='_ignored'):
-        data = np.dstack([*np.indices(image.shape)[::-1], image]).swapaxes(0, -1)
-        return np.array([geometric_median(xyz.T)
-                         for xyz in self.cutouts(data, labels=labels, compress=True)])
+
+        image = np.asanyarray(image).squeeze()
+
+        assert image.ndim == 2, 'Only 2d images suported for now.'
+
+        data = np.array([*np.indices(image.shape)[::-1], image])
+        return np.array([
+            geometric_median(xyz.T)
+            for xyz in self.cutouts(data,
+                                    labels=labels, compress=True)
+        ])
+
+    # alias
+    gmed = geometric_median
 
     def com_std(self, coms, image, std, labels=None):
         """
@@ -1234,7 +1245,7 @@ class SegmentedImage(SegmentationImage,     # base
         return (np.array(peaks) / upsample) + pixel_centre
 
     # def qfactor(self, image, labels, size, connectivity)
-    
+
     # --------------------------------------------------------------------------
 
     def relabel_many(self, *label_sets):
