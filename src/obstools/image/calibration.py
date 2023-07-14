@@ -42,7 +42,7 @@ _s = IndexHelper()
 # ---------------------------------------------------------------------------- #
 
 
-def get_array(hdu):
+def _get_array(hdu):
     # used when setting a calibration data (hdu) on the science hdu to retrieve
     # the data array
 
@@ -53,17 +53,28 @@ def get_array(hdu):
         # The image is an HDU object
         # ensure consistent orientation between image - and calibration data
         # NOTE: The flat fields will get debiased here. An array is returned
-        img = hdu.calibrated
-    elif isinstance(hdu, PrimaryHDU):
-        img = hdu.data
-    elif isinstance(hdu, np.ndarray):
-        img = hdu
-    else:
-        raise TypeError(f'Received invalid object of type {type(hdu)}. '
-                        'Calibration frames should be one of the following '
-                        'types: ImageCalibratorMixin, PrimaryHDU, np.ndarray.')
+        return hdu.calibrated
 
-    img = np.asanyarray(img)
+    if isinstance(hdu, PrimaryHDU):
+        return hdu.data
+
+    if isinstance(hdu, np.ndarray):
+        return hdu
+
+    raise TypeError(f'Received invalid object of type {type(hdu)}. '
+                    'Calibration frames should be one of the following '
+                    'types: ImageCalibratorMixin, PrimaryHDU, np.ndarray.')
+
+
+def get_array(hdu):
+    # used when setting a calibration data (hdu) on the science hdu to retrieve
+    # the data array
+
+    img = _get_array(hdu)
+
+    if img is None:
+        return
+
     if img.ndim != 2:
         raise ValueError(f'Calibration image must be 2D, not {img.ndim}D.')
 
@@ -86,14 +97,19 @@ class CalibrationImageDescriptor:
         if value is keep:
             return
 
-        # Sub-framing
-        sub = getattr(instance.hdu, 'subrect', ...)
         # set array as ImageCalibrator instance attribute '_dark' or '_flat'
         img = get_array(value)
-        if img is not None:
-            img = img[sub]
 
+        if img is not None:
+            # Sub-framing the calibration frames to match target
+            img = img[getattr(instance.hdu, 'subrect', ...)]
+
+        # attach to instance
         setattr(instance, self.name, img)
+
+        # update the noise model to account for dark / flat noise
+        if isinstance(value, ImageCalibratorMixin):
+            setattr(instance.calibrated.noise_model, self.name[1:], value.noise_model.var(img))
 
     def __delete__(self, instance):
         setattr(instance, self.name, None)
@@ -203,8 +219,11 @@ class ImageCalibrator(ImageOrienter):
             gain = op.attrgetter('readout.preAmpGain', default=1)(hdu)
         self.gain = gain
 
+        self.noise_model = hdu.noise_model.copy()
+
     def __str__(self):
-        return pformat(dict(dark=self.dark,
+        return pformat(dict(gain=self.gain,
+                            dark=self.dark,
                             flat=self.flat),
                        self.__class__.__name__)
 
@@ -223,18 +242,23 @@ class ImageCalibrator(ImageOrienter):
         -------
 
         """
-        # dedark
+        # Since darks and flats are already gain calibrated, we have to do that
+        # gain correction: image now in units of electrons
+        data = data * self.gain
+
+        # dark subtract
         if self.dark is not None:
+            # subtract dark
             data = data - self.dark
 
         # flat field
         if self.flat is not None:
             data = data / self.flat
 
-        # return image in units of electrons
-        return data * self.gain
+        return data
 
     def __getitem__(self, item):
+        # calibration done on getitem!
         return self(super().__getitem__(item))
 
 
@@ -246,7 +270,7 @@ class ImageCalibratorMixin:
     # dark = ForwardProperty('calibrted.dark')
     # flat = ForwardProperty('calibrted.flat')
     # gain = ForwardProperty('calibrted.gain')
-    
+
     @lazyproperty
     def oriented(self):
         """Manage on-the-fly image orientation."""
