@@ -4,7 +4,6 @@ photometry.
 """
 
 # std
-import time
 import numbers
 import tempfile
 import functools as ftl
@@ -15,26 +14,21 @@ from pathlib import Path
 
 # third-party
 import numpy as np
-import more_itertools as mit
 from tqdm import tqdm
-from loguru import logger
 from bottleneck import nanstd
-from joblib import Parallel, delayed
+from scipy.optimize import minimize
 
 # local
-from recipes import api, pprint
+from recipes import pprint
 from recipes.io import load_memmap
-from recipes.string import pluralize
 from recipes.dicts import AttrReadItem
-from recipes.contexts import ContextStack
-from recipes.parallel.joblib import initialized
 
 # relative
 from ...image.noise import CCDNoiseModel
 from ...image.registration import ImageRegister
 from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
-from ..logging import TqdmLogAdapter, TqdmStreamAdapter
+from ..proc import FrameProcessor
 from . import CONFIG
 from .display import SourceTrackerPlots
 from .dither import PointSourceDitherModel
@@ -121,7 +115,7 @@ def resolve_weights(features):
     for i, (centroid, weight) in enumerate(features.items()):
         if isinstance(weight, dict):
             feature_kws[centroid] = kws = weight.copy()
-            weight = kws.pop('weight')
+            weight = kws.pop('weight', 1)
         weights[i] = weight
 
     return (weights / weights.sum()), feature_kws
@@ -133,13 +127,42 @@ def resolve_weights(features):
 #         return None
 
 # ---------------------------------------------------------------------------- #
+# Marginal gaussians
 
+
+# def gaussian_pdf(y, μ, σ):
+#     return np.exp(-0.5 * np.square((y - μ) / σ)) / σ
+
+
+def _gaussian(Θ, x):
+    # scalar multiplier omitted since it doesn't affect max likelihood location
+    a, μ, σ = Θ
+    return a * np.exp(-0.5 * np.square((x - μ) / σ)) / σ
+
+
+class MarginalGaussianMLE:
+    def __init__(self, data_model, noise_model):
+        self.model = data_model
+        self.noise_model = noise_model
+
+    # def likelihood_objective_sigma(self, Θ,  x, y, σy):
+    #     return np.square(((y - self.model(Θ, x)) / σy)).sum()
+
+    def objective(self, Θ, x, y, σy):
+        return np.square(((y - self.model(Θ, x)) / σy)).sum()
+
+    def fit(self, p0, x, y):
+        result = minimize(self.objective, p0, args=(x, y, self.noise_model.std(y)))
+        return result.x
+
+
+# ---------------------------------------------------------------------------- #
 
 # FIXME: remove redundant code
 # TODO: bayesian version
 
 
-class SourceTracker(LabelUser, PointSourceDitherModel):
+class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     """
     A class to track sources in CCD video to aid time series photometry.
 
@@ -320,7 +343,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
             # derived coordinates and it's uncertainty estimate
             'coords':           ((nsources, 2), self.coords.dtype, np.nan),
             # frame_measurements (origin, offset)
-            'frame_info':       ((n, 2), STRUCT_DTYPES['frame_info'], 0),
+            'frame_info':       ((n, 2), (dtype := STRUCT_DTYPES['frame_info']),
+                                 np.array((0, np.nan), dtype, ndmin=1)),
             # structured series results for sources
             'source_info':      ((n, nsources), STRUCT_DTYPES['source_info'], np.nan),
             # fit weights for centroid features
@@ -343,32 +367,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
             # add attributes for convenience
             setattr(self, name, data)  # .view(np.recarray)
 
-        self.frame_info['delta_xy'] = np.nan
         self.delta_xy = self.frame_info['delta_xy']
         self.origins = self.frame_info['origins']
-
-    def __call__(self, data, indices=None, mask=None):
-        """
-        Track the shift of the image frame from initial coordinates
-
-        Parameters
-        ----------
-        image
-        mask
-
-        Returns
-        -------
-
-        """
-
-        if self.measurements is None:
-            raise FileNotFoundError('Initialize memory first by calling the '
-                                    '`init_memory` method.')
-
-        if data.ndim == 2:
-            data = [data]
-
-        return self.loop(data, indices, mask)
 
     def __str__(self):
         nl = '\n'
@@ -382,11 +382,15 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
     __repr__ = __str__
 
     # ------------------------------------------------------------------------ #
-    @ property
+    @property
+    def measured(self):
+        return ~np.isnan(self.source_info['xy']['value']).all((1, 2))
+
+    @property
     def origin(self):
         return self._origin
 
-    @ origin.setter
+    @origin.setter
     def origin(self, origin):
 
         # ensure correct type
@@ -411,11 +415,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
     #     load_memmap(loc / filenames[name], (nsources, 2),
     #                 , np.nan, overwrite=overwrite)
 
-    @ property
+    @property
     def masks(self):  # extended masks
         return self.seg.group_masks
 
-    @ property
+    @property
     def n_sources(self):
         return self.use_labels.sum()
 
@@ -478,7 +482,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
     # ------------------------------------------------------------------------ #
     def get_coords(self, section=_s0, source=_s0):
         cast = ([np.newaxis] * (source is _s0))
-        return self.coords['xy'][source] + self.delta_xy[(section, *cast)]
+        return self.coords['xy'][source] + self.frame_info['delta_xy'][(section, *cast)]
 
     def get_coords_residual(self, section=_s0, feature=_s0, source=_s0,
                             shifted=True):
@@ -498,15 +502,14 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         if shifted:
             extra_dims = [np.newaxis] * (residual.ndim - self.delta_xy.ndim)
-            residual -= self.delta_xy[(section, *extra_dims, slice(None))]
+            residual -= self.frame_info['delta_xy'][(section, *extra_dims, slice(None))]
 
         return residual.squeeze()
 
     # ------------------------------------------------------------------------ #
-
-    @ api.synonyms({'(n_)?jobs': 'njobs'})
-    def run(self, data, indices=None, njobs=-1, backend='multiprocessing',
-            progress_bar=True):
+    #  indices=None, njobs=-1, backend='multiprocessing',
+    #         progress_bar=True):
+    def run(self, data, **kws):
         """
         Start a worker pool of source trackers. The workload will be split into
         chunks of size ``
@@ -529,108 +532,25 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         FileNotFoundError
             If memory has not been initialized prior to calling this method.
         """
-        # preliminary checks
-        if self.measurements is None:
-            raise FileNotFoundError('Initialize memory first by calling the '
-                                    '`init_memory` method.')
 
-        if indices is None:
-            indices, = np.where(~self.measured)
-
-        if len(indices) == 0:
-            self.logger.info('All frames have been measured. To force a rerun, '
-                             'you may do >>> tracker.measurements[:] = np.nan')
-            return
-
-        if njobs in (-1, None):
-            njobs = mp.cpu_count()
-
-        # main compute
-        self._run(data, indices, njobs, progress_bar, backend)
+        super().run(data, **kws)
 
         # finally, recompute the positions
         # with memory_lock:
         self.logger.info('Final fit with full dataset.')
         self.fit(report=True)
 
-    def _run(self, data, indices, njobs, progress_bar, backend):
-
-        # init counter
+    def main(self, data, indices, njobs, progress_bar, backend):
+        # init precision flag
         precision_reached.value = -1
+        super().main(data, indices, njobs, progress_bar, backend)
 
-        # setup compute context
-        context = ContextStack()
-        if njobs == 1:
-            worker = self.loop
-            context.add(ctx.nullcontext(list))
-        else:
-            worker = self._setup_compute(njobs, backend, context, progress_bar)
+    def get_workload(self, indices, njobs, batch_size, burn_in, progress_bar):
 
-        # execute
-        # with ctx.redirect_stdout(TqdmStreamAdapter()):
-        logger.remove()
-        logger.add(TqdmStreamAdapter(), colorize=True, enqueue=True)
-
-        with context as compute:
-            compute(worker(data, *args) for args in
-                    self._get_workload(indices, njobs, progress_bar))
-
-        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
-        #              backend, time.time() - t_start)
-
-    def _setup_compute(self, njobs, backend, context, progress_bar):
-        # locks for managing output contention
-        tqdm.set_lock(mp.RLock())
-        memory_lock = mp.Lock()
-
-        # NOTE: object serialization is about x100-150 times faster with
-        # multiprocessing backend. ~0.1s vs 10s for loky.
-        worker = delayed(self.loop)
-        executor = Parallel(njobs, backend)  # verbose=10
-        context.add(initialized(executor, set_lock,
-                                (memory_lock, tqdm.get_lock())))
-
-        # Adapt logging for progressbar
-        if progress_bar:
-            # These catch the print statements
-            # context.add(TqdmStreamAdapter(sys.stdout))
-            # context.add(TqdmStreamAdapter(sys.stderr))
-            context.add(TqdmLogAdapter())
-
-        return worker
-
-    def _get_workload(self, indices, njobs, progress_bar):
-
-        # divide work
         batch_size = self._compute.centres.step
         burn_in = self._compute.centres.start // batch_size
-        batches = mit.chunked(indices, batch_size)
-        n_batches = round(len(indices) / batch_size)
-
-        #
-        self.logger.info('Work split into {} batches of {} frames each, using {} '
-                         '{}.', n_batches, batch_size, njobs,
-                         pluralize('worker', plural='concurrent workers', n=njobs))
-
-        # triggers for computing coordinate centres and weights as needed
-        # burn_in, every = np.array(
-        #     [self._compute.centres.start, self._compute.centres.step]
-        # ) // batch_size
-
-        update_centres = (
-            itt.chain(
-                # burn in
-                itt.repeat(False, burn_in - 1),
-                # compute every nth batch
-                itt.repeat(None)
-            )
-        )
-
-        # workload iterable with progressbar if required
-        return tqdm(zip(batches, update_centres),
-                    initial=self.measured.sum() // batch_size,
-                    total=len(indices) // batch_size, unit_scale=batch_size,
-                    disable=not progress_bar, **CONFIG.progress)
+        return super()._get_workload(indices, njobs, batch_size, burn_in,
+                                     progress_bar)
 
     def loop(self, data, indices, update_centres=None, report=True):
 
@@ -638,7 +558,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         # measure
         for i in indices:
-            self.delta_xy[i] = off = self.measure(data, i)
+            self.frame_info['delta_xy'][i] = off = self.measure(data, i)
 
             # with memory_lock:
             #     # next(self.counter)
@@ -669,14 +589,14 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
             # measurements wrt image, offsets wrt coords
             with memory_lock:
                 xy = self.source_info['xy']['value']
-                self.coords['sigma'] = nanstd(xy - self.delta_xy[:, None], 0)
+                self.coords['sigma'] = nanstd(xy - self.frame_info['delta_xy'][:, None], 0)
 
         self.logger.opt(lazy=True).trace(
             'Average pos stddev: {}', lambda: self.coords['sigma'].mean(0))
 
         # self.logger.info('OFFSET: {}', off)
         # finally return the new coordinates
-        return self.coords['xy'] + self.delta_xy[indices, None]
+        return self.coords['xy'] + self.frame_info['delta_xy'][indices, None]
 
     def update_source_weights(self, indices):
         self.logger.trace('Updating source weights')
@@ -712,10 +632,6 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
             # unity')
 
         return snr
-
-    @ property
-    def measured(self):
-        return ~np.isnan(self.source_info['xy']['value']).all((1, 2))
 
     def measure(self, data, i, mask=None):
 
@@ -966,10 +882,10 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         # δ = np.mean(self.coords['xy'] - centres, 0)
 
         with memory_lock:
-            self.delta_xy[:] = δ_xy  # - δ
+            self.frame_info['delta_xy'] = δ_xy  # - δ
             self.coords['sigma'] = σ_pos
 
-        # self.logger.debug('Updated source positions: δ = {}.', δ)
+        self.logger.debug('Updated source positions: δ = {}.', δ_xy)
 
         if report:
             self.report(xy, centres, σ_pos)
@@ -1193,7 +1109,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         return SourceTrackerGUI(self, hdu, **kws)
 
-    @ classmethod
+    @classmethod
     def from_image(cls, image, mask=None, top: int = None, detect=True, **kws):
         """Initialize the tracker from an image."""
 
@@ -1217,7 +1133,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
 
         return obj
 
-    @ classmethod
+    @classmethod
     def from_hdu(cls, hdu, sample_exposure_depth=5, **detect_kws):
 
         # get image and info from the hdu
@@ -1230,7 +1146,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
         if dl := getattr(hdu, 'diffraction_limit', None):
             kws['precision'] = dl
 
-        kws['noise_model'] = CCDNoiseModel(hdu.readout.noise, hdu.readout.preAmpGain)
+        kws['noise_model'] = CCDNoiseModel(hdu.readout.preAmpGain, hdu.readout.noise)
 
         tracker = SourceTracker.from_image(image, detect=detect_kws, **kws)
         return tracker, image
@@ -1253,7 +1169,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel):
     # def from_fits(cls, filename, snr=3., npixels=7, edge_cutoff=3, deblend=False,
     #                flux_sort=True, dilate=1, mask=None, edge_mask=None)
 
-    @ classmethod
+    @classmethod
     def from_images(cls, images, mask=None,
                     required_positional_accuracy=0.5, centre_distance_max=1,
                     f_detect_measure=0.5, f_detect_merge=0.2, post_merge_dilate=1,

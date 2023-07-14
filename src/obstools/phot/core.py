@@ -23,6 +23,8 @@ from ..campaign import PhotCampaign
 from ..image.segments import display
 
 
+# ---------------------------------------------------------------------------- #
+
 def ragged(hdu, seg, top=5, dilate=0, filename=None):
     # ragged aperture photometry (no tracking!!)
     seg = seg.dilate(dilate, copy=True)
@@ -42,6 +44,8 @@ def ragged(hdu, seg, top=5, dilate=0, filename=None):
 def phot(hdu, fun, **kws):
     return fun(hdu, **kws)
 
+
+# ---------------------------------------------------------------------------- #
 
 class PhotInterface:
     """Interface for photometry algorithms"""
