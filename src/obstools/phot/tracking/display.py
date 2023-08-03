@@ -18,14 +18,14 @@ from matplotlib.transforms import AffineDeltaTransform
 
 # local
 from motley.utils import vbrace
-from recipes import pprint
+from recipes import pprint, dicts
 from recipes.logging import LoggingMixin
 from scrawl import density
 from scrawl.video import VideoFeatureDisplay
 
 # relative
 from ...image import SkyImage
-from . import CONFIG
+from ..config import CONFIG
 
 
 # ---------------------------------------------------------------------------- #
@@ -34,7 +34,8 @@ __all__ = ['SourceTrackerPlots', 'TrackerVideo']
 
 # ---------------------------------------------------------------------------- #
 with ctx.suppress(AttributeError):  # autoreload hack
-    CONFIG = CONFIG.plots
+    VIDCONFIG = CONFIG.tracking.video
+    CONFIG = CONFIG.tracking.plots
 
 CENTROIDS = CONFIG.centroids
 LABEL_CONFIG = CONFIG.labels
@@ -106,7 +107,7 @@ class SourceTrackerPlots(LoggingMixin):
 
         tracker = self.tracker
         sim = SkyImage(image, segments=tracker.seg)
-        sim.xy = tracker.coords
+        sim.xy = tracker.coords['xy']
 
         display, art = sim.show(True, False, points, False, labels,
                                 coords='pixel', ax=ax, **kws)
@@ -154,6 +155,8 @@ class SourceTrackerPlots(LoggingMixin):
         """
         # trk = self.tracker
 
+        assert self.tracker.measured.any()
+
         if labels is None:
             labels = self.tracker.use_labels
 
@@ -195,9 +198,9 @@ class SourceTrackerPlots(LoggingMixin):
         if n_cols == 1:
             gridspec_kw = dict(right=0.8, top=0.82)
         else:
-            gridspec_kw = SUBPLOTSPEC
+            gridspec_kw = SUBPLOTSPEC.copy()
             if 'caption' in show:
-                SUBPLOTSPEC['bottom'] += 0.125
+                gridspec_kw['bottom'] += 0.125
 
         axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
                             gridspec_kw=gridspec_kw)
@@ -251,6 +254,23 @@ class SourceTrackerPlots(LoggingMixin):
         return art
         # if legend:
         #     self._legend(axes[0, 0], art, show_weights)
+
+    def positions_time_series(self, ax):
+
+        assert self.tracker.measured.any()
+
+        xy = self.tracker.delta_xy
+        r = np.sqrt(np.sum(xy ** 2, 1))
+        line, = ax.plot(r, '.')
+
+        ax.xaxis.set_minor_locator(ticker.AutoMinorLocator())
+        ax.set(xlabel='frame', ylabel='$\Delta r$ (pixels)',
+               xlim=(0, len(xy)))
+        ax.grid()
+        ax.grid(which='minor')
+        ax.figure.tight_layout()
+
+        return line
 
     def _setup_scatter_axes(self, ax, index, n_cols, feature, show_weights):
 
@@ -374,16 +394,16 @@ class SourceTrackerPlots(LoggingMixin):
         ax.add_patch(c)
         return c
 
-    def _legend(self, ax, art, show_weights, **kws):
+    def _legend(self, ax, art, show_weights, ncols=1, **kws):
 
-        captions = dict(self._get_legend_labels(show_weights, braced=True))
+        captions = dict(self._get_legend_labels(show_weights, align=True))
 
         handles, labels = [], []
         for key, lines in art.items():
             handles.append(lines[0])
             labels.append(captions[key])
 
-        if show_weights:
+        if show_weights and ncols == 2:
             spacer = Line2D(*np.empty((2, 1, 1)), marker='', ls='')
             handles.insert(-1, spacer)
             labels.insert(-1, '\n ')
@@ -392,15 +412,16 @@ class SourceTrackerPlots(LoggingMixin):
                 handles.append(spacer)
                 labels.append('\n ')
 
-        ax.figure.subplots_adjust(top=0.8)
+        # ax.figure.subplots_adjust(top=0.8)
         ax.legend(
             handles, labels,
-            **{**dict(ncol=2,
+            **{**dict(ncol=ncols,
                       loc='lower left',
                       bbox_to_anchor=(-0.1, 1.2),
                       handletextpad=0.25,
-                      labelspacing=-0.175,
-                      columnspacing=0.25),
+                      #   labelspacing=-0.175,
+                      #   columnspacing=0.25
+                      ),
                **kws}
         )
 
@@ -412,14 +433,15 @@ class SourceTrackerPlots(LoggingMixin):
             return
 
         # add weight to label
-        weights = iter(centroids.values())
+        weights = iter(self.tracker.feature_weights.squeeze())
         align = braced if align is None else align
         w = max(map(len, labels)) + 1 if align else 0
         ends = iter(vbrace(len(centroids)).splitlines() if braced else ())
         for stat, (*_, label) in CENTROIDS.items():
             if stat in centroids:
+                label = label.replace('\n', '')
                 yield (stat, f'{label: <{w or len(label) + 1}}'
-                             f'$(w={next(weights)}) ${next(ends, "")}')
+                             f'$(w={next(weights):4.3f}) ${next(ends, "")}')
             else:
                 yield stat, label
 
@@ -428,24 +450,9 @@ class SourceTrackerPlots(LoggingMixin):
 
 class TrackerVideo(VideoFeatureDisplay):
 
-    # style = AttrDict()
-
-    default_marker_style = {
-        **VideoFeatureDisplay.default_marker_style,
-        'cmap': 'rainbow',
-        'emboss': 1.5
-    }
-    # default_marker_style.pop('edgecolor')
-    # default_marker_style.pop('facecolor')
-
-    label_style = {
-        'offset': 5,
-        'size': 'x-small',
-        'alpha': 1
-    }
 
     def __init__(self, tracker, data, marker_cycle=(), marker_style=(),
-                 update=True, legend=False, **kws):
+                 update=True, legend=VIDCONFIG.legend.show, **kws):
 
         self.tracker = tracker
 
@@ -457,13 +464,15 @@ class TrackerVideo(VideoFeatureDisplay):
                 marker_cycle[key].append(val)
 
         # kws passed to ImageDisplay
-        kws.setdefault('clim_every', 0)
-
+        fig_kws, _ = dicts.split(VIDCONFIG.copy(), 'features', 'legend')
+        
         # init video + feature marks
         _n, *shape = tracker.measurements.shape
         shape[0] += 1
+        marker_style = {**VIDCONFIG.features, **(marker_style or {})}
         VideoFeatureDisplay.__init__(self, data, np.full(shape, np.nan),
-                                     marker_cycle, marker_style, **kws)
+                                     marker_cycle, marker_style,
+                                     **{**fig_kws, **kws})
 
         # Source segments
         seg = self.tracker.seg
@@ -471,7 +480,7 @@ class TrackerVideo(VideoFeatureDisplay):
         contour_style.pop('s', None)
 
         self.regions = tracker.show.contours(self.ax, **contour_style)
-        self.label_texts = seg.show.labels(self.ax, **self.label_style)
+        self.label_texts = seg.show.labels(self.ax, **LABEL_CONFIG)
 
         if self.cbar:
             # NOTE, we don't want the cmap to switch for these when scrolling,
@@ -501,7 +510,7 @@ class TrackerVideo(VideoFeatureDisplay):
         if 'avg' in CENTROIDS:
             return np.vstack([tracker.measurements['xy'][i],
                               #   np.full((1, 2, 2), np.nan),
-                              tracker.soure_info['xy'][i, None]])
+                              tracker.source_info['xy']['value'][i, None]])
         return tracker.measurements[i]
 
     def update(self, i, draw=False):
@@ -515,7 +524,7 @@ class TrackerVideo(VideoFeatureDisplay):
 
         # update region offsets
         # print(tracker._origins[i])
-        self.regions.set_offsets(tracker._origins[i, ::-1])
+        self.regions.set_offsets(tracker.origins[i, ::-1])
 
         return [*super().update(i, draw), self.regions, self.label_texts]
 
@@ -524,8 +533,8 @@ class TrackerVideo(VideoFeatureDisplay):
     #     self.ax.plot()
     #     return art
 
-    def legend(self, show_weights=True, **kws):
-        spacer = self.divider.append_axes('top', 1.25, pad=0.05)
+    def legend(self, show_weights=VIDCONFIG.legend.show_weights, **kws):
+        spacer = self.divider.append_axes('top', 1.2, pad=0.05)
         spacer.set_axis_off()
 
         art = dict(zip((*self.tracker.features, 'avg'), zip(self.marks)))

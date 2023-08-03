@@ -16,7 +16,11 @@ from motley.table import Table
 from motley.formatters import Conditional, Decimal, Numeric
 
 # relative
-from . import CONFIG
+from ..config import CONFIG
+
+
+# ---------------------------------------------------------------------------- #
+CONFIG = CONFIG.tracking
 
 
 # ---------------------------------------------------------------------------- #

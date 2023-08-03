@@ -29,7 +29,7 @@ from ...image.registration import ImageRegister
 from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
 from ..proc import FrameProcessor
-from . import CONFIG
+from ..config import CONFIG
 from .display import SourceTrackerPlots
 from .dither import PointSourceDitherModel
 
@@ -44,6 +44,8 @@ from .dither import PointSourceDitherModel
 #  simulate how different centre measures performs for sources with decreasing snr
 #  super resolution images
 #  lucky imaging ?
+
+CONFIG = CONFIG.tracking
 
 # ---------------------------------------------------------------------------- #
 _s0 = slice(None)

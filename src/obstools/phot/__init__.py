@@ -1,3 +1,3 @@
 
-from .core import PhotInterface
+from . import tracking
 from .tracking import SourceTracker

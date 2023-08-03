@@ -9,30 +9,36 @@ import numpy as np
 import more_itertools as mit
 from tqdm import tqdm
 from loguru import logger
-from bottleneck import nanstd
 from joblib import Parallel, delayed
 
 # local
+import motley
 from recipes import api
 from recipes.string import pluralize
 from recipes.contexts import ContextStack
 from recipes.parallel.joblib import initialized
 
 # relative
-from ..logging import TqdmLogAdapter, TqdmStreamAdapter
-from . import CONFIG
+from .config import CONFIG
+from .logging import TqdmLogAdapter, TqdmStreamAdapter
+from recipes.logging import LoggingMixin
 
-
-# from recipes.parallel.synced import SyncedArray, SyncedCounter
-
-# TODO: CameraTrackingModel / CameraOffset / CameraPositionModel
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
-
 # TODO
 #  simulate how different centre measures performs for sources with decreasing snr
 #  super resolution images
 #  lucky imaging ?
+
+
+# ---------------------------------------------------------------------------- #
+CONFIG = CONFIG.proc
+
+# stylize progressbar
+prg = CONFIG.progress
+prg['bar_format'] = motley.stylize(prg.bar_format)
+del prg
+
 
 # ---------------------------------------------------------------------------- #
 _s0 = slice(None)
@@ -176,7 +182,7 @@ class FrameProcessor(LoggingMixin):
 
         with context as compute:
             compute(worker(data, *args) for args in
-                    self._get_workload(indices, njobs, progress_bar))
+                    self.get_workload(indices, njobs, progress_bar))
 
         # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
         #              backend, time.time() - t_start)

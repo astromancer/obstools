@@ -1,27 +1,37 @@
 
+proc:
+    progress:
+        bar_format: >-
+            {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
+            {rate_fmt:|gold}
+            {elapsed:|cyan} eta {remaining:|cyan}
+        ascii: " ╸━"
+        unit:  " frames"
+
+
 # source tracking
 tracking:
     # ------------------------------------------------------------------------ #
     centroids:
         # features used for tracking
         com:                            1
-        geometric_median:               1
-        peak:               
-            weight: 1
+        # geometric_median:               1
+        peak:
             upsample: 1     # note, changing this will siginificantly affect compute times
             filter: lanczos
-        
-
-    pre_subtract:       True
-    # subtract background from image prior to computing features
-    bg:                 median
-    # statistic used for background
     
-    precision:          0.5
+    # subtract background from image prior to computing features
+    pre_subtract:       True
+    # statistic used for background
+    bg:                 median
+    
     # Required positional accuracy in pixels
-    weights:            snr 
+    precision:          0.5
+    
     # Per-source weights for frame offset calculation. Use "snr" for
     # signal-to-noise weighting.
+    weights:            snr 
+    
 
     cutoffs:
         edge:           0
@@ -32,19 +42,20 @@ tracking:
         # For outlier detection: maximum distance allowed for point measurements
         # from centre of distribution.
         saturation:     95
-        # If we know the saturation value of the CCD chip, we discard source
-        # measurements with saturated pixels.
+        # If we know the saturation value of the CCD chip, we discard pixels above
+        # this percentage of the saturation value
 
     compute:
         centres: [0 , 1000, 100 ]
 
     filenames:
         measurements:       centroids.dat       # (n, nstats, nsources, 2)
-        coords:             coords.dat          # (nsources, 2) struct ['xy', 'std']
-        frame_info:         frame-info.dat      # (n, 2) structured
-        feature_weights:    feature-weights.dat # (nstats, 1, 1)
-        source_weights:     source-weights.dat  # nsources
+        coords:             coords.dat          # (nsources, 2) structured ['xy', 'std']
+        frame_info:         frame-info.dat      # (n, 2)        structured
         source_info:        source-info.dat     # (n, nsources) structured
+        feature_weights:    feature-weights.dat # (nstats, 1, 1)
+        source_weights:     source-weights.dat  # nsources  
+        
 
     # ------------------------------------------------------------------------ #
     table:
@@ -61,27 +72,39 @@ tracking:
         row_nrs:        True
         max_rows:       25
 
-    progress:
-        bar_format: >-
-            {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
-            {rate_fmt:|gold}
-            {elapsed:|cyan} eta {remaining:|cyan}
-        ascii: " ╸━"
-        unit:  " frames"
-    
+    # ------------------------------------------------------------------------ #
+    video:
+        figsize:          [8, 8]
+        subplot_kws:
+            top:        1.0
+            bottom:     0.02
+            left:       0.125
+            right:      0.9
+        
+        legend:
+            show:           on
+            show_weights:   on
+        
+        features:
+            cmap:       rainbow
+            emboss:     1.5
+
+        clim_every:     0
+
     # ------------------------------------------------------------------------ #
     plots:
         centroids:
             com:              [r, +, "Centre of Mass"]
-            geometric_median: [g, o, "Projected\n Geometric Median"]
             peak:             [m, ^, "Peak"]
+            # marginals:        [orange, '.', "Marginal Gaussian MLE"]
             avg:              [k, x, "Weighted Centroid"] 
              # NOTE: avg sould be last
 
         labels:
             offset: [6, 6]
             color:  w
-            size:   10
+            size:   10 # x-small
+            alpha:     1
             # fontweight:bold
 
         position:
@@ -110,7 +133,7 @@ tracking:
             caption:
                 pos:    [0.075, 0.01]
                 text:   >-
-                    $x_0 = {x:s}$
+                    $x_0 = {x:s}$;
                     $y_0 = {y:s}$
                 va:     bottom
                 ha:     left
@@ -120,7 +143,7 @@ tracking:
 
             cbar:
                 # shrink: 0.9
-                pad:    0.01
+                pad:     0.01
                 label0:  Counts
                 label1:  Counts (Recentred)
 
