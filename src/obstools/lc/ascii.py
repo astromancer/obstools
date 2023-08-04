@@ -231,7 +231,7 @@ def make_header(obj_name, shape_info, has_oflag, meta=None):
     # object names
     obj_names = ['# ', obj_name] + ['C%i' % i for i in range(nstars - 1)]
     w0, *ww = col_widths
-    w2 = map(sum, mit.grouper(2 + has_oflag, ww))  # 2-column widths
+    w2 = map(sum, mit.grouper(2 + has_oflag, fill_value=ww))  # 2-column widths
     col_fmt_names = ''.join('%%-%is' % w for w in [w0] + list(w2))
     header += '\n' + col_fmt_names % tuple(obj_names)
 

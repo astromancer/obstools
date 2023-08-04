@@ -17,8 +17,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from motley.table import Table
 from recipes.misc import is_interactive
 from scrawl.image import ImageDisplay
-from scrawl.scatter import scatter_density
-from scrawl.ticks import LinearRescaleFormatter
+from scrawl import density, ticks
 
 
 # from motley.profiling.timers import timer
@@ -299,7 +298,7 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
         yx = features[:, i]
 
         # plot point cloud visualization
-        scatter_density(ax, yx, bins, None, min_count, max_points,
+        density.scatter_map(ax, yx, bins, None, min_count, max_points,
                         tessellation, scatter_kws, density_kws)
 
         if show_centres:
@@ -320,29 +319,28 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
 
 
 def new_diagnostics(coords, rcoo, Appars, optstat):
-    figs = {}
-    # coordinate diagnostics
-    fig = plot_coord_moves(coords, rcoo)
-    figs['coords.moves'] = fig
+    return {
+        # coordinate diagnostics
+        'coords.moves':
+            plot_coord_moves(coords, rcoo),
 
-    # fig = plot_coord_scatter(coords, rcoo)
-    # figs['coords.scatter'] = fig
-    # fig = plot_coord_walk(coords)
-    # figs['coords.walk'] = fig
+        # fig = plot_coord_scatter(coords, rcoo)
+        # figs['coords.scatter'] = fig
+        # fig = plot_coord_walk(coords)
+        # figs['coords.walk'] = fig
 
-    fig = plot_coord_jumps(coords)
-    figs['coords.jump'] = fig
+        'coords.jump':
+            plot_coord_jumps(coords),
 
-    # aperture diagnostics
-    fig = ap_opt_stat_map(optstat)
-    figs['opt.stat'] = fig
-    fig = plot_appars_walk(Appars.stars, ('a', 'b', 'theta'), 'Star apertures')
-    figs['aps.star.walk'] = fig
-    fig = plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'),
-                           'Sky apertures')
-    figs['aps.sky.walk'] = fig
-
-    return figs
+        # aperture diagnostics
+        'opt.stat':
+            ap_opt_stat_map(optstat),
+        'aps.star.walk':
+            plot_appars_walk(Appars.stars, ('a', 'b', 'theta'), 'Star apertures'),
+        'aps.sky.walk':
+            plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'),
+                         'Sky apertures')
+    }
 
 
 def ap_opt_stat_map(optstat):
@@ -394,7 +392,7 @@ def ap_opt_stat_map(optstat):
     cmap = im.image.get_cmap()
 
     # hack the yscale
-    fmt = LinearRescaleFormatter(nf / nr)
+    fmt = ticks.LinearRescaleFormatter(nf / nr)
     im.ax.yaxis.set_major_formatter(fmt)
     #
 
@@ -625,7 +623,7 @@ def plot_coord_moves(coords, rcoo):
                                    subplot_kw=dict(aspect='equal'))
 
     #
-    scatter_density(ax1, coords, rcoo)
+    density.scatter_map(ax1, coords, rcoo)
     #
     plot_coord_walk(ax2, coords)
 
@@ -736,12 +734,12 @@ def plot_aperture_flux(fitspath, proc, tracker):
     star_labels = list(map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format,
                            tracker.segm.labels, tracker.rcoo))
 
-    figs = {
+    return {
         'lc.aps.opt': plot_lc(t, flux, flxStd, star_labels, '(Optimal)'),
         'lc.aps.bg': plot_lc(t, fluxBG, flxBGStd, star_labels, '(BG)')
     }
 
-    return figs
+    
 
 
 def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):

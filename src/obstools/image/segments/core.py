@@ -29,7 +29,7 @@ from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
 from .slices import SliceDict
 from .trace import trace_boundary
 from .stats import MaskedStatsMixin
-from .utils import inside_segment, is_lazy
+from .utils import is_lazy
 from .groups import LabelGroupsMixin, auto_id
 from .display import SegmentPlotter, make_cmap
 from .masks import MaskContainer, SegmentMasksMixin
@@ -61,20 +61,20 @@ def image_sub(background_estimator):
 
 
 # ---------------------------------------------------------------------------- #
-def _unpack(label, section, itemgetter, itr):
-    return itemgetter(itr)
+def _unpack(label, section, item):
+    return item
 
 
-def _unpack_with_label(label, section, itemgetter, itr):
-    return label, itemgetter(itr)
+def _unpack_with_label(label, section, item):
+    return label, item
 
 
-def _unpack_with_slice(label, section, itemgetter, itr):
-    return section, itemgetter(itr)
+def _unpack_with_slice(label, section, item):
+    return section, item
 
 
-def _unpack_with_label_and_slice(label, section, itemgetter, itr):
-    return label, section, itemgetter(itr)
+def _unpack_with_label_and_slice(label, section, item):
+    return label, section, item
 
 
 def _get_unpacker(with_label, with_slice):
@@ -113,7 +113,7 @@ def get_masking_flags(arrays, masked):
     return mask_flags
 
 
-def _2d_slicer(array, slice_, mask=None, compress=False):
+def _slice2d(array, slices, mask=None, compress=False):
     """
     Slice `np.ndarray` object along last 2 dimensions. If array is None, simply
     return None.
@@ -121,7 +121,7 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     Parameters
     ----------
     array:  np.ndarray
-    slice_: tuple of slices
+    slices: tuple of slices
     mask:   bool, np.ndarray or None (default)
     compress: bool
 
@@ -134,7 +134,7 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
         return None  # propagate `None`s
 
     # slice along last two dimensions
-    cutout = array[tuple((..., *slice_))]
+    cutout = array[tuple((..., *slices))]
 
     # NOTE next line must work for `mask` an array!
     if (mask is None) or (mask is False):
@@ -149,6 +149,15 @@ def _2d_slicer(array, slice_, mask=None, compress=False):
     return ma
 
 
+def _check_arrays(arrays):
+    for i, a in enumerate(arrays):
+        a = np.asanyarray(a)
+        if (a is not None) and a.ndim < 2:
+            raise ValueError('All arguments should be (nd)images or `None`.'
+                             f' Array {i} is {a.ndim}D.')
+        yield a
+
+# ---------------------------------------------------------------------------- #
 # class ModelledSegment(Segment):
 #     def __init__(self, segment_img, label, slices, area, model=None):
 #         super().__init__(segment_img, label, slices, area)
@@ -803,7 +812,7 @@ class SegmentedImage(SegmentationImage,     # base
         {'enum(erated?)?':  'labelled',
          'with_label':      'labelled',
          'with_slice':      'with_slices',
-         'mask(ed)':        'masked',
+         'mask':            'masked',
          'flat(ten(ed)?)?': 'compress'},
         action=None
     )
@@ -856,10 +865,8 @@ class SegmentedImage(SegmentationImage,     # base
         if n == 0:
             raise ValueError('Need at least one array to slice.')
 
-        for i, a in enumerate(arrays):
-            if (a is not None) and np.ndim(a) < 2:
-                raise ValueError('All arguments should be (nd)images or `None`.'
-                                 f' Array {i} is {np.ndim(a)}D.')
+        # check dimensions
+        arrays = list(_check_arrays(arrays))
 
         # flags which determine which arrays in the sequence are to be mask
         flags = get_masking_flags(arrays, masked)
@@ -885,9 +892,9 @@ class SegmentedImage(SegmentationImage,     # base
 
         for label, section in itr:
             # NOTE this propagates values that are `None` in `arrays` tuple
-            cutouts = (_2d_slicer(_, section,
-                                  masks[label] if flag else None,
-                                  compress)
+            cutouts = (_slice2d(_, section,
+                                masks[label] if flag else None,
+                                compress)
                        for _, flag in zip(arrays, flags))
 
             yield yielder(label, section, _next(cutouts))

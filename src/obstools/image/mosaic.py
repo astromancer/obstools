@@ -176,9 +176,9 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         # loop images and plot
         cmaps = mit.padded([cmap_ref], cmap)
         alphas = mit.padded([alpha_ref], alpha)
-        for image, p, name in itt.zip_longest(self, params, names):
+        for i, (image, p, name) in enumerate(itt.zip_longest(self, params, names)):
             # self.plot_image(image, fov, p, name, coo, cmap=cmap, **kws)
-            self.plot_image(image, None, p, name,
+            self.plot_image(image, None, p, name, relim=(i != 0),
                             cmap=next(cmaps), alpha=next(alphas),
                             **kws)
 
@@ -190,7 +190,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             self.alpha_cycle[:-1, 0] = alpha_ref
 
     def plot_image(self, image=None, fov=None, p=(0, 0, 0), name=None,
-                   frame=True, **kws):
+                   frame=True, relim=True, **kws):
         """
 
         Parameters
@@ -213,11 +213,10 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         if not np.isfinite(p).all():
             raise ValueError('Received non-finite parameter value(s)')
 
-        update = True
         if image is None:
             assert self.images
             image = self[self.idx]
-            update = False
+            relim = False
             # name = name or (self.names[0] if len(self.names) else None)
 
         # if image.__class__.__name__ != 'SkyImage':
@@ -231,14 +230,15 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         # plot
         # *image.origins, image.angle = p
         _, art = _, self.art[name] = image.plot(ax=self.ax,
-                                                frame=frame, set_lims=False,
+                                                frame=frame, 
+                                                set_lims=False,
                                                 **kws)
 
         # if coords is not None:
         #     line, = self.ax.plot(*coords.T, 'x')
         # plot_points.append(line)
 
-        if update:
+        if relim:
             self.update_axes_limits(p, image.fov)
 
         return art
