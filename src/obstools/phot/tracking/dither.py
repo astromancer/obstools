@@ -25,7 +25,17 @@ CONFIG = CONFIG.tracking
 
 # ---------------------------------------------------------------------------- #
 
-def _sanitize_data(xy, detect_freq_min):
+def _sanitize_weights(weights, n):
+    assert weights.ndim in {1, 2}
+
+    if weights.ndim == 2:
+        assert len(weights) == n
+
+    weights[weights < 0 | np.isnan(weights)] = 0
+    return weights
+
+
+def _sanitize_data(xy, detect_freq_min, source_weights):
 
     # Due to varying image quality and or camera/telescope drift,
     # some  sources (those near edges of the frame, or variable ones) may
@@ -63,7 +73,11 @@ def _sanitize_data(xy, detect_freq_min):
     use_sources = _filter_sources(n_sources, bad, n_use, detect_freq_min)
     xy = _nan_to_masked(xy[good][..., use_sources, :],
                         nans[good][..., use_sources, :])
-    return xy, good, use_sources
+
+    source_weights = _sanitize_weights(source_weights, len(xy))
+    source_weights[..., ~use_sources] = 0
+
+    return xy, good, source_weights
 
 
 def _filter_sources(n_sources, bad, n_use, detect_freq_min):
@@ -181,7 +195,7 @@ class PointSourceDitherModel(LoggingMixin):
         """
 
         n, _, n_sources, _ = xy.shape
-        xy, good, use_sources = _sanitize_data(xy, self.d_frq)
+        xy, good, source_weights = _sanitize_data(xy, self.d_frq, source_weights)
 
         # Compute cluster centres
         # first estimate of relative positions comes from unshifted cluster centers
@@ -194,7 +208,7 @@ class PointSourceDitherModel(LoggingMixin):
 
         # compute positions of all sources with frame offsets measured
         results = self._fit(xy, None, source_weights)
-        feature_weights, xy, δxy[good], *centres[use_sources], out = results.values()
+        feature_weights, xy, δxy[good], *centres, out = results.values()
 
         if out.any():
             # fix outlier indices
@@ -303,20 +317,30 @@ class PointSourceDitherModel(LoggingMixin):
 
     def _compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
 
-        # weigted average across features to get (frame, source, axis) positions
-        xy = np.average(xy, 1, feature_weights)
+        # weigted average across features to get (frame, source, xy) positions
+        xy_avg = np.average(xy, 1, feature_weights)
 
         # xy position offset in each frame  (mean combined across sources)
-        delta_xy = self.compute_frame_offset(xy, centres, source_weights, axis=-2,
-                                             keepdims=True)
+        weights = source_weights
+        if weights.ndim == 2:
+            # source weights per frame given. Use mean source weights for frame deltas
+            weights = weights.mean(0)
+
+        # offsets
+        delta_xy = self.compute_frame_offset(xy_avg, centres, weights,
+                                             axis=-2, keepdims=True)
 
         # shifted cluster centers (all sources)
-        xy_shifted = xy - delta_xy
+        xy_shifted = xy_avg - delta_xy
 
         # Compute cluster centres of shifted point clusters
+        if source_weights.ndim == 2:
+            # Use the per-frame source weights for cluster centres
+            centres = np.average(xy_shifted, 0, source_weights.mean(1))
+
         centres = self.centre_func(xy_shifted, axis=0)
 
-        return centres, xy_shifted.std(0), xy, delta_xy
+        return centres, xy_shifted.std(0), xy_avg, delta_xy
 
     def compute_frame_offset(self, xy, centres, weights=None, **kws):
         """
