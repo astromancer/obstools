@@ -1543,30 +1543,13 @@ class SegmentedImage(SegmentationImage,     # base
         self.groups.update(groups)
         return self, new_labels
 
-    def inside_segment(self, coords, labels=None):
-        # filter COM positions that are outside of detection regions
-
-        labels = self.resolve_labels(labels)
-        assert len(coords) == len(labels)
-
-        count = 0
-        keep = np.zeros(len(coords), bool)
-
-        grid = np.indices(self.shape)
-        for i, (lbl, (sub, g)) in enumerate(
-                self.cutouts(self.data, grid, labels=labels, labelled=True)):
-            # print(i, lbl, )
-            keep[i] = inside_segment(coords[i], sub, g)
-            if not keep[i]:
-                count += 1
-                self.logger.debug(
-                    'Discarding {} of {} at coords ({:3.1f}, {:3.1f})',
-                    count, len(coords), *coords[i]
-                )
-
-        return keep
-
-    # def _dist_com_to_nearest(self):
+    def position_to_label(self, pos):
+        # check which segmented regions pos is in
+        pos = np.asanyarray(pos)
+        labels = np.zeros(pos.shape[:-1], int)
+        inframe = ((pos > 0) & (pos < self.shape)).all(-1)
+        labels[inframe] = self.data[tuple(np.array(pos[inframe], int).T)]
+        return labels
 
     # ------------------------------------------------------------------------ #
     @lazyproperty

@@ -109,19 +109,6 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     return seg_extended
 
 
-def inside_segment(coords, sub, grid):
-    b = []
-    ogrid = grid[0, :, 0], grid[1, 0, :]
-    for g, f in zip(ogrid, coords):
-        bi = np.digitize(f, g - 0.5)
-        b.append(bi)
-
-    mask = (sub == 0)
-    if np.equal(grid.shape[1:], b).any() or np.equal(0, b).any():
-        return False
-    return not mask[b[0], b[1]]
-
-
 def boundary_proximity(seg, points, labels=None):
     labels = seg.resolve_labels(labels)
     return np.array([np.sqrt(np.square(xy - seg.traced[l][0][0]).sum(1).min())

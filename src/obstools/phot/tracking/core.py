@@ -336,7 +336,6 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # if we have a model for the CCD pixel noise, use it to compute
         # feature uncertainties
         m_dtype = STRUCT_DTYPES['measurement'][:(bool(self.noise_model) + 1)]
-        # SNR weights for sources
         specs = {
             # raw centroid measuremenst
             'measurements':     ((n, nstats, nsources, 2), m_dtype, np.nan),
