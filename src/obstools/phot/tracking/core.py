@@ -547,12 +547,12 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         precision_reached.value = -1
         super().main(data, indices, njobs, progress_bar, backend)
 
-    def get_workload(self, indices, njobs, batch_size, burn_in, progress_bar):
+    def get_workload(self, indices, njobs, progress_bar):
 
         batch_size = self._compute.centres.step
         burn_in = self._compute.centres.start // batch_size
-        return super()._get_workload(indices, njobs, batch_size, burn_in,
-                                     progress_bar)
+        return super().get_workload(indices, njobs, batch_size, burn_in,
+                                    progress_bar)
 
     def loop(self, data, indices, update_centres=None, report=True):
 
@@ -645,9 +645,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         #
         image = np.ma.MaskedArray(data[i], mask)
         xy = self._measure(image, i, self.origin)
+
         dxy = self.compute_frame_offset(xy, weights=self.source_weights, axis=0)
 
         if np.ma.is_masked(dxy) or ~np.isfinite(dxy).all():
+            # self.logger.debug(f'{xy = }; {dxy = }')
             raise ValueError(f'Masked or nan in xy offsets, frame {i}.')
 
         #
@@ -659,6 +661,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # Update origin
         if (np.ma.abs(dxy) > 1).any():
             new = self.update_origin(dxy, i, image)
+
             self.logger.trace('UPDATED OFFSET {}: {} {}', i, dxy, new)
             return new
 
@@ -673,9 +676,14 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
                           'array index {}.', origin)
         seg, xy = self.measure_positions(image, origin=origin)
 
+        # xy may contain nans for sanitized values
+        good = ~np.isnan(xy).any(-1, keepdims=1)
+        weights = self.feature_weights * good
+        weights /= weights.sum(0)
+
         # TODO: use grid and add offset to grid when computing CoM.  Will be
         self.measurements['xy'][index] = xy
-        self.source_info['xy'][index] = xym = (xy * self.feature_weights).sum(0)
+        self.source_info['xy'][index] = xym = np.nansum(xy * weights, 0)
 
         # if self.noise_model:
         #     self.measure_std[index] = seg.com_std(
@@ -686,6 +694,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         if 'peak' in self.features:
             idx = (xy[self.features.index('peak')] - 0.5).astype(int)
             n = get_neighbours(image, idx)
+
             self.source_info['q'][index] = image[tuple(idx.astype(int).T)] / n.sum(1)
 
         # Flux with uncertainty
@@ -723,7 +732,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # NOTE: the segmented image returned here is in the image array
         # coordinates, so image stats below are in image array coords
         yx = self._measure_positions(np.ma.MaskedArray(image, mask), seg)
-        xy = self._sanitize_measurement(yx, image.shape)[..., ::-1]
+        xy = self._sanitize_measurement(yx, image.shape, seg)[..., ::-1]
 
         return seg, xy
 
@@ -796,10 +805,20 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         return yx
 
-    def _sanitize_measurement(self, yx, shape):
+    def _sanitize_measurement(self, yx, shape, seg):
+
         # check if any measurements out of frame
         ec = np.array(self.cutoffs.edge)
-        yx[((yx < ec) | (yx > shape - ec)).any(-1)] = np.nan
+        outframe = ((yx < ec) | (yx > shape - ec)).any(-1)
+
+        # check if measurement outside of segment. Happens with CoM and low snr
+        outseg = (seg.position_to_label(yx).T != self.use_labels)
+
+        for name, out in dict(frame=outframe, segment=outseg).items():
+            if out.any():
+                self.logger.debug('Sanitizing out of {} measurement: {}',
+                                  name, yx[out])
+            yx[out] = np.nan
 
         return yx
 
@@ -887,7 +906,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             self.frame_info['delta_xy'] = δ_xy  # - δ
             self.coords['sigma'] = σ_pos
 
-        self.logger.debug('Updated source positions: δ = {}.', δ_xy)
+        self.logger.trace('Updated source positions: δ = {}.', δ_xy)
 
         if report:
             self.report(xy, centres, σ_pos)

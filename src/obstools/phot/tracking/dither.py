@@ -245,10 +245,11 @@ class PointSourceDitherModel(LoggingMixin):
 
         # fit weights
         results = {}
+        nfeatures = xy.shape[1]
         res = minimize(self._objective_feature_weights,
-                       np.ones(xy.shape[1]) / xy.shape[1],
+                       np.ones(nfeatures) / nfeatures,
                        args=(xy, centres, source_weights, results),
-                       bounds=[(0, 1)] * 3,
+                       bounds=[(0, 1)] * nfeatures,
                        constraints={'type': 'eq', 'fun': sum1})
 
         assert res.success
@@ -352,8 +353,8 @@ class PointSourceDitherModel(LoggingMixin):
 
         for _ in range(5):
             #
-            centres, sigma_xy, xy, delta_xy = self.compute_centres_offsets(
-                xy, centres, feature_weights, source_weights)
+            centres, sigma_xy, xy_avg, delta_xy = self.compute_centres_offsets(
+                xym, centres, feature_weights, source_weights)
 
             # flag outliers
             # compute position residuals after recentre
@@ -374,13 +375,14 @@ class PointSourceDitherModel(LoggingMixin):
                     self.logger.info('No outliers detected for position measures.')
 
                 return dict(feature_weights=feature_weights,
-                            xy=xy,
+                            xy=xy_avg,
                             delta_xy=delta_xy.squeeze(),
                             centres=centres,
                             sigma_xy=sigma_xy,
                             outliers=outliers)
 
             # mask outliers
+            outliers |= out
             xym[out] = np.ma.masked
 
         raise ValueError('Emergency stop!')
