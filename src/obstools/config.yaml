@@ -1,0 +1,178 @@
+
+lc:
+    io:
+        # column names and descriptions
+        columns:
+            time: 
+                [bjd, day, Barycentric Julian Date]
+                # [sidt, h  Sidereal time in seconds since midnight]
+            counts: 
+                [Flux, counts, Total integrated counts for star (background subtracted)]
+            sigma:   
+                [σFlux, counts, Standard deviation uncertainty on total counts]
+            outlier: 
+                [oflag, '', Outlier flag]
+
+
+phot:
+    proc:
+        progress:
+            bar_format: >-
+                {{desc}: {percentage:3.0f}%{bar}{n_fmt}/{total_fmt}:|green}
+                {rate_fmt:|gold}
+                {elapsed:|cyan} eta {remaining:|cyan}
+            ascii: " ╸━"
+            unit:  " frames"
+
+
+    # source tracking
+    tracking:
+        # ------------------------------------------------------------------------ #
+        centroids:
+            # features used for tracking
+            com:                            1
+            # geometric_median:               1
+            peak:
+                upsample: 1     # note, changing this will siginificantly affect compute times
+                filter: lanczos
+        
+        # subtract background from image prior to computing features
+        pre_subtract:       True
+        # statistic used for background
+        bg:                 median
+        
+        # Required positional accuracy in pixels
+        precision:          0.5
+        
+        # Per-source weights for frame offset calculation. Use "snr" for
+        # signal-to-noise weighting.
+        weights:            snr 
+        
+
+        cutoffs:
+            edge:           0
+            snr:            3.
+            # Sources with signal-to-noise ratio less than this will not be 
+            # considered when solving for image dither
+            distance:       10
+            # For outlier detection: maximum distance allowed for point measurements
+            # from centre of distribution.
+            saturation:     95
+            # If we know the saturation value of the CCD chip, we discard pixels above
+            # this percentage of the saturation value
+
+        compute:
+            centres: [0 , 1000, 100 ]
+
+        filenames:
+            measurements:       centroids.dat       # (n, nstats, nsources, 2)
+            coords:             coords.dat          # (nsources, 2) structured ['xy', 'std']
+            frame_info:         frame-info.dat      # (n, 2)        structured
+            source_info:        source-info.dat     # (n, nsources) structured
+            feature_weights:    feature-weights.dat # (nstats, 1, 1)
+            source_weights:     source-weights.dat  # nsources  
+            
+
+        # ------------------------------------------------------------------------ #
+        table:
+            title:          Measured source coordinates
+            title_style: 
+                fg:         [B,  _,  w]
+                bg:         darkslategrey
+            col_head_style:
+                fg:         [B,  _,  black]
+                bg:         grey
+            col_head_align: ^ 
+            precision:      3
+            align:          r
+            row_nrs:        True
+            max_rows:       25
+
+        # ------------------------------------------------------------------------ #
+        video:
+            figsize:          [8, 8]
+            subplot_kws:
+                top:        1.0
+                bottom:     0.02
+                left:       0.125
+                right:      0.9
+            
+            legend:
+                show:           on
+                show_weights:   on
+            
+            features:
+                cmap:       rainbow
+                emboss:     1.5
+
+            clim_every:     0
+
+        # ------------------------------------------------------------------------ #
+        plots:
+            centroids:
+                com:              [r, +, "Centre of Mass"]
+                peak:             [m, ^, "Peak"]
+                # marginals:        [orange, '.', "Marginal Gaussian MLE"]
+                avg:              [k, x, "Weighted Centroid"] 
+                # NOTE: avg sould be last
+
+            labels:
+                offset: [6, 6]
+                color:  w
+                size:   10 # x-small
+                alpha:     1
+                # fontweight:bold
+
+            position:
+                figsize:            [12, 6.5]
+                legend:             False
+                show:               [avg, weights, caption]  #  nulls, pixel
+
+                density:
+                    cmap:               null
+                    tessellation:       hex
+                    min_count:          3
+
+                scatter:
+                    marker: x
+                    s:      5
+                    ls:     ''
+                    color:  null
+                    zorder: 1
+                    alpha:  0.35
+                
+                title:
+                    size:       13
+                    fontweight: bold
+                    pad:        10
+
+                caption:
+                    pos:    [0.075, 0.01]
+                    text:   >-
+                        $x_0 = {x:s}$;
+                        $y_0 = {y:s}$
+                    va:     bottom
+                    ha:     left
+                    bbox:       # these are matplotlib.patch.Patch properties
+                        boxstyle:    round
+                        facecolor:  lightgrey
+
+                cbar:
+                    # shrink: 0.9
+                    pad:     0.01
+                    label0:  Counts
+                    label1:  Counts (Recentred)
+
+                pixel: 
+                    lw:         0.75
+                    ls:         '--'
+                    fc:         none
+                    ec:         lime
+                    zorder:     100
+
+                precision:
+                    lw:         0.75
+                    ls:         '--'
+                    fc:         none
+                    ec:         darkgreen
+                    zorder:     100

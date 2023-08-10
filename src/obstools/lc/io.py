@@ -15,7 +15,11 @@ import more_itertools as mit
 
 # local
 from recipes.dicts import pformat
+from recipes.config import ConfigNode
 
+
+# ---------------------------------------------------------------------------- #
+CONFIG = ConfigNode.load_module(__file__)
 
 # write oflag data to file
 FORMATSPEC_SRE = re.compile(r'%(\d{0,2})\.?(\d{0,2})([if])')
@@ -25,13 +29,13 @@ MULTILINE_CURLY_BRACKET = textwrap.dedent(
     ⎫
     ⎬ x%i stars
     ⎭
-    ''')
-
-
+    '''
+)
 # U+23aa Sm CURLY BRACKET EXTENSION ⎪
 # U+23ab Sm RIGHT CURLY BRACKET UPPER HOOK ⎫
 # U+23ac Sm RIGHT CURLY BRACKET MIDDLE PIECE ⎬
 # U+23ad Sm RIGHT CURLY BRACKET LOWER HOOK ⎭
+# ---------------------------------------------------------------------------- #
 
 
 def parse_format_spec(fmt):
@@ -128,37 +132,25 @@ def hstack_string(a, b, whitespace=1):
 
 
 def get_column_info(nstars, has_oflag):
-    # COL_NAME_TIME = 't'
-    COL_NAME_TIME = 'bjd'
-    COL_NAME_COUNTS = 'Flux'
-    COL_NAME_SIGMA = 'σFlux'
-    COL_NAME_OFLAG = 'oflag'
 
-    # column descriptions
-    COL_DESCRIPT = odict({
-        # COL_NAME_TIME: 'Sidereal time in seconds since midnight',
-        COL_NAME_TIME: 'Barycentric Julian Date',
-        COL_NAME_COUNTS: 'Total integrated counts for star',
-        COL_NAME_SIGMA: 'Standard deviation uncertainty on total counts',
-        COL_NAME_OFLAG: 'Outlier flag'
-    })
+    _names, _units, descript = zip(*CONFIG.columns.values())
+    col_info = dict(zip(_names, descript))
 
-    names = [COL_NAME_TIME]
-    units = ['day']
+    names = [CONFIG.columns.time[0]]
+    units = [CONFIG.columns.time[1]]
     formats = ['%18.9f']
-    col_names_per_star = [COL_NAME_COUNTS, COL_NAME_SIGMA]
-    col_units_per_star = ['adu', 'adu']
+    col_names_per_star = [CONFIG.columns.counts[0], CONFIG.columns.sigma[0]]
+    col_units_per_star = [CONFIG.columns.counts[1], CONFIG.columns.sigma[1]]
     col_fmt_per_star = ['%12.3f', '%12.3f']
 
     # outlier detection parameters block
-    col_info = COL_DESCRIPT.copy()
     if has_oflag:
-        col_names_per_star.append(COL_NAME_OFLAG)
+        col_names_per_star.append(CONFIG.columns.outlier[0])
         col_units_per_star.append('')
         col_fmt_per_star.append('%i')
     else:
         # oflag_desc = ''
-        col_info.pop(COL_NAME_OFLAG)
+        col_info.pop(CONFIG.columns.outlier[0])
         col_info[''] = ' '  # place holder
 
     # column descriptions
@@ -231,8 +223,9 @@ def make_header(obj_name, shape_info, has_oflag, meta=None):
     # object names
     obj_names = ['# ', obj_name] + ['C%i' % i for i in range(nstars - 1)]
     w0, *ww = col_widths
-    w2 = map(sum, mit.grouper(2 + has_oflag, fill_value=ww))  # 2-column widths
-    col_fmt_names = ''.join('%%-%is' % w for w in [w0] + list(w2))
+    w2 = map(sum, mit.grouper(ww, 2 + has_oflag, fillvalue=ww))  # 2-column widths
+    
+    col_fmt_names = ''.join('%%-%is' % w for w in [w0, *w2])
     header += '\n' + col_fmt_names % tuple(obj_names)
 
     # column titles
