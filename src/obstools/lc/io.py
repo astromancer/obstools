@@ -1,7 +1,6 @@
 """
 Write light curves to plain text in utf-8
 """
-#TODO rename human ?
 
 # std
 import re
@@ -56,14 +55,15 @@ def underline_ascii(text):
 
 
 def header_info_block(name, info):
-    s = ''
-    if name:
-        s += underline_ascii(name)
-        s += '\n'
+    return '\n'.join(_header_info_block(name, info))
 
-    s += pformat(info, name='', rhs=get_name, brackets='', sep='')
-    s += '\n'
-    return s
+
+def _header_info_block(name, info):
+    if name:
+        yield underline_ascii(name)
+
+    yield pformat(info, name='', lhs=str,  rhs=get_name, brackets='', sep='')
+    yield ''
 
 
 def get_name(o):
@@ -113,10 +113,16 @@ def make_column_format(names, formats):
     Adjust the column format specifiers to accommodate width of the column names
     """
     widths, precisions, dtypes = check_column_widths(names, formats)
-    col_fmt_head = ''.join(map('%%-%is'.__mod__, widths))
+    col_fmt_head = ''.join(map('%%-%is'.__mod__, [widths[0] - 2, *widths[1:]]))
     col_fmt_data = ''.join(map('%%-%i.%s%s'.__mod__,
                                zip(widths, precisions, dtypes)))
     return widths, col_fmt_head, col_fmt_data
+
+
+def _make_name_format(col_widths, has_oflag):
+    w0, *ww = col_widths
+    w2 = map(sum, mit.grouper(ww, 2 + has_oflag, fillvalue=ww))  # 2-column widths
+    return ''.join('%%-%is' % w for w in [w0 - 2, *w2])
 
 
 def hstack_string(a, b, whitespace=1):
@@ -166,13 +172,37 @@ def get_column_info(nstars, has_oflag):
 
     # prepend comment str in such a way as to not screw up alignment with data
     units = [f'[{u}]' for u in units]
-    units[0] = f'# {units[0]}'
-    names[0] = f'# {names[0]}'
 
     return names, units, formats, col_info
 
 
-def make_header(obj_name, shape_info, has_oflag, meta=None):
+def make_header(title, obj_name, shape_info, has_oflag, meta=None):
+
+    if meta is None:
+        meta = {}
+    # todo: delimiter ??
+
+    # get column info
+    nstars = shape_info['nstars']
+    names, units, formats, col_info = get_column_info(nstars, has_oflag)
+    # adjust the formatters
+    col_widths, col_fmt_head, col_fmt_data = make_column_format(names, formats)
+
+    info = {
+        #  title, table shape info
+        f'# {title}': shape_info,
+        # column descriptions
+        'Columns': col_info,
+        **meta
+    }
+
+    # column headers block
+    lines = _make_header(info, obj_name, nstars, has_oflag,
+                         (names, units, col_widths, col_fmt_head))
+    return '\n'.join(lines).replace('\n', '\n# ')[:-2], col_fmt_data
+
+
+def _make_header(header_info, obj_name, nstars, has_oflag, col_spec):
     """
 
     Parameters
@@ -187,54 +217,27 @@ def make_header(obj_name, shape_info, has_oflag, meta=None):
     -------
 
     """
-
-    if meta is None:
-        meta = {}
-    # todo: delimiter ??
-
-    nstars = shape_info['nstars']
-
-    # get column info
-    names, units, formats, col_info = get_column_info(nstars, has_oflag)
-    # adjust the formatters
-    col_widths, col_fmt_head, col_fmt_data = make_column_format(names, formats)
-
-    # make header
-    title = f'Light Curve for {obj_name}'
-
-    # table shape info
-    lines = [f'# {header_info_block(title, shape_info)}']
-
-    # column descriptions
-    lines.append(header_info_block('Columns', col_info))
+    *col_names_units, col_widths, col_fmt_head = col_spec
 
     # header blocks for additional meta data
-    lines.extend(header_info_block(sec_name, info)
-                 for sec_name, info in meta.items())
+    yield from map(header_info_block, *zip(*header_info.items()))
 
     # header as commented string
     # prepend comment character
-    header = '\n'.join(lines).replace('\n', '\n# ')
+    # header = '\n'.join(lines).replace('\n', '\n# ')
 
-    # column headers block
-    hline = '\n# ' + '-' * sum(col_widths)
-    header += hline
+    yield (hline := '-' * (sum(col_widths) - 2))
 
     # object names
-    obj_names = ['# ', obj_name] + ['C%i' % i for i in range(nstars - 1)]
-    w0, *ww = col_widths
-    w2 = map(sum, mit.grouper(ww, 2 + has_oflag, fillvalue=ww))  # 2-column widths
-    
-    col_fmt_names = ''.join('%%-%is' % w for w in [w0, *w2])
-    header += '\n' + col_fmt_names % tuple(obj_names)
+    obj_names = ('', obj_name, *(f'C{i}' for i in range(nstars - 1)))
+    yield _make_name_format(col_widths, has_oflag) % obj_names
 
     # column titles
-    for o in (names, units):
-        header += '\n' + col_fmt_head % tuple(o)
-    header += hline
-    header += '\n'  # advance to new line
+    for o in col_names_units:
+        yield col_fmt_head % tuple(o)
 
-    return header, col_fmt_data
+    yield hline
+    yield ''  # advance to new line
 
 
 def make_table(t, flx, std, mask=None):
@@ -269,7 +272,9 @@ def make_table(t, flx, std, mask=None):
     return np.array(tbl).T
 
 
-def write(filename, t, counts, std, mask=None, meta=None, obj_name='<unknown>'):
+def write(filename, t, counts, std, mask=None,
+          title=CONFIG.title, meta=None, obj_name='<unknown>'):
+
     if meta is None:
         meta = {}
 
@@ -285,9 +290,14 @@ def write(filename, t, counts, std, mask=None, meta=None, obj_name='<unknown>'):
                       ncols=ncols,
                       nstars=nstars)
     has_oflag = mask is not None
-    header, col_fmt_data = make_header(obj_name, shape_info, has_oflag, meta)
+    header, col_fmt_data = make_header(title.format(obj_name),
+                                       obj_name, shape_info, has_oflag, meta)
 
     # write to file
     with Path(filename).open('w') as fp:
         fp.write(header)
         np.savetxt(fp, tbl, col_fmt_data)
+
+
+# alias
+write_text = write
