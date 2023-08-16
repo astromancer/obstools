@@ -1116,18 +1116,16 @@ class SegmentedImage(SegmentationImage,     # base
     def geometric_median(self, image, labels=None, mask=None, njobs='_ignored'):
 
         image = np.asanyarray(image).squeeze()
-
         assert image.ndim == 2, 'Only 2d images suported for now.'
 
-        data = np.array([*np.indices(image.shape)[::-1], image])
+        data = np.array([*np.indices(image.shape), image])  # yxz (3, r, c)
         return np.array([
-            geometric_median(xyz.T)
-            for xyz in self.cutouts(data,
-                                    labels=labels, compress=True)
+            geometric_median(yxz.T)  # (3, m)
+            for yxz in self.cutouts(data, labels=labels, compress=True)
         ])
 
     # alias
-    gmed = geometric_median
+    gmed = g_med = geometric_median
 
     def com_std(self, coms, image, std, labels=None):
         """
@@ -1229,7 +1227,7 @@ class SegmentedImage(SegmentationImage,     # base
 
         return com
 
-    def peak(self, image, labels=None, upsample=1, filter='lanczos', pixel_centre=0.5,
+    def peak(self, image, labels=None, upsample=1, filter='lanczos', pixel_centre=0,
              njobs='_ignored'):
 
         upsample = int(upsample)
