@@ -21,6 +21,7 @@ from scipy.optimize import minimize
 # local
 from recipes import pprint
 from recipes.io import load_memmap
+from recipes.config import ConfigNode
 from recipes.dicts import AttrReadItem
 
 # relative
@@ -29,7 +30,6 @@ from ...image.registration import ImageRegister
 from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
 from ..proc import FrameProcessor
-from ..config import CONFIG
 from .display import SourceTrackerPlots
 from .dither import PointSourceDitherModel
 
@@ -45,7 +45,10 @@ from .dither import PointSourceDitherModel
 #  super resolution images
 #  lucky imaging ?
 
-CONFIG = CONFIG.tracking
+# ---------------------------------------------------------------------------- #
+# config
+CONFIG = ConfigNode.load_module(__file__)
+
 
 # ---------------------------------------------------------------------------- #
 _s0 = slice(None)

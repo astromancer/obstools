@@ -1,6 +1,8 @@
 
 lc:
     io:
+        title:  Light Curve for {}
+
         # column names and descriptions
         columns:
             time: 

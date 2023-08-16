@@ -2,14 +2,23 @@
 # std
 from pathlib import Path
 
-# local
-from recipes.caching import Reject, hashers
-from recipes.dicts import AttrReadItem
-
+# third-party
 from loguru import logger
+
+# local
+from recipes.config import ConfigNode
+from recipes.dicts import AttrReadItem
+from recipes.caching import Reject, hashers
+
+
+# ---------------------------------------------------------------------------- #
+# config
+CONFIG = ConfigNode.load_module(__file__)
 
 #
 logger.disable('obstools')
+
+# ---------------------------------------------------------------------------- #
 
 
 def _cal_image_hasher(image):

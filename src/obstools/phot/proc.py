@@ -17,9 +17,9 @@ from recipes import api
 from recipes.string import pluralize
 from recipes.contexts import ContextStack
 from recipes.parallel.joblib import initialized
+from recipes.config import ConfigNode
 
 # relative
-from .config import CONFIG
 from .logging import TqdmLogAdapter, TqdmStreamAdapter
 from recipes.logging import LoggingMixin
 
@@ -32,7 +32,9 @@ from recipes.logging import LoggingMixin
 
 
 # ---------------------------------------------------------------------------- #
-CONFIG = CONFIG.proc
+CONFIG = ConfigNode.load_module(__file__)
+
+
 
 # stylize progressbar
 prg = CONFIG.progress

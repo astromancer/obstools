@@ -14,13 +14,11 @@ from recipes import pprint
 from recipes.logging import LoggingMixin
 from motley.table import Table
 from motley.formatters import Conditional, Decimal, Numeric
-
-# relative
-from ..config import CONFIG
+from recipes.config import ConfigNode
 
 
 # ---------------------------------------------------------------------------- #
-CONFIG = CONFIG.tracking
+CONFIG = ConfigNode.load_module(__file__)
 
 
 # ---------------------------------------------------------------------------- #
