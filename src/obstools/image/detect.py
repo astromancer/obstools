@@ -261,7 +261,8 @@ class SigmaThreshold(DetectionBase):
         # if mask.sum() == mask.size:
 
         # detection
-        threshold = detect_threshold(image, snr, background, mask=mask)
+        threshold = detect_threshold(image, snr, background=background, mask=mask)
+
         if not np.any(mask):
             mask = None  # annoying photutils #HACK
 
