@@ -6,14 +6,16 @@ Write light curves to plain text in utf-8
 import re
 import textwrap
 from pathlib import Path
-from collections import OrderedDict as odict
 
 # third-party
 import numpy as np
 import more_itertools as mit
+from loguru import logger
 
 # local
+from recipes import op
 from recipes.dicts import pformat
+from recipes.io import read_lines
 from recipes.config import ConfigNode
 
 
@@ -269,17 +271,45 @@ def make_table(t, flx, std, mask=None):
     for columns in zip(*components):
         tbl.extend(columns)
 
+    # convert to array
     return np.array(tbl).T
 
 
 def write(filename, t, counts, std, mask=None,
           title=CONFIG.title, meta=None, obj_name='<unknown>'):
+    """
+    Write to text file
+
+    Parameters
+    ----------
+    filename : str, Path
+        Destination
+    t : array
+        Time stamps.
+    counts : array 
+        Source counts.
+    std : array
+        Uncertainty 
+    mask : array, optional
+        Masked values boolean array, by default None.
+    title : str, optional
+        Title for header, by default CONFIG.title
+    meta : dict, optional
+        Meta data for header, by default None
+    obj_name : str, optional
+        Name of the target, by default '<unknown>'
+
+    """
 
     if meta is None:
         meta = {}
 
-    if np.ma.is_masked(counts):
-        mask = counts.mask
+    if np.ma.isMA(counts) or np.ma.isMA(std):
+        mask = np.ma.getmaskarray(counts) | np.ma.getmaskarray(std)
+
+    logger.info('Saving light curve data ({} rows, {} masked points{}) to file: {}',
+                len(t), filename, (0 if mask is None else mask.sum()),
+                ', including meta data')
 
     # stack data
     tbl = make_table(t, counts, std, mask)
@@ -301,3 +331,25 @@ def write(filename, t, counts, std, mask=None,
 
 # alias
 write_text = write
+
+
+def read(filename):
+
+    header = read_lines(filename, 25)
+    data = np.loadtxt(filename)
+
+    oflag = op.index(header, '# oflag', test=str.startswith, default=None)
+    oflag = int(oflag is not None)
+    step = 2 + oflag
+
+    t = data[:, 0]
+    flux, sigma, *oflag = (data[:, i::step] for i in range(1, 3 + oflag))
+
+    if oflag:
+        flux = np.ma.MaskedArray(flux, oflag[0])
+
+    return t, flux.T, sigma.T
+
+
+# alias
+read_text = read
