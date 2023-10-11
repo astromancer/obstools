@@ -15,7 +15,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 
 # local
-from scrawl.image import ImageDisplay
+from scrawl.image import CanvasBlitHelper, ImageDisplay
 from pyxides import ListOf
 from pyxides.getitem import IndexingMixin
 from pyxides.vectorize import AttrVector, Vectorized
@@ -23,8 +23,8 @@ from recipes.oo import SelfAware
 from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
 from recipes.oo.property import cached_property
-from recipes.dicts import AttrDict as ArtistContainer
 from recipes.utils import duplicate_if_scalar, not_null
+from recipes.dicts import isdict, AttrDict as ArtistContainer
 
 # relative
 from .detect import SourceDetectionMixin
@@ -306,7 +306,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
     __slots__ = ('seg', 'xy', 'counts')
 
     _repr_style = dict(TransformedImage._repr_style,
-                       maybe=())
+                       maybe=['angle'])
 
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
@@ -569,15 +569,15 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
 
     # properties: vectorized attribute getters on `SkyImage`
     images = AttrVector('data')
-    shapes = AttrVector('data.shape', convert=np.array)
+    shapes = AttrVector('data.shape', output=np.array)
     detections = AttrVector('seg')
     coms = centroids = AttrVector('xy')
-    fovs = AttrVector('fov', convert=np.array)
-    scales = AttrVector('scale', convert=np.array)
-    params = AttrVector('params', convert=np.array)
-    origins = AttrVector('origin', convert=np.array)
-    angles = AttrVector('angles', convert=np.array)
-    corners = AttrVector('corners', convert=np.array)
+    fovs = AttrVector('fov', output=np.array)
+    scales = AttrVector('scale', output=np.array)
+    params = AttrVector('params', output=np.array)
+    origins = AttrVector('origin', output=np.array)
+    angles = AttrVector('angles', output=np.array)
+    corners = AttrVector('corners', output=np.array)
 
     # @property
     # def params(self):

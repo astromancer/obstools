@@ -28,7 +28,8 @@ from pyxides.getitem import IndexingMixin
 from pyxides.grouping import AttrGrouper, Groups
 from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
-from recipes import bash, io, op
+from recipes import io, op
+from recipes.shell import bash
 from recipes.dicts import groupby
 from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin

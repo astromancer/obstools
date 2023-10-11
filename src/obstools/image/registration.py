@@ -28,8 +28,9 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 from loguru import logger
-from mpl_multitab import MplTabs
+from mpl_multitab import MplMultiTab
 from joblib import Parallel, delayed
+from astropy import wcs
 from astropy.utils import lazyproperty
 from scipy.cluster.vq import kmeans
 from scipy.spatial.distance import cdist
@@ -58,10 +59,7 @@ from .image import ImageContainer, SkyImage
 
 
 # ---------------------------------------------------------------------------- #
-TABLE_STYLE = dict(txt=('bold', 'underline'), bg='g')
-
-# ---------------------------------------------------------------------------- #
-# defaults
+#  defaults
 HOP = True
 REFINE = True
 SAMPLE_STAT = 'median'
@@ -69,15 +67,13 @@ DEPTH = 5
 PLOT = False
 
 
-# ---------------------------------------------------------------------------- #
 
+# ---------------------------------------------------------------------------- #
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
     """Recenter and scale"""
     image = image - centre(image)
-    if scale:
-        return image / scale(image)
-    return image
+    return image / scale(image) if scale else image
 
 
 def objective_pix(target, values, xy, bins, p):
@@ -172,6 +168,23 @@ def id_sources_kmeans(images, segmentations):
     return cx, centroids, np.asarray(shifts)
 
 
+def resolve_colours(colours, cmap, n):
+    if colours is not None:
+        return colours
+
+    if cmap is None:
+        from photutils.utils.colormaps import make_random_cmap
+        cmap = make_random_cmap(n)
+        # this cmap has good distinction between colours for clusters nearby
+        # each other
+    else:
+        from matplotlib.cm import get_cmap
+        cmap = get_cmap(cmap)
+
+    return cmap(np.linspace(0, 1, n))
+    # colours = labels[core_sample_indices_]
+
+
 def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
                   **scatter_kws):
     """
@@ -193,18 +206,7 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
     n = labels[core_sample_indices_].max() + 1
 
     # plot
-    if colours is None:
-        if cmap is None:
-            from photutils.utils.colormaps import make_random_cmap
-            cmap = make_random_cmap(n)
-            # this cmap has good distinction between colours for clusters nearby
-            # each other
-        else:
-            from matplotlib.cm import get_cmap
-            cmap = get_cmap(cmap)
-
-        colours = cmap(np.linspace(0, 1, n))[labels[core_sample_indices_]]
-        # colours = labels[core_sample_indices_]
+    colours = resolve_colours(colours, cmap, n)[labels[core_sample_indices_]]
 
     # fig, ax = plt.subplots(figsize=im.figure.get_size_inches())
     dflt = dict(s=25, marker='*')
@@ -216,10 +218,11 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
         scatter_kws.setdefault('facecolors', colours)
         scatter_kws.setdefault('edgecolors', 'face')
 
-    art = ax.scatter(*features[core_sample_indices_].T,
-                     **{**dflt, **scatter_kws})
-
-    ax.plot(*features[~ok].T, 'rx', alpha=0.5)
+    #
+    points = ax.scatter(*features[core_sample_indices_].T,
+                        **{**dflt, **scatter_kws})
+    #
+    outliers, = ax.plot(*features[~ok].T, 'rx', alpha=0.5)
 
     if nrs:
         from scrawl.utils import emboss
@@ -239,7 +242,7 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
             emboss(nr, 1.5, color='0.2')
 
     ax.grid()
-    return art
+    return points  # matplotlib.collections.PathCollection
 
 
 # def _sanitize_positions(xy):
@@ -259,25 +262,8 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
 #     return np.ma.MaskedArray(xy, nans)
 
 # estimate_source_locations / estimate_source_positions / measure_position_dither
-def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
-    """
-    Measure the relative positions of detected sources from the individual
-    location measurements in xy. Use the locations of the most-often
-    detected individual objects.
+def _sanitize_data(xy, detect_freq_min):
 
-    Parameters
-    ----------
-    xy:     array, shape (n_points, n_sources, 2)
-    d_cut:  float
-        distance cutoff 
-    detect_freq_min: float
-        Required detection frequency of individual sources in order for
-        them to be used
-
-    Returns
-    -------
-    xy, centres, σxy, δxy, outlier_indices
-    """
     assert 0 < detect_freq_min < 1
 
     n, n_sources, _ = xy.shape
@@ -285,6 +271,13 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
 
     # mask nans.  masked
     xy = np.ma.MaskedArray(xy, nans)
+
+    bad = (nans | np.ma.getmask(xy)).any(-1)
+    ignore_frames = nans.all((1, 2))
+    n_ignore = ignore_frames.sum()
+    n_use = n - n_ignore
+    if n_ignore == n:
+        raise ValueError('All points are masked!')
 
     # Due to varying image quality and or camera/telescope drift,
     # some  sources (those near edges of the frame, or variable ones) may
@@ -298,16 +291,11 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     # of the relative positions of sources when the camera offsets are
     # taken into account.
 
-    bad = (nans | np.ma.getmask(xy)).any(-1)
-    ignore_frames = nans.all((1, 2))
-    n_ignore = ignore_frames.sum()
-    n_use = n - n_ignore
-    if n_ignore == n:
-        raise ValueError('All points are masked!')
-
     if n_ignore:
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
                     'measurements.', n_ignore, n, n_ignore / n)
+
+    # if detect_freq_min:
 
     n_detections_per_source = np.zeros(n_sources, int)
     w = np.where(~bad)[1]
@@ -329,24 +317,54 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
                     'frequency for frame shift measurement.',
                     n_sources - len(i_use), n_sources, detect_freq_min)
 
-    # NOTE: we actually want to know where the cluster centres would be
-    #  without a specific point to measure delta better
+    return xy, ~ignore_frames, use_sources, nans
 
-    # first estimate of relative positions comes from unshifted cluster centers
-    # Compute cluster centres as geometric median
-    good = ~ignore_frames
+
+def _select_data(xy, good, use_sources, nans):
     xyc = xy[good][:, use_sources]
     nansc = nans[good][:, use_sources]
     if nansc.any():
         # prevent warning emit in _measure_positions_offsets
         xyc[nansc] = 0
         xyc[nansc] = np.ma.masked
+    return xyc
+
+
+def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
+                            report=True):
+    """
+    Measure the relative positions of detected sources from the individual
+    location measurements in xy. Use the locations of the most-often
+    detected individual objects.
+
+    Parameters
+    ----------
+    xy:     array, shape (n_points, n_sources, 2)
+    d_cut:  float
+        distance cutoff 
+    detect_freq_min: float
+        Required detection frequency of individual sources in order for
+        them to be used
+
+    Returns
+    -------
+    xy, centres, σxy, δxy, outlier_indices
+    """
+
+    xy, good, use_sources, nans = _sanitize_data(xy, detect_freq_min)
+    n, n_sources, _ = xy.shape
+
+    # NOTE: we actually want to know where the cluster centres would be
+    #  without a specific point to measure delta better
+
+    # first estimate of relative positions comes from unshifted cluster centers
+    # Compute cluster centres as geometric median
+    xyc = _select_data(xy, good, use_sources, nans)
 
     # delay centre compute for fainter sources until after re-centering
-    # np.empty((n_sources, 2))  # ma.masked_all
-    centres = δxy = np.ma.masked_all((n_sources, 2))
-    for i, j in enumerate(i_use):
-        centres[j] = geometric_median(xyc[:, i])
+    centres = np.ma.masked_all((n_sources, 2))
+    for i, j in enumerate(np.where(use_sources)[0]):
+        centres[j] = np.mean(xyc[:, i])
 
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
@@ -361,7 +379,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     for i in np.where(~use_sources)[0]:
         # mask for bad frames in δxy will propagate here
         recentred = xy[:, i].squeeze() - δxy
-        centres[i] = geometric_median(recentred)
+        centres[i] = centre(recentred)
         σxy[i] = recentred.std()
 
     # fix outlier indices
@@ -369,7 +387,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, report=True):
     idxg, = np.where(good)
     idxu, = np.where(use_sources)
     outlier_indices = (idxg[idxf], idxu[idxs])
-    xy[outlier_indices] = np.ma.masked
+    # xy[outlier_indices] = np.ma.masked
 
     # pprint!
     if report:
@@ -475,13 +493,13 @@ def group_features(labels, *features):
     if -1 in unique_labels:
         unique_labels.remove(-1)
     zero = unique_labels[0]
-    n_clusters = len(unique_labels)
+    n_classes = len(unique_labels)
     n_samples = len(features[0])
 
     # init arrays, one per feature
     grouped = []
     for data in next(zip(*features)):
-        shape = (n_samples, n_clusters)
+        shape = (n_samples, n_classes)
         if data.ndim > 1:
             shape += (data.shape[-1], )
 
@@ -506,7 +524,6 @@ def group_features(labels, *features):
 def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
                         detect_frac_min=None, count_thresh=None, logger=logger):
     # report on relative position measurement
-    import operator as op
     import math
 
     from recipes import pprint
@@ -561,7 +578,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
                                                   precision=0))}
 
     # get array with number ± std representations
-    columns = [pprint.uarray(centres, σ_xy, 2)[:, ::-1], points_per_source]
+    columns = [pprint.uarray(centres, σ_xy, 2), points_per_source]
     # FIXME: don't print uncertainties if less than 6 measurement points
 
     # x, y = pprint.uarray(centres, σ_xy, 2)
@@ -595,18 +612,11 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     #
     tbl = Table.from_columns(*columns,
-                             title='Measured source locations',
-                             title_style=TABLE_STYLE,
                              units=['pixels', 'pixels', ''],
                              col_headers=col_headers,
-                             col_head_style=TABLE_STYLE,
-                             col_head_align='^',
-                             precision=3,
-                             align='r',
-                             row_nrs=True,
                              totals=[-1],
                              formatters=formatters,
-                             max_rows=25)
+                             **TABLE_STYLE)
 
     # fix formatting with percentage in total.
     # TODO Still need to think of a cleaner solution for this
@@ -738,6 +748,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # init container
         ImageContainer.__init__(self, images, fovs)
 
+        if params:
+            self.params = params
+
         # NOTE passing a reference index `primary` is only meaningful if the
         #  class is initialized with a set of images
         self._idx = 0
@@ -769,6 +782,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # state variable placeholders
         self.labels = None
         self._colour_sequence_cache = ()
+
+        # WCS
+        self.wcss = []
 
     def __repr__(self):
         return (f'{super().__repr__()}; '
@@ -1602,9 +1618,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         axes[1].hist(y, pixels, bins=250)
 
     # @profile(report='bars')
-    def _stack_pixels(self, images=None, image_func=echo0):
+    def _stack_pixels(self, images=..., image_func=echo0):
 
-        if images is None:
+        if (images is ...) or (images is None):
             images = np.arange(len(self))
 
         # polymorphic `images`: arrays or ints
@@ -1627,14 +1643,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
                 return image_func(images[i], *args, **kws)
 
         sizes = self.shapes[indices].prod(1)
-        n = sizes.sum()
         idx = np.cumsum(sizes)
-        sec = map(slice, [0] + list(idx), idx)
+        sec = map(slice, [0, *idx], idx)
 
+        n = sizes.sum()
         grid = np.empty((n, 2))
         pixels = np.empty(n)
         for i, s in zip(indices, sec):
-            grid[s] = self[i].grid(self.params[i], self.rscale[i])
+            grid[s] = self[i].grid
             pixels[s] = image_func(i).ravel()
 
         return grid, pixels
@@ -1658,9 +1674,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return grid, bs
 
     def drizzle(self, path, outwcs, pixfrac, ignore=()):
-        
+
         from drizzle.drizzle import Drizzle
-        
+
         if len(self.wcss) != len(self) - len(ignore):
             raise ValueError('First do `reg.build_wcs(run)`.')
 
@@ -1691,7 +1707,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         Returns
         -------
-        obstools.image.segmentation.SegmentedImage
+        obstools.image.segments.SegmentedImage
             The global segmented image
         """
 
@@ -1768,8 +1784,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
                show_ref_image=True, number_sources=False,
                **kws):
 
+        from astropy.wcs import WCS, FITSFixedWarning
+
         mos = MosaicPlotter.from_register(self, axes, scale, show_ref_image)
-        mos.mosaic(names, **kws)
+        with warnings.catch_warnings():
+            # Ignore a warning on using DATE-OBS in place of MJD-OBS
+            warnings.filterwarnings('ignore', message="'datfix' made the change",
+                                    category=FITSFixedWarning)
+            mos.mosaic(names, **kws)
 
         if number_sources:
             off = -4 * self.scales.min(0)
@@ -1780,14 +1802,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         return mos
 
-    def plot_detections(self, coords='pixel', **kws):
-        gui = ImageRegistrationGUI(self, coords=coords,
+    def gui(self, names=(), coords='pixel', **kws):
+        gui = ImageRegistrationGUI(self, names, coords=coords,
                                    **{**dict(regions=True, labels=True), **kws})
 
         gui.show()
         return gui
 
-    def plot_clusters(self, centres='k+', frames=False, nrs=False,
+    def plot_clusters(self, ax=None, centres='k+', frames=False, nrs=False,
                       show_bandwidth=True, trim=False, **kws):
         """
         Plot the identified sources (clusters) in a single frame.
@@ -1821,20 +1843,25 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # bandwidth size indicator.
         if show_bandwidth:
-            # todo: get this to remain anchored lower left but scale with zoom..
-            xy = self.xy.min(0)  # - bw * 0.6
-            cir = Circle(xy, self.clustering.bandwidth, ec='0.2', alpha=0.75)
-            ax.add_artist(cir)
-
-            fig.subplots_adjust(top=0.82)
-            proxy = Line2D([], [], marker='o', ls='', ms=10, color=cir.get_fc(), mec='0.2',
-                           label=f'clustering bandwidth = {self.clustering.bandwidth:.3f}')
-            ax.legend(loc='lower left', bbox_to_anchor=(0, 1.01), handles=[art, proxy])
+            circle, proxy = self._show_cluster_bandwidth(ax)
 
         # TODO: plot position error ellipses
+        ax.legend(loc='lower left', bbox_to_anchor=(0, 1.01), handles=[art, proxy])
         ax.set_aspect('equal')
         fig.tight_layout()
         return art
+
+    def _show_cluster_bandwidth(self, ax):
+        # todo: get this to remain anchored lower left but scale with zoom..
+        xy = self.xy.min(0)  # - bw * 0.6
+        cir = Circle(xy, self.clustering.bandwidth, ec='0.2', alpha=0.75)
+        ax.add_artist(cir)
+
+        ax.figure.subplots_adjust(top=0.82)
+        proxy = Line2D([], [], marker='o', ls='', ms=10, color=cir.get_fc(), mec='0.2',
+                       label=f'clustering bandwidth = {self.clustering.bandwidth:.3f}')
+
+        return cir, proxy
 
 
 class ImageRegistrationGUI(MplMultiTab):
@@ -1918,8 +1945,7 @@ class ImageRegisterDSS(ImageRegister):
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
                 break
             except STScIServerError:
-                logger.warning('Failed to retrieve image from server: '
-                               '%r', srv)
+                logger.warning('Failed to retrieve image from server: {!r}', srv)
 
         # DSS data array
         data = self.hdu[0].data.astype(float)
@@ -1947,6 +1973,7 @@ class ImageRegisterDSS(ImageRegister):
     def remap_labels(self, target=None, flux_sort=False, trim=False):
         if target is None:
             target, = self.clustering.predict([self.target_coords_pixels])
+            target = self.labels[self.clustering.labels_ == target][0]
 
         return super().remap_labels(target, flux_sort)
 

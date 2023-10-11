@@ -18,14 +18,14 @@ from matplotlib.transforms import AffineDeltaTransform
 
 # local
 from motley.utils import vbrace
-from recipes import pprint, dicts
+from recipes import dicts, pprint
 from recipes.logging import LoggingMixin
 from scrawl import density
 from scrawl.video import VideoFeatureDisplay
 
 # relative
+from ... import CONFIG
 from ...image import SkyImage
-from ..config import CONFIG
 
 
 # ---------------------------------------------------------------------------- #
@@ -33,9 +33,11 @@ __all__ = ['SourceTrackerPlots', 'TrackerVideo']
 
 
 # ---------------------------------------------------------------------------- #
+# config
+
 with ctx.suppress(AttributeError):  # autoreload hack
-    VIDCONFIG = CONFIG.tracking.video
-    CONFIG = CONFIG.tracking.plots
+    VIDCONFIG = CONFIG.phot.tracking.video
+    CONFIG = CONFIG.phot.tracking.plots
 
 CENTROIDS = CONFIG.centroids
 LABEL_CONFIG = CONFIG.labels
@@ -450,7 +452,6 @@ class SourceTrackerPlots(LoggingMixin):
 
 class TrackerVideo(VideoFeatureDisplay):
 
-
     def __init__(self, tracker, data, marker_cycle=(), marker_style=(),
                  update=True, legend=VIDCONFIG.legend.show, **kws):
 
@@ -465,7 +466,7 @@ class TrackerVideo(VideoFeatureDisplay):
 
         # kws passed to ImageDisplay
         fig_kws, _ = dicts.split(VIDCONFIG.copy(), 'features', 'legend')
-        
+
         # init video + feature marks
         _n, *shape = tracker.measurements.shape
         shape[0] += 1
