@@ -3,7 +3,7 @@ lc:
     io:
         title:  Light Curve for {}
 
-        # column names and descriptions
+        # columns [name, unit, description]
         columns:
             time: 
                 [bjd, day, Barycentric Julian Date]
@@ -15,6 +15,7 @@ lc:
             outlier: 
                 [oflag, '', Outlier flag]
 
+        precision:  5
 
 phot:
     proc:

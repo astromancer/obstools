@@ -139,7 +139,7 @@ def hstack_string(a, b, whitespace=1):
     return ''.join('{: <{}s}{}\n'.format(aa, w, bb) for aa, bb in zip(al, bl))
 
 
-def get_column_info(nstars, has_oflag):
+def get_column_info(nstars, has_oflag, precision=CONFIG.precision):
 
     _names, _units, descript = zip(*CONFIG.columns.values())
     col_info = dict(zip(_names, descript))
@@ -149,7 +149,7 @@ def get_column_info(nstars, has_oflag):
     formats = ['%18.9f']
     col_names_per_star = [CONFIG.columns.counts[0], CONFIG.columns.sigma[0]]
     col_units_per_star = [CONFIG.columns.counts[1], CONFIG.columns.sigma[1]]
-    col_fmt_per_star = ['%12.3f', '%12.3f']
+    col_fmt_per_star = [f'%12.{precision}f'] * 2
 
     # outlier detection parameters block
     if has_oflag:
@@ -178,7 +178,7 @@ def get_column_info(nstars, has_oflag):
     return names, units, formats, col_info
 
 
-def make_header(title, obj_name, shape_info, has_oflag, meta=None):
+def make_header(title, obj_name, shape_info, has_oflag, meta=None, precision=CONFIG.precision):
 
     if meta is None:
         meta = {}
@@ -186,7 +186,7 @@ def make_header(title, obj_name, shape_info, has_oflag, meta=None):
 
     # get column info
     nstars = shape_info['nstars']
-    names, units, formats, col_info = get_column_info(nstars, has_oflag)
+    names, units, formats, col_info = get_column_info(nstars, has_oflag, precision)
     # adjust the formatters
     col_widths, col_fmt_head, col_fmt_data = make_column_format(names, formats)
 
@@ -276,7 +276,8 @@ def make_table(t, flx, std, mask=None):
 
 
 def write(filename, t, counts, std, mask=None,
-          title=CONFIG.title, meta=None, obj_name='<unknown>'):
+          title=CONFIG.title, meta=None, obj_name='<unknown>',
+          precision=CONFIG.precision):
     """
     Write to text file
 
@@ -307,9 +308,9 @@ def write(filename, t, counts, std, mask=None,
     if np.ma.isMA(counts) or np.ma.isMA(std):
         mask = np.ma.getmaskarray(counts) | np.ma.getmaskarray(std)
 
-    logger.info('Saving light curve data ({} rows, {} masked points{}) to file: {}',
-                len(t), filename, (0 if mask is None else mask.sum()),
-                ', including meta data')
+    logger.info('Saving light curve data ({} rows, {} masked points{}) to file:'
+                ' {}', len(t), (0 if mask is None else mask.sum()),
+                ', including meta data' if meta else '', filename)
 
     # stack data
     tbl = make_table(t, counts, std, mask)
