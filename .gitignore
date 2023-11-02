@@ -9,7 +9,7 @@ src/obstools/modelling/psf/plotting.py
 src/obstools/ultraspec.py
 src/obstools/phot/_old_gui.py
 src/obstools/image/segmentation
-tests/image/_test_*
+tests/**/_test_*
 
 
 #########################################
