@@ -350,6 +350,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
         # use `hdu.detection` which caches the detections on the hdu filename
         seg = hdu.detect(sample_stat, depth, interval, report, **kws)
+        del seg.slices # FIXME: since this may be incorrect in the cache!!? 
 
         # pull the sample image (computed in the line above) from the cache
         image = hdu.get_sample_image(sample_stat, depth, interval)
@@ -400,20 +401,18 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         self.counts = None  # : np.ndarray: pixel sums for segmentation
 
     def __getstate__(self):
-        return {**super().__getstate__(),
-                'oriented': self.oriented,
-                'calibrated': self.calibrated}
-    
+        state = super().__getstate__()
+        for name in ('oriented', 'calibrated'):
+            state[name] = getattr(self, name, None)
+        return state
+
     def __setstate__(self, state):
         super().__setstate__(state)
-        # handle copying descriptor states (not handles by superclass since not slots)
+        # handle copying descriptor states
+        # (not handled by superclass since they are not slots)
         for name in ('oriented', 'calibrated'):
-            setattr(self, name, state[name])
-        
-        # self.oriented = state['oriented']
-        # cal = state['calibrated']
-        # self.set_calibrators(cal.flat, cal.dark, cal.gain)
-        
+            if val := state.get(name, None):
+                setattr(self, name, val)
 
     # @lazyproperty
     # def xy(self):
