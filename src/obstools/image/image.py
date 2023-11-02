@@ -164,17 +164,13 @@ class Image(SelfAware, SlotHelper):  # AliasManager
     # alias
     plot = show
 
-    # @lazyproperty
-    # def grid(self):
-    #     return np.indices(self.data.shape)
-
-    # def grid(self, p, scale):
-    #     """transformed pixel location grid cartesian xy coordinates"""
-    #     g = np.indices(self.data.shape).reshape(2, -1).T[:, ::-1]
-    #     return transforms.affine(g, p, scale)
+    @cached_property
+    def grid(self):
+        return np.indices(self.data.shape)
 
 
 class TransformedImage(Image):
+    # TODO: array_to_pixel, pixel_to_world, array_to_axes etc.
 
     # ------------------------------------------------------------------------ #
     __slots__ = ('_origin', '_angle', '_scale')
@@ -253,6 +249,11 @@ class TransformedImage(Image):
     def transform(self):
         return Affine2D().scale(*self.scale).rotate(self.angle).translate(*self.origin)
 
+    @cached_property
+    def grid(self):
+        """transformed pixel location grid cartesian xy coordinates"""
+        grid = Image.grid.fget(self)
+        return self.transform(grid.reshape(2, -1).T[:, ::-1])
     # ------------------------------------------------------------------------ #
     # def contains(self, xy):
     #     # tr = Affine2D().scale(*( / reg.scale)).rotate(self.angle).translate(*self.origin)
