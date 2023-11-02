@@ -1876,11 +1876,11 @@ class ImageRegistrationGUI(MplMultiTab):
         for _, name in itt.zip_longest(reg, names):
             fig = self.add_tab('Images', name)
 
-        self['Images'].add_callback(self._plot_image)
+        self['Images'].add_task(self._plot_image)
 
         #
         self.add_tab('Clusters')
-        self['Clusters'].add_callback(self._plot_clusters)
+        self['Clusters'].add_task(self._plot_clusters)
 
     def _plot_clusters(self, fig, indices):
         ax = self['Clusters'].figure.axes
