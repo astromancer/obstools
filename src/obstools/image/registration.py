@@ -24,6 +24,7 @@ from collections import abc
 import numpy as np
 import aplpy as apl
 import matplotlib.pyplot as plt
+from matplotlib import colormaps
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
@@ -65,7 +66,6 @@ REFINE = True
 SAMPLE_STAT = 'median'
 DEPTH = 5
 PLOT = False
-
 
 
 # ---------------------------------------------------------------------------- #
@@ -178,8 +178,7 @@ def resolve_colours(colours, cmap, n):
         # this cmap has good distinction between colours for clusters nearby
         # each other
     else:
-        from matplotlib.cm import get_cmap
-        cmap = get_cmap(cmap)
+        cmap = colormaps.get_cmap(cmap)
 
     return cmap(np.linspace(0, 1, n))
     # colours = labels[core_sample_indices_]

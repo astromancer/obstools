@@ -12,8 +12,8 @@ import numpy as np
 import more_itertools as mit
 from astropy.utils import lazyproperty
 from photutils.utils.colormaps import make_random_cmap
-from matplotlib import colors
 from matplotlib.lines import Line2D
+from matplotlib import colormaps, colors
 from matplotlib.collections import LineCollection
 
 # local
@@ -164,8 +164,7 @@ class SegmentPlotter:
         if cmap is None:
             return self.seg.make_cmap()
 
-        from matplotlib.pyplot import get_cmap
-        return get_cmap(cmap)
+        return colormaps.get_cmap(cmap)
 
     def labels(self, ax=None, offset=(0, 0), emboss=(1, 'k'), **kws):
         # import matplotlib.patheffects as path_effects
@@ -375,8 +374,7 @@ class ConsoleFormatter:
         if cmap is None:
             return self.seg.make_cmap()
 
-        from matplotlib.pyplot import get_cmap
-        return get_cmap(cmap)
+        return colormaps.get_cmap(cmap)
 
     def format(self, label=True, frame=True, origin=0, cmap=None):
 

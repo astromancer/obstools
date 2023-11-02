@@ -5,7 +5,6 @@ Tools for visualising object tracks across the night sky
 
 # std
 import time
-import functools
 import threading
 import itertools as itt
 from pathlib import Path
@@ -19,9 +18,8 @@ from astropy.utils import lazyproperty
 from astropy.time import Time, TimeDelta
 from astropy.coordinates import AltAz, get_moon, get_sun, jparser
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
-from matplotlib.cm import get_cmap
 from matplotlib.lines import Line2D
+from matplotlib import colormaps, rcParams
 from matplotlib.path import Path as mplPath
 from matplotlib.ticker import AutoMinorLocator
 from matplotlib.dates import AutoDateFormatter, AutoDateLocator
@@ -35,9 +33,9 @@ from scipy.interpolate import interp1d
 
 # local
 import recipes.pprint as ppr
-from recipes import memoize
-from recipes.lists import sortmore
-from recipes.string import rreplace
+from recipes.lists import cosort
+from recipes.caching import cached
+from recipes import strings
 from recipes.logging import LoggingMixin
 from scrawl.ticks import DegreeFormatter, TransFormatter
 
@@ -75,7 +73,7 @@ rcParams['text.latex.preamble'] = r'\usepackage{gensymb}'
 
 def site_info_txt(site, tel):
     # eg:
-    tel_name = f'{tel:g}m' if tel else ''
+    tel_name = f'{tel:s}m' if tel else ''
     return (f'{site.name} {tel_name} @ '
             f'{dms(site.lat, "NS")}; {dms(site.lon, "WE")}; '
             f'{site.height.value:.0f} {site.height.unit}')
@@ -104,13 +102,13 @@ def dms(angle, cardinal='', **kws):
         cardinal = cardinal[int(angle > 0)]
         angle = abs(angle)
         sep = ' '
-    return sep.join((rreplace(angle.to_string(u.deg,
-                                              **{**dict(precision=0,
-                                                        format='latex'),
-                                                 **kws}),
-                              {'$-': '-$',
-                               r'{}^\prime': r'{{}^\prime\,}',
-                               r'^\circ': r'\degree'}),
+    return sep.join((strings.sub(angle.to_string(u.deg,
+                                                 **{**dict(precision=0,
+                                                           format='latex'),
+                                                    **kws}),
+                                 {'$-': '-$',
+                                  r'{}^\prime': r'{{}^\prime\,}',
+                                  r'^\circ': r'\degree'}),
                      cardinal))
 
 
@@ -214,7 +212,7 @@ def set_visible(artists, state=True):
 
 
 # ******************************************************************************
-@memoize.to_file(celestialCache)
+@cached.to_file(celestialCache)
 class CelestialTrack:
     """
     Class representing the visibility of a celestial body on a given date at a
@@ -289,7 +287,7 @@ class CelestialTrack:
     def sets(self):
         return self.get_rise_set()['set'][0]
 
-    # @memoize.to_file()
+    # @cached.to_file()
     def get_rise_set(self, altitude=(0, )):
         """get rising and setting times"""
 
@@ -1021,7 +1019,7 @@ class SkyTracks(LoggingMixin):
 
         # Plotting done here! Also collect name, coordinates in dict
         self.colours = colours
-        self.cmap = get_cmap(cmap)
+        self.cmap = colormaps.get_cmap(cmap)
         if targets is not None:
             self.add_targets(targets)
 
@@ -1246,10 +1244,10 @@ class SkyTracks(LoggingMixin):
 
         # legend at top for moon
         mc, = moon.curves
-        mc.set_mec('k') # Give moon legend marker a black edge for aesthetic
+        mc.set_mec('k')  # Give moon legend marker a black edge for aesthetic
         leg = ax.legend(bbox_to_anchor=(1.05, 1.015), loc=3,
                         borderaxespad=0., frameon=True)
-        mc.set_mec(mc.get_mfc())               
+        mc.set_mec(mc.get_mfc())
         leg.get_frame().set_edgecolor('k')
         ax.add_artist(leg)
 
@@ -1364,8 +1362,8 @@ class SkyTracks(LoggingMixin):
         proxies = [Line2D([], [], color=line.get_color(), **lkw)
                    for line in lines]
 
-        _, proxies, labels = sortmore(coords, proxies, labels,
-                                      key=lambda cx: cx.coords.ra.deg)
+        _, proxies, labels = cosort(coords, proxies, labels,
+                                    key=lambda cx: cx.coords.ra.deg)
 
         leg = self.ax.legend(proxies, labels,
                              **{**dict(loc=2,
@@ -1406,7 +1404,7 @@ class SkyTracks(LoggingMixin):
         for name, track in self.targets.items():
             if show_coords:
                 lbl = sep.join(
-                    (mathbold(rreplace(track.short_name, name_fixes)),
+                    (mathbold(strings.sub(track.short_name, name_fixes)),
                      hmsdms(track.coords)))
             else:
                 lbl = track.short_name

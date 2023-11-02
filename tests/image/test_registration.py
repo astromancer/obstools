@@ -5,7 +5,7 @@ import numpy as np
 
 # local
 from obstools.image import ImageRegister
-
+from conftest import *
 
 # @pytest.mark.incremental
 

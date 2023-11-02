@@ -130,7 +130,7 @@ class SliceDict(vdict):
     def plot(self, ax, **kws):
         from matplotlib.patches import Rectangle
         from matplotlib.collections import PatchCollection
-        from matplotlib.cm import get_cmap
+        from matplotlib import colormaps
 
         kws.setdefault('facecolor', 'None')
 
@@ -139,7 +139,7 @@ class SliceDict(vdict):
         ec = kws.get('edgecolor')
         ecs = kws.get('edgecolors')
         if ec is None and ecs is None:
-            cmap = get_cmap(kws.get('cmap', 'gist_ncar'))
+            cmap = colormaps[kws.get('cmap', 'gist_ncar')]
             ecs = cmap(np.linspace(0, 1, len(slices)))
             kws['edgecolors'] = ecs
 

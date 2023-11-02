@@ -10,17 +10,19 @@ from matplotlib.patches import PathPatch
 from scipy.interpolate import PPoly
 
 # local
-from recipes.dicts import ManyToOneMap, TerseKws
+from recipes.dicts import ManyToOneMap
+from recipes.api.synonyms import RegexTranslate
 
 
+# ---------------------------------------------------------------------------- #
 # Logic for resolving telescope name
 TEMP = ManyToOneMap()
 TEMP.add_trans({40: 1.,
                 74: 1.9})
-TEMP.add_funcs(TerseKws('40[ inch]', 1.),
-               TerseKws('1[.0 m]', 1.),
-               TerseKws('74[ inch]', 1.9),
-               TerseKws('1.9[ m]', 1.9),
+TEMP.add_funcs(RegexTranslate(R'40\s*(in(ch)?)?', 1.),
+               RegexTranslate(R'1((\.0?)?\s*m?)', 1.),
+               RegexTranslate(R'74\s*(in(ch)?)?', 1.9),
+               RegexTranslate(R'1.9\s*m?',        1.9),
                float)
 # some of these equivalence mappings will bork during the lookup, but we don't
 # actually care, so suppress the warnings
@@ -84,6 +86,8 @@ del TEMP
 
 _HS = ('hard', 'soft')
 _EW = ('east', 'west')
+
+# ---------------------------------------------------------------------------- #
 
 
 def _check(s, ok):
@@ -164,6 +168,8 @@ def get_polygon(inner, outer, **kws):
     codes[[0, -4]] = mpath.Path.MOVETO
     path = mpath.Path(verts, codes)
     return PathPatch(path, **kws)
+
+# ---------------------------------------------------------------------------- #
 
 
 class TelescopeLimits:
