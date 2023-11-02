@@ -1,4 +1,4 @@
-# obstools: 
+# obstools
 
 > Tools for Observational Astronomy
 
@@ -10,13 +10,15 @@ TODO
 [![GitHub](https://img.shields.io/github/license/astromancer/obstools.svg?color=blue)](https://obstools.readthedocs.io/en/latest/license.html)
  -->
 
-This project is for ...
-
+`obstools` is a toolkit for observational astronomy. It contains modules to aid 
+observation planning and visualization, create finder charts, co-align images,
+perform photometry and model astronomical images.
+ 
 
 # Install
 
 ```shell
-pip install obstools
+pip install https://github.com/astromancer/obstools
 ```
 
 # Use
@@ -51,7 +53,7 @@ Contributions are welcome!
 2. Create your feature branch\
     ``git checkout -b feature/rad``
 3. Commit your changes\
-    ``git commit -am 'Add some cool feature'``
+    ``git commit -am 'Add some cool feature 😎'``
 4. Push to the branch\
     ``git push origin feature/rad``
 5. Create a new Pull Request
@@ -68,8 +70,8 @@ Contributions are welcome!
 * see [LICENSE](https://github.com/astromancer/obstools/blob/master/LICENSE)
 
 
-# Version
+<!-- # Version
 This project uses a [semantic versioning](https://semver.org/) scheme. The 
 latest version is
-* 0.1.0
+* 0.1.0 -->
 

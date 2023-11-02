@@ -1,26 +1,33 @@
 # from pathlib import Path
 
 
-# std libs
+# std
 import numbers
 import operator as op
-# import multiprocessing as mp
-from collections import OrderedDict, MutableMapping, defaultdict
+from collections import OrderedDict, abc, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
-from scipy.optimize import minimize, leastsq
+from scipy.optimize import leastsq, minimize
 
-# local libs
+# local
 from recipes.lists import tally
+from recipes.io import load_memmap
 from recipes.logging import LoggingMixin
 
-# relative libs
-from ..io import load_memmap
-from ..utils import int2tup
+# relative
 from .parameters import Parameters
 
+
+# import multiprocessing as mp
+
+
 LN2PI_2 = np.log(2 * np.pi) / 2
+
+
+def int2tup(obj):
+    return ensure_wrapped(obj, tuple)
+    
 
 
 def _echo(*_):
@@ -83,7 +90,7 @@ class UnconvergedOptimization(Exception):
 #         raise ValueError('Invalid axis')
 
 
-# class OptionallyNamed(object):
+# class OptionallyNamed:
 #     """
 #     Implements optional mutable `name` for inherited classes
 #     """
@@ -106,7 +113,7 @@ class UnconvergedOptimization(Exception):
 #         assert isinstance(name, str)
 #         cls._name = name
 
-class OptionallyNamed(object):
+class OptionallyNamed:
     """
     Implements optional, mutable name for inherited classes via `name` property
     """
@@ -128,7 +135,7 @@ class OptionallyNamed(object):
         self._name = name
 
 
-class Likelihood(object):
+class Likelihood:
     pass
 
 
@@ -153,11 +160,8 @@ class GaussianLikelihood(Likelihood):
         #               point
         #
 
-        if sigma is None:
-            sigma_term = 0
-        else:
-            sigma_term = np.log(sigma).sum()
-
+        sigma_term = 0 if sigma is None else np.log(sigma).sum()
+        
         return (- data.size * LN2PI_2
                 # # TODO: einsum here for mahalanobis distance term
                 - 0.5 * self.wrss(p, data, grid, stddev)
@@ -168,7 +172,7 @@ class PoissonLikelihood(Likelihood):
     pass
 
 
-class Lp(object):
+class Lp:
     'todo'
 
 
@@ -349,7 +353,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # FIXME: alias not inherited if overwritten in subclass
     coefficient_of_determination = rsq
 
-    def ln_likelihood(self, p, data, *args, stddev=None):
+    def llh(self, p, data, *args, stddev=None):
         # assuming uncorrelated gaussian noise on data here
         # https://en.wikipedia.org/wiki/Maximum_likelihood_estimation#Continuous_distribution,_continuous_parameter_space
 
@@ -357,9 +361,8 @@ class Model(OptionallyNamed, LoggingMixin):
         #  least-squares
 
         # FIXME: more general metric here?
-        nl = (data.size * LN2PI_2 +
-              0.5 * self.wrss(p, data, *args, stddev=stddev))
-
+        nl = data.size * LN2PI_2 + 0.5 * self.wrss(
+            p, data, *args, stddev=stddev)
         if stddev is not None:
             nl += np.log(stddev).sum()
 
@@ -369,7 +372,7 @@ class Model(OptionallyNamed, LoggingMixin):
     # The score is the gradient (the vector of partial derivatives) of log⁡ L(θ)
 
     # FIXME: alias not inherited if overwritten in subclass
-    llh = LogLikelihood = log_likelihood = ln_likelihood
+    logLikelihood = ln_likelihood = log_likelihood = llh
 
     def loss_mle(self, p, data, *args, **kws):
         """Objective for Maximum Likelihood Estimation"""
@@ -377,10 +380,9 @@ class Model(OptionallyNamed, LoggingMixin):
         # return (data.size * LN2PI_2
         #         + 0.5 * self.wrss(p, data, *args, stddev=stddev, **kws))
 
-        return -self.ln_likelihood(p, data, *args,  **kws)
+        return -self.llh(p, data, *args,  **kws)
 
-    def ln_posterior(self, p, data, *args, priors=None,
-                     prior_args=(), **kws):
+    def ln_posterior(self, p, data, *args, priors=None, prior_args=(), **kws):
         """
         Logarithm of posterior probability (up to a constant).
 
@@ -404,9 +406,9 @@ class Model(OptionallyNamed, LoggingMixin):
             if not np.isfinite(log_prior):
                 return -np.inf
 
-            return self.ln_likelihood(p, data, *args, **kws) + log_prior
+            return self.llh(p, data, *args, **kws) + log_prior
 
-        return self.ln_likelihood(p, data, *args, **kws)
+        return self.llh(p, data, *args, **kws)
 
     def aic(self, p, data, *args, **kws):
         """
@@ -414,7 +416,7 @@ class Model(OptionallyNamed, LoggingMixin):
         corresponding to the maximum likelihood.
         """
         k = len(p) + 2
-        return 2 * (k - self.ln_likelihood(p, data, *args, **kws))
+        return 2 * (k - self.llh(p, data, *args, **kws))
 
     def aicc(self, p, data, *args, **kws):
         # "When the sample size is small, there is a substantial probability
@@ -427,8 +429,7 @@ class Model(OptionallyNamed, LoggingMixin):
         # then the formula for AICc is as follows.
         k = len(p)
         n = data.size
-        return 2 * (k + (k * k + k) / (n - k - 1) -
-                    self.ln_likelihood(p, data, *args, **kws))
+        return 2 * (k + (k**2 + k) / (n - k - 1) - self.llh(p, data, *args, **kws))
         # "If the assumption that the model is univariate and linear with normal
         # residuals does not hold, then the formula for AICc will generally be
         # different from the formula above. For some models, the precise formula
@@ -442,7 +443,7 @@ class Model(OptionallyNamed, LoggingMixin):
     def bic(self, p, data, *args, **kws):
         n = data.size
         k = len(p)
-        return k * np.log(n) - 2 * self.ln_likelihood(p, data, *args, **kws)
+        return k * np.log(n) - 2 * self.llh(p, data, *args, **kws)
 
     def mle(self, data, p0=None, *args, **kws):
         """
@@ -511,7 +512,7 @@ class Model(OptionallyNamed, LoggingMixin):
         # ----------------
         if p0 is None:
             p0 = self.p0guess(data, *args)
-            self.logger.debug('p0 guess: %s', p0)
+            self.logger.debug('p0 guess: {:s}', p0)
         else:
             p0 = np.asanyarray(p0)
 
@@ -582,23 +583,23 @@ class Model(OptionallyNamed, LoggingMixin):
             msg = result.message
 
         if success:
-            unchanged = np.allclose(p, p0)
-            if unchanged:
-                # TODO: maybe also warn if any close ?
+            if unchanged := np.allclose(p, p0):
                 self.logger.warning('"Converged" parameter vector is '
-                                    'identical to initial guess: %s', p0)
+                                    'identical to initial guess: {}', p0)
                 msg = ''
             else:
-                self.logger.debug('Successful fit %s', self.name)
-                # TODO: optionally print fit statistics. npars, niters, gof,
+                self.logger.debug('Successful fit {:s}', self.name)
+                # TODO: self.logger.verbose() npars, niters, gof,
                 #  ndata, etc
                 return p
 
         # generate message for convergence failure
         from recipes import pprint
-        objective_repr = pprint.method(loss, submodule_depth=0)
+
+        # objective_repr =
         fail_msg = (f'{self.__class__.__name__} optimization with objective '
-                    f'{objective_repr!r} failed to converge: {msg}')
+                    f'{pprint.caller(loss)!r} '
+                    f'failed to converge: {msg}')
 
         # bork if needed
         if self.raise_on_failure:
@@ -617,7 +618,7 @@ class Model(OptionallyNamed, LoggingMixin):
         """
 
         # TODO: would be nice to have some kind of progress indicator here
-        # could do this by wrapping the ln_likelihood function with counter
+        # could do this by wrapping the llh function with counter
 
         import emcee
 
@@ -653,7 +654,7 @@ class Model(OptionallyNamed, LoggingMixin):
                     f'Please ensure p0 is of dimension ({nwalkers}, {self.dof})'
                     f' for sampler with {nwalkers} walkers and model with '
                     f'{self.dof} degrees of freedom.'
-                    )
+                )
 
         # burn in
         if nburn:
@@ -714,14 +715,14 @@ class RescaleInternal(DataTransformBase):
         if self._yscale is None:
             self._yscale = self.get_scale(data)
 
-        self.logger.debug('scale is %s', self._yscale)
+        self.logger.debug('scale is {:s}', self._yscale)
         return data / self._yscale
 
     def inverse_transform(self, p, **kws):
         return p * self._yscale
 
 
-class SummaryStatsMixin(object):
+class SummaryStatsMixin:
     """
     Mixin class that computes a summary statistic across one (or more) of
     the data axes before doing the fit.
@@ -776,7 +777,7 @@ class ModelContainer(OrderedDict, LoggingMixin):
         self._names = None
 
         mapping = ()
-        if isinstance(models, MutableMapping):
+        if isinstance(models, abc.MutableMapping):
             mapping = models
         elif len(models):
             # ensure we have named models
@@ -962,12 +963,7 @@ class CompoundModel(Model):
         if keys is all:
             keys = self.models.keys()
 
-        dtype = []
-        for key in keys:
-            dtype.append(
-                self._adapt_dtype(self.models[key], ())
-            )
-        return dtype
+        return [self._adapt_dtype(self.models[key], ()) for key in keys]
 
     def _adapt_dtype(self, model, out_shape):
         # adapt the dtype of a component model so that it can be used with
@@ -976,20 +972,16 @@ class CompoundModel(Model):
         # used for more than one key (label) to be represented by a 2D array.
 
         # make sure size in a tuple
-        if out_shape == 1:
-            out_shape = ()
-        else:
-            out_shape = int2tup(out_shape)
-
+        out_shape = () if out_shape == 1 else int2tup(out_shape)
         dt = model.get_dtype()
-        if len(dt) == 1:  # simple model
-            name, base, dof = dt[0]
-            dof = int2tup(dof)
-            # extend shape of dtype
-            return model.name, base, out_shape + dof
-        else:  # compound model
+        if len(dt) != 1: # simple model
             # structured dtype - nest!
             return model.name, dt, out_shape
+        
+        name, base, dof = dt[0]
+        dof = int2tup(dof)
+        # extend shape of dtype
+        return model.name, base, out_shape + dof
 
     def _results_container(self, keys=all, dtype=None, fill=np.nan,
                            shape=(), type_=Parameters):
@@ -1101,7 +1093,7 @@ class CompoundModel(Model):
             if p0 is not None:
                 kws['p0'] = p0[model.name]
 
-            # select data -- does the same job as `SegmentedImage.coslice`
+            # select data -- does the same job as `SegmentedImage.cutouts`
             # sub = np.ma.array(data[seg])
             # sub[..., self.seg.masks[label]] = np.ma.masked
             # std = None if (stddev is None) else stddev[..., slice_]
@@ -1168,7 +1160,7 @@ class CompoundModel(Model):
 #     def __getitem__(self, key):
 
 
-class FixedGrid(object):
+class FixedGrid:
     """
     Mixin class that allows optional static grid to be set.  This makes the
     `grid` argument an optional is the model evaluation call and checks for

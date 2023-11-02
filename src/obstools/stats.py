@@ -39,8 +39,7 @@ def median_scaled_median(data, axis):
 
     """
     frame_med = np.median(data, (1, 2))[:, None, None]
-    scaled = data / frame_med
-    return np.median(scaled, axis)
+    return np.median(data / frame_med, axis)
 
 
 def geometric_median(x, eps=1e-5):

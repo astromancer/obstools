@@ -6,16 +6,16 @@ multiprocessing
 
 
 
-# std libs
+# std
 import inspect
 import functools
 import itertools as itt
 
-# third-party libs
+# third-party
 import lmfit as lm
 import numpy as np
 
-# local libs
+# local
 from recipes.pprint import decimal_repr
 
 
@@ -59,7 +59,9 @@ class lmMixin():
 
     def fit(self, p0, data, grid, data_stddev=None, **kws):
 
-        self.logger.debug('Guessed: (%s)' % ', '.join(map(decimal_repr, p0)))
+        self.logger.opt(lazy=True).debug(
+            'Guessed: ({:s})', lambda: ', '.join(map(decimal_repr, p0))
+            )
         params = self._set_param_values(p0)
         params = self._constrain_params(params, z0=(0, np.inf))
 
@@ -173,7 +175,7 @@ def lmModelFactory(base_, method_names, param_names):
     return lmCompatModel
 
 
-class _InitializeParameterized(object):
+class _InitializeParameterized:
     """
     When called with the param value as the only argument, returns an
     un-initialized instance of the parameterized class. Subsequent __setstate__

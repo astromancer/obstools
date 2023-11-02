@@ -2,26 +2,24 @@
 Core tools for modelling astronomical images
 """
 
-# std libs
-import time
+# std
 from pathlib import Path
-from collections import defaultdict, MutableMapping
+from collections import MutableMapping, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
-from photutils.aperture import EllipticalAperture, EllipticalAnnulus
 from photutils.segmentation import Segment
+from photutils.aperture import EllipticalAnnulus, EllipticalAperture
 
-# local libs
+# local
+from scrawl.video import VideoDisplay
+from recipes.io import load_memmap
 from recipes.logging import LoggingMixin
-from recipes.dicts import Record, AttrDict
-from scrawl.imagine import VideoDisplay
+from recipes.dicts import AttrDict, Record
 
-# relative libs
-from ..utils import load_memmap
-from ...phot.utils import LabelGroupsMixin
-from ...image.segmentation import SegmentsModelHelper
-from .. import Model, CompoundModel, FixedGrid
+# relative
+from ...image.segments import LabelGroupsMixin, SegmentsModelHelper
+from .. import CompoundModel, FixedGrid, Model
 
 
 class ModelledSegment(Segment):
@@ -155,7 +153,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     def iter_region_data(self, keys, *data, **kws):
         #
         seg = self.seg
-        for label, subs in seg.coslice(*data, labels=keys, enum=True, **kws):
+        for label, subs in seg.cutouts(*data, labels=keys, enum=True, **kws):
             yield seg.slices[label], subs
 
     # def fit(self, data, stddev=None, **kws):
@@ -207,7 +205,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     # def fit_worker(self, data, stddev, labels, p0, result, residuals, **kws):
     #
     #     # iterator for data segments
-    #     subs = self.seg.coslice(data, stddev, labels=labels,masked=True)
+    #     subs = self.seg.cutouts(data, stddev, labels=labels,masked=True)
     #
     #     # # get slices
     #     # slices = self.seg.get_slices(labels)
@@ -227,7 +225,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     #         if p0 is not None:
     #             kws['p0'] = p0[model.name]
     #
-    #         # select data # this does the job of coslice
+    #         # select data # this does the job of cutouts
     #         # sub = np.ma.array(data[seg])
     #         # sub[..., self.seg.masks[label]] = np.ma.masked
     #         # std = None if (stddev is None) else stddev[..., slice_]
@@ -285,7 +283,7 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
     #     flatten = kws.pop('flatten', False)
     #
     #     # iterator for data segments
-    #     subs = self.seg.coslice(data, std, labels=labels, masked=mask,
+    #     subs = self.seg.cutouts(data, std, labels=labels, masked=mask,
     #                             flatten=flatten)
     #
     #     # indexer for results container
@@ -325,7 +323,8 @@ class SegmentedImageModel(CompoundModel, FixedGrid, LoggingMixin):
         return ImageModelAnimation(self, shape)
 
     def plot_image(self, p, grid=None):
-        from scrawl.imagine import ImageDisplay
+        from scrawl.image import ImageDisplay
+        
         return ImageDisplay(self(p, grid))
 
     def plot_surface(self, r, grid=None, **kws):
@@ -595,7 +594,7 @@ class PSFModeller(SegmentedImageModel):
 #
 #         # folder = Path(folder)
 #         # if not folder.exists():
-#         #     self.logger.info('Creating folder: %s', str(folder))
+#         #     self.logger.info('Creating folder: {:s}', str(folder))
 #         #     folder.mkdir(parents=True)
 #         #
 #         # self.loc = str(folder)
@@ -627,7 +626,7 @@ class PSFModeller(SegmentedImageModel):
 #         self.params_std[i, j] = pu
 
 
-class ModellingResultsMixin(object):
+class ModellingResultsMixin:
     def __init__(self, save_residual=False):
 
         # Data containers

@@ -3,55 +3,51 @@ Tools for visualising object tracks across the night sky
 """
 
 
-# std libs
-from astropy.utils import lazyproperty
-import functools as ftl
-from PyQt5 import QtCore
-from recipes.logging import LoggingMixin
+# std
 import time
-import inspect
-import logging
+import functools
 import threading
 import itertools as itt
 from pathlib import Path
-from functools import partial
-from datetime import datetime
 from collections import OrderedDict, defaultdict
 
-# third-party libs
+# third-party
 import numpy as np
+import more_itertools as mit
 import astropy.units as u
+from astropy.utils import lazyproperty
 from astropy.time import Time, TimeDelta
-from astropy.coordinates.name_resolve import NameResolveError
-from astropy.coordinates import (SkyCoord, EarthLocation, AltAz, get_sun,
-                                 get_moon, jparser)
-from matplotlib import rcParams
+from astropy.coordinates import AltAz, get_moon, get_sun, jparser
 import matplotlib.pyplot as plt
+from matplotlib import rcParams
+from matplotlib.cm import get_cmap
+from matplotlib.lines import Line2D
 from matplotlib.path import Path as mplPath
 from matplotlib.ticker import AutoMinorLocator
-from matplotlib.dates import (AutoDateFormatter, AutoDateLocator, num2date,
-                              get_epoch)
-from matplotlib.transforms import (Transform, IdentityTransform, Affine2D,
+from matplotlib.dates import AutoDateFormatter, AutoDateLocator
+from matplotlib.transforms import (Affine2D, IdentityTransform, Transform,
                                    blended_transform_factory as btf)
-from matplotlib.lines import Line2D
-from matplotlib.cm import get_cmap
+from PyQt5 import QtCore
 from addict.addict import Dict
+from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d
-from recipes import memoize
-from recipes.dicts import DefaultOrderedDict
-from scrawl.ticks import DegreeFormatter, TransFormatter
-from mpl_toolkits.axes_grid1.parasite_axes import SubplotHost
 
-# local libs
-# from motley import profiling
-from recipes.lists import sortmore
+# local
 import recipes.pprint as ppr
+from recipes import memoize
+from recipes.lists import sortmore
 from recipes.string import rreplace
+from recipes.logging import LoggingMixin
+from scrawl.ticks import DegreeFormatter, TransFormatter
+
+# relative
 from ..utils import get_coordinates, get_site
 from .limits import TelescopeLimits
-import more_itertools as mit
-from .utils import nearest_midnight_date, get_midnight
+from .utils import get_midnight, nearest_midnight_date
+
+
+# from motley import profiling
 
 
 # TODO: enable different projections, like Mercator etc...

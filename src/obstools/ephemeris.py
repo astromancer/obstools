@@ -1,13 +1,13 @@
 # coding: utf-8
 
 
-# std libs
+# std
 from functools import partial
 
-# third-party libs
+# third-party
 import numpy as np
 
-# local libs
+# local
 from recipes.lists import cosort
 
 from matplotlib import ticker
@@ -15,7 +15,7 @@ from matplotlib import ticker
 from matplotlib.transforms import Affine2D
 
 
-class Ephemeris(object):
+class Ephemeris:
     # TODO: def from_string(self):
     # TODO: fit method!!
 

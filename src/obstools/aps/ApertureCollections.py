@@ -3,11 +3,11 @@
 
 
 
-# std libs
+# std
 import re
 from copy import copy
 
-# third-party libs
+# third-party
 import numpy as np
 from scipy.spatial.distance import cdist
 from matplotlib.colors import colorConverter
@@ -15,7 +15,7 @@ from matplotlib.collections import EllipseCollection, LineCollection
 from matplotlib.transforms import (IdentityTransform,
                                    blended_transform_factory as btf)
 
-# local libs
+# local
 # from recipes.io import warn as Warn
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
@@ -164,7 +164,7 @@ class PropertyManager(dict):
     # in the translator dict map to the corresponding keyword upon
     # initialisation. This is purely for user convenience. eg. short-hand
     # notation when initialising
-    translator.add_vocab(dict(coords='offsets',
+    translator.add_mapping(dict(coords='offsets',
                               ls='linestyle',
                               lw='linewidth',
                               w='width',  # TODO: a, b, theta, θ
@@ -187,8 +187,9 @@ class PropertyManager(dict):
             angles=np.atleast_1d, )
 
     # Add equivalence mapping that maps *colour -> *color
-    converter.add_mapping(
-            lambda key: ''.join(re.search('(colo)u?(r)', key).groups()))
+    converter.add_func(
+            lambda key: ''.join(re.search('(colo)u?(r)', key).groups())
+            )
 
     # @expose.args( pre='%'*100, post = '\\'*100 )
     def __init__(self, defaults=None, **kws):
@@ -854,7 +855,7 @@ class SkyApertures(ApertureCollection):
 #
 #         return lc
 
-# class Test(object):
+# class Test:
 # def connect(name):
 # def _decorator(func):
 # print( name, func )

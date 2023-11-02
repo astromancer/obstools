@@ -3,19 +3,21 @@ Classes for implementing prior probabilities in the context of Bayesian
 modelling and inference.
 """
 
-# std libs
+# std
 import numbers
 import functools as ftl
 
-# third-party libs
+# third-party
 import numpy as np
 from scipy import stats
 from scipy.stats._distn_infrastructure import rv_frozen
 
-# local libs
-from obstools.modelling.utils import prod
+# local
 from recipes import pprint
 from recipes.dicts import AttrReadItem, pformat as pformat_dict
+
+# relative
+from ..utils import prod
 
 
 #
@@ -68,7 +70,7 @@ def format_params(names, params, uncert=None, precision=2, switch=3, sign=' ',
     return list(map('%s = %s'.__mod__, zip(names, s)))
 
 
-class _RecurseHelper(object):
+class _RecurseHelper:
     """
     Helper class for initializing array subclasses by walking arbitrarily nested
     object definitions.
@@ -418,7 +420,7 @@ class MCMCParams(Parameters):
     #     pass
 
 
-class _Prior(object):
+class _Prior:
     #
     def freeze(self, *args, **kwds):
         return Prior(self, *args, **kwds)

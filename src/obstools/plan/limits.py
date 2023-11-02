@@ -1,22 +1,27 @@
-from collections import defaultdict
-import matplotlib.path as mpath
-from matplotlib.patches import PathPatch
+# std
 import itertools as itt
+from collections import defaultdict
+
+# third-party
 import numpy as np
+import matplotlib.path as mpath
 import matplotlib.pyplot as plt
+from matplotlib.patches import PathPatch
 from scipy.interpolate import PPoly
+
+# local
 from recipes.dicts import ManyToOneMap, TerseKws
-import warnings
+
 
 # Logic for resolving telescope name
 TEMP = ManyToOneMap()
 TEMP.add_trans({40: 1.,
                 74: 1.9})
-TEMP.add_mappings(TerseKws('40[ inch]', 1.),
-                  TerseKws('1[.0 m]', 1.),
-                  TerseKws('74[ inch]', 1.9),
-                  TerseKws('1.9[ m]', 1.9),
-                  float)
+TEMP.add_funcs(TerseKws('40[ inch]', 1.),
+               TerseKws('1[.0 m]', 1.),
+               TerseKws('74[ inch]', 1.9),
+               TerseKws('1.9[ m]', 1.9),
+               float)
 # some of these equivalence mappings will bork during the lookup, but we don't
 # actually care, so suppress the warnings
 TEMP.warn = False

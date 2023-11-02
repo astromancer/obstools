@@ -1,33 +1,34 @@
-# std libs
-import logging
+# std
 import warnings
 import itertools as itt
 import multiprocessing as mp
 from pathlib import Path
 
-# third-party libs
+# third-party
 import numpy as np
 import more_itertools as mit
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
+from loguru import logger
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-# local libs
-from scrawl.scatter import scatter_density
-from recipes.misc import is_interactive
+# local
 from motley.table import Table
+from recipes.misc import is_interactive
+from scrawl.image import ImageDisplay
+from scrawl import density, ticks
+
+
 # from motley.profiling.timers import timer
 # from obstools.aps import ApertureCollection
-from scrawl.imagine import ImageDisplay
-from scrawl.ticks import LinearRescaleFormatter
 
 # from obstools.psf.psf import GaussianPSF
 # from obstools.modelling.psf.models_lm import EllipticalGaussianPSF
 
 
+# ---------------------------------------------------------------------------- #
 SECONDS_PER_DAY = 86400
-
-logger = logging.getLogger('diagnostics')
 
 
 def _sanitize_data(data, allow_dim):
@@ -42,32 +43,32 @@ def _sanitize_data(data, allow_dim):
     return data
 
 
-def add_rectangle_inset(axes, pixel_size, colour='0.6'):
-    # add rectangle to indicate size of lower axes on upper
-    for j, ax in enumerate(axes.ravel()):
-        r, c = divmod(j, axes.shape[1])
-        if not (r % 2):
-            continue
+# def add_rectangle_inset(axes, pixel_size, colour='0.6'):
+#     # add rectangle to indicate size of lower axes on upper
+#     for j, ax in enumerate(axes.ravel()):
+#         r, c = divmod(j, axes.shape[1])
+#         if not (r % 2):
+#             continue
 
-        bbox = ax.viewLim
-        xyr = np.array([bbox.x0, bbox.y0])
-        rect = Rectangle(xyr, bbox.width, bbox.height,
-                         fc='none', ec=colour, lw=1.5)
-        ax_up = axes[r - 1, c]
-        ax_up.add_patch(rect)
+#         bbox = ax.viewLim
+#         xyr = np.array([bbox.x0, bbox.y0])
+#         rect = Rectangle(xyr, bbox.width, bbox.height,
+#                          fc='none', ec=colour, lw=1.5)
+#         ax_up = axes[r - 1, c]
+#         ax_up.add_patch(rect)
 
-        # add lines for aesthetic
-        # get position of upper edges of lower axes in data
-        # coordinates of upper axes
-        if (ax_up.viewLim.height > pixel_size) and \
-                (ax_up.viewLim.width > pixel_size):
-            trans = ax.transAxes + ax_up.transData.inverted()
-            xy = trans.transform([[0, 1], [1, 1]])
+#         # add lines for aesthetic
+#         # get position of upper edges of lower axes in data
+#         # coordinates of upper axes
+#         if (ax_up.viewLim.height > pixel_size) and \
+#                 (ax_up.viewLim.width > pixel_size):
+#             trans = ax.transAxes + ax_up.transData.inverted()
+#             xy = trans.transform([[0, 1], [1, 1]])
 
-            ax_up.plot(*np.array([xyr, xy[0]]).T,
-                       color=colour, clip_on=False)
-            ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
-                       color=colour, clip_on=False)
+#             ax_up.plot(*np.array([xyr, xy[0]]).T,
+#                        color=colour, clip_on=False)
+#             ax_up.plot(*np.array([xyr + (bbox.width, 0), xy[1]]).T,
+#                        color=colour, clip_on=False)
 
 
 def plot_position_measures(coords, centres, shifts, labels=None, min_count=5,
@@ -297,7 +298,7 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
         yx = features[:, i]
 
         # plot point cloud visualization
-        scatter_density(ax, yx, bins, None, min_count, max_points,
+        density.scatter_map(ax, yx, bins, None, min_count, max_points,
                         tessellation, scatter_kws, density_kws)
 
         if show_centres:
@@ -318,29 +319,28 @@ def scatter_density_grid(features, centres=None, axes=None, auto_lim_axes=False,
 
 
 def new_diagnostics(coords, rcoo, Appars, optstat):
-    figs = {}
-    # coordinate diagnostics
-    fig = plot_coord_moves(coords, rcoo)
-    figs['coords.moves'] = fig
+    return {
+        # coordinate diagnostics
+        'coords.moves':
+            plot_coord_moves(coords, rcoo),
 
-    # fig = plot_coord_scatter(coords, rcoo)
-    # figs['coords.scatter'] = fig
-    # fig = plot_coord_walk(coords)
-    # figs['coords.walk'] = fig
+        # fig = plot_coord_scatter(coords, rcoo)
+        # figs['coords.scatter'] = fig
+        # fig = plot_coord_walk(coords)
+        # figs['coords.walk'] = fig
 
-    fig = plot_coord_jumps(coords)
-    figs['coords.jump'] = fig
+        'coords.jump':
+            plot_coord_jumps(coords),
 
-    # aperture diagnostics
-    fig = ap_opt_stat_map(optstat)
-    figs['opt.stat'] = fig
-    fig = plot_appars_walk(Appars.stars, ('a', 'b', 'theta'), 'Star apertures')
-    figs['aps.star.walk'] = fig
-    fig = plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'),
-                           'Sky apertures')
-    figs['aps.sky.walk'] = fig
-
-    return figs
+        # aperture diagnostics
+        'opt.stat':
+            ap_opt_stat_map(optstat),
+        'aps.star.walk':
+            plot_appars_walk(Appars.stars, ('a', 'b', 'theta'), 'Star apertures'),
+        'aps.sky.walk':
+            plot_appars_walk(Appars.sky, ('a_in', 'b_in', 'a_out'),
+                         'Sky apertures')
+    }
 
 
 def ap_opt_stat_map(optstat):
@@ -388,11 +388,11 @@ def ap_opt_stat_map(optstat):
                       origin='upper', cmap='jet_r',
                       interval='minmax',
                       hist=False, sliders=False)
-    im.imagePlot.set_clim(-3, 1)
-    cmap = im.imagePlot.get_cmap()
+    im.image.set_clim(-3, 1)
+    cmap = im.image.get_cmap()
 
     # hack the yscale
-    fmt = LinearRescaleFormatter(nf / nr)
+    fmt = ticks.LinearRescaleFormatter(nf / nr)
     im.ax.yaxis.set_major_formatter(fmt)
     #
 
@@ -471,7 +471,7 @@ def fit_summary(modelDb, locData):
             coo))
     tbl = Table(tbl,
                 title='Fitting summary: Unconvergent',
-                title_props=dict(txt='bold', bg='m'),
+                title_style=dict(txt='bold', bg='m'),
                 row_headers=names, col_headers=col_headers)
 
     return tbl
@@ -623,7 +623,7 @@ def plot_coord_moves(coords, rcoo):
                                    subplot_kw=dict(aspect='equal'))
 
     #
-    scatter_density(ax1, coords, rcoo)
+    density.scatter_map(ax1, coords, rcoo)
     #
     plot_coord_walk(ax2, coords)
 
@@ -702,7 +702,7 @@ def get_proxy_art(art):
 def plot_lc_psf(fpm, labels):
     # PSF photometry light curves
     fig, art, *rest = tsplt(fpm.T, title='psf flux',
-                            draggable=False,
+                            movable=False,
                             show_hist=True)
 
     # legend
@@ -734,16 +734,16 @@ def plot_aperture_flux(fitspath, proc, tracker):
     star_labels = list(map('{0:d}: ({1[1]:3.1f}, {1[0]:3.1f})'.format,
                            tracker.segm.labels, tracker.rcoo))
 
-    figs = {
+    return {
         'lc.aps.opt': plot_lc(t, flux, flxStd, star_labels, '(Optimal)'),
         'lc.aps.bg': plot_lc(t, fluxBG, flxBGStd, star_labels, '(BG)')
     }
 
-    return figs
+    
 
 
 def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
-    logger.info('plotting lc aps: %s', description)
+    logger.info('plotting lc aps: {:s}', description)
 
     # no more than 200 error bars so we don't clutter the plot
     error_every = flxStd.shape[1] // int(max_errorbars)
@@ -761,7 +761,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
                                  timescale=timescale,
                                  errorbar=dict(errorevery=error_every),
                                  axlabels=('frame #', 'Flux (photons/pixel)'),
-                                 draggable=True,  # FIXME: labels not shown
+                                 movable=True,  # FIXME: labels not shown
                                  show_hist=False)  # FIXME: broken with axes
 
     art.connect()
@@ -775,7 +775,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
     #                              start=t[0].to_datetime(),
     #                              errorbar=dict(errorevery=errorevery),
     #                              axlabels=('t (s)', 'Flux (photons/pixel)'),
-    #                              draggable=False,
+    #                              movable=False,
     #                              show_hist=True)
     # legend
     hax = fig.axes[1]
@@ -799,7 +799,7 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 #     print('plotting lc aps', s)
 #     fig, art, *rest = tsplt.plot(data,
 #                                  title='aperture flux (%.1f*fwhm)' % s,
-#                                  draggable=False,
+#                                  movable=False,
 #                                  show_hist=True)
 #     # legend
 #     hax = fig.axes[1]
@@ -811,8 +811,8 @@ def plot_lc(t, flux, flxStd, labels, description='', max_errorbars=200):
 
 # @timer
 def plot_lc_aps(apdata, labels):
-    # from scrawl.multitab import MplMultiTab
-    ##ui = MplMultiTab()
+    # from mpl_multitab import MplTabs
+    # ui = MplTabs()
     figs = []
 
     with mp.Pool() as pool:
@@ -823,7 +823,7 @@ def plot_lc_aps(apdata, labels):
     #     print('plotting lc aps', i, s)
     #     fig, art, *rest = tsplt.plot(apdata.flux[...,i].T,
     #                              title='aperture flux (%.1f*fwhm)' %s,
-    #                              draggable=False,
+    #                              movable=False,
     #                              show_hist=True)
     #     # legend
     #     hax = fig.axes[1]
@@ -837,7 +837,7 @@ def plot_lc_aps(apdata, labels):
     # Background light curves
     fig, art, *rest = tsplt.plot(apdata.bg.T,
                                  title='bg flux (per pix.)',
-                                 draggable=False,
+                                 movable=False,
                                  show_hist=True)
     # legend
     hax = fig.axes[1]
@@ -1043,8 +1043,8 @@ def plot_monitor_data(mon_cpu_file, mon_mem_file):
 # ====================================================================================================
 
 if __name__ == '__main__':
-    path = Path(
-        '/home/hannes/work/mensa_sample_run4/')  # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
+    # /media/Oceanus/UCT/Observing/data/July_2016/FO_Aqr/SHA_20160708.0041.log
+    path = Path('/home/hannes/work/mensa_sample_run4/')
     qfiles = list(path.rglob('phot.q.dat'))
     qfigs = list(map(plot_q_mon, qfiles))
 
@@ -1054,5 +1054,5 @@ if __name__ == '__main__':
     nlabels = [f.parent.name for f in qfiles]
     wlabels = ['Queues', 'Performance']
 
-    ui = MplMultiTab2D(figures=[qfigs, monfigs], labels=[wlabels, nlabels])
+    ui = MplMultiTab(figures=[qfigs, monfigs], labels=[wlabels, nlabels])
     ui.show()

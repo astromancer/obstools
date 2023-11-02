@@ -7,6 +7,10 @@ src/obstools/fastfits.py
 src/obstools/modelling/psf/models_lm.py
 src/obstools/modelling/psf/plotting.py
 src/obstools/ultraspec.py
+src/obstools/phot/_old_gui.py
+tests/phot/test_tqdm.py
+src/obstools/image/segmentation
+
 
 # Editor temporary/working/backup files #
 #########################################

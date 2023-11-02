@@ -2,77 +2,121 @@
 Input / output helpers
 """
 
-import logging
-from pathlib import Path
+# std
+import io
+import mmap,os
 
-# third-party libs
-import numpy as np
+# third-party
+from loguru import logger
+from astropy.io import fits
 
-# local libs
-from recipes.logging import logging, get_module_logger
-
-from .utils import int2tup
-
-# module level logger
-logger = get_module_logger()
-logging.basicConfig()
-logger.setLevel(logging.INFO)
+# local
+from recipes.oo.temp import temporarily
 
 
-def load_memmap(loc, shape=None, dtype=None, fill=None, clobber=False):
+class _FilePicklable(fits.file._File):
+
+    def _open_filename(self, filename, mode, overwrite):
+        """Open a FITS file from a filename string."""
+        if mode == "ostream":
+            self._overwrite_existing(overwrite, None, True)
+
+        if os.path.exists(self.name):
+            with open(self.name, "rb") as f:
+                magic = f.read(4)
+        else:
+            magic = b""
+
+        ext = os.path.splitext(self.name)[1]
+
+        if not self._try_read_compressed(self.name, magic, mode, ext=ext):
+            mode = fits.file.IO_FITS_MODES[mode]
+            if 'r' in mode:
+                self._file = FileIOPicklable(filename, mode)
+            else:
+                self._file = open(self.name, mode)
+            self.close_on_error = True
+
+        # Make certain we're back at the beginning of the file
+        # BZ2File does not support seek when the file is open for writing, but
+        # when opening a file for write, bz2.BZ2File always truncates anyway.
+        if not (fits.file._is_bz2file(self._file) and mode == "ostream"):
+            self._file.seek(0)
+    
+    # def _open_filename(self, filename, mode, overwrite):
+    #     if 'r' in mode:
+    #         logger.debug('Injecting process-inheritable file wrapper.')
+    #         self._file = FileIOPicklable(filename, fits.file.IO_FITS_MODES[mode])
+
+    #     super()._open_filename(filename, mode, overwrite)
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_mmap']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._mmap = mmap.mmap(self._file.fileno(), 0,
+                               access=fits.file.MEMMAP_MODES[self.mode],
+                               offset=0)
+
+
+class FileIOPicklable(io.FileIO):
     """
-    Pre-allocate a writeable shared memory map as a container for the
-    results of parallel computation. If file already exists and clobber is False
-    open in update mode and fill will be ignored. Data persistence ftw.
+    File object (read-only) that can be pickled.
+
+    This class provides a file-like object (as returned by :func:`open`,
+    namely :class:`io.FileIO`) that, unlike standard Python file objects,
+    can be pickled. Only read mode is supported.
+    When the file is pickled, filename and position of the open file handle in
+    the file are saved. On unpickling, the file is opened by filename,
+    and the file is seeked to the saved position.
+    This means that for a successful unpickle, the original file still has to
+    be accessible with its filename.
+
+    Note
+    ----
+    This class only supports reading files in binary mode. If you need to open
+    a file in text mode, use the :func:`pickle_open`.
+
+    Parameters
+    ----------
+    name : str
+        either a text or byte string giving the name (and the path
+        if the file isn't in the current working directory) of the file to
+        be opened.
+    mode : str
+        only reading ('r') mode works. It exists to be consistent
+        with a wider API.
+
+    Example
+    -------
+    ::
+        >>> file = FileIOPicklable(PDB)
+        >>> file.readline()
+        >>> file_pickled = pickle.loads(pickle.dumps(file))
+        >>> print(file.tell(), file_pickled.tell())
+            55 55
+
+    See Also
+    ---------
+    TextIOPicklable
+    BufferIOPicklable
+    .. versionadded:: 2.0.0
     """
 
-    # Note: Objects created by this function have no synchronization primitives
-    #  in place. Having concurrent workers write on overlapping shared memory
-    #  data segments, for instance by using inplace operators and assignments on
-    #  a numpy.memmap instance, can lead to data corruption as numpy does not
-    #  offer atomic operations. We do not risk that issue if each process is
-    #  updating an exclusive segment of the shared result array.
+    def __init__(self, name, mode='r'):
+        self._mode = mode
+        super().__init__(name, mode)
 
-    # create folder if needed
-    loc = Path(loc)
-    filename = str(loc)
-    folder = loc.parent
-    if not folder.exists():
-        logger.info('Creating folder: %s', str(folder))
-        folder.mkdir(parents=True)
+    def __getstate__(self):
+        if 'r' not in self._mode:
+            raise RuntimeError(f'Can only pickle files that were opened in'
+                               f' read mode, not {self._mode}')
+        return self.name, self.tell()
 
-    new = not loc.exists()
-
-    # update mode if existing file, else
-    mode = 'w+' if (new or clobber) else 'r+'
-    if dtype is None:
-        dtype = 'f' if fill is None else type(fill)
-
-    # create memmap
-    shape = int2tup(shape)
-    if new:
-        logger.info('Creating memmap of shape %s and dtype %r at %r',
-                    shape, dtype, filename)
-    else:
-        logger.info('Loading memmap at %r', filename)
-
-    # mm = np.memmap(filename, dtype, mode, 0, shape)
-    # NOTE: using ` np.lib.format.open_memmap` here so that we get a small
-    #  amount of header info for easily loading the array
-    mm = np.lib.format.open_memmap(str(loc), mode, dtype, shape)
-
-    if mm.shape != shape:
-        logger.warning(f'Loaded memmap has shape {mm.shape}, which is '
-                       f'different to that requested: {shape}. Overwrite: '
-                       f'{clobber}')
-
-    # overwrite data
-    if (new or clobber) and (fill is not None):
-        logger.debug('Over-writing data with %g', fill)
-        mm[:] = fill
-
-    return mm
-
-
-def load_memmap_nans(loc, shape=None, dtype=None, clobber=False):
-    return load_memmap(loc, shape, dtype, fill=np.nan, clobber=clobber)
+    def __setstate__(self, args):
+        name = args[0]
+        super().__init__(name, mode='r')
+        self.seek(args[1])

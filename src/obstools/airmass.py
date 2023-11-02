@@ -45,7 +45,7 @@ def refractive_index(h_gp):
     return n
 
 
-class Atmopshere(object):
+class Atmopshere:
     pass
 
 
