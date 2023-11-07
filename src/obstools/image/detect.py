@@ -12,10 +12,10 @@ from photutils import detect_sources, detect_threshold
 
 # local
 import recipes.pprint as pp
-from recipes import caching, string
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
+from recipes import caching, dicts, string
 from recipes.oo.property import classproperty
 from recipes.decorators import update_defaults
 from motley.table import Table
@@ -122,9 +122,9 @@ class DetectionBase(LoggingMixin):
         """
 
         # self.logger.debug('Running source detection algorithm: {!r} {}', )
-        code = self.post_process.__code__
-        post = {key: kws.pop(key) for key in code.co_varnames[3:code.co_argcount]
-                if key in kws}
+        code = self.post_process.__wrapped__.__code__
+        i0, nkwo = code.co_argcount, code.co_kwonlyargcount
+        kws, post = dicts.split(kws, code.co_varnames[i0:i0 + nkwo])
 
         # Initialize
         seg_data = self.fit_predict(image, mask, **kws)
@@ -134,7 +134,7 @@ class DetectionBase(LoggingMixin):
         raise NotImplementedError
 
     @update_defaults(CONFIG.filter('multi_threshold'))
-    def post_process(self, image, seg_data, npixels,
+    def post_process(self, image, seg_data, *, npixels,
                      edge_cutoff, edge_fraction,
                      monolithic, roundness,
                      dilate, deblend):
