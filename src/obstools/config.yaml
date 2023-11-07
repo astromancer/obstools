@@ -1,3 +1,23 @@
+image:
+    detect:
+        algorithm:  sigma_threshold
+        npixels:            7
+        edge_cutoff:        null
+        edge_fraction:      0.5  # maximum fractional area of source inside border region
+        monolithic:         True
+        roundness:          [0.5, 1.5]
+        dilate:             0
+        deblend:            False
+
+        # MultiThreshold parameters
+        multi_threshold:
+            snr:            [10, 7, 5, 3]
+            npixels:        [ 7, 5, 3]
+            deblend:        [True, False]
+            dilate:         auto
+            edge_cutoff:    null
+            max_iter:       5
+
 
 lc:
     io:

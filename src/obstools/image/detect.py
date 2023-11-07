@@ -1,7 +1,6 @@
 
 
 # std
-import operator as op
 import functools as ftl
 from collections import defaultdict
 
@@ -14,14 +13,16 @@ from photutils import detect_sources, detect_threshold
 # local
 import recipes.pprint as pp
 from recipes import caching, string
+from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
 from recipes.oo.property import classproperty
+from recipes.decorators import update_defaults
 from motley.table import Table
-from recipes.dicts import AttrReadItem
 
 # relative
 from ..modelling import UnconvergedOptimization
+from .utils import make_border_mask
 
 
 # TODO: watershed segmentation on the negative image ?
@@ -29,27 +30,13 @@ from ..modelling import UnconvergedOptimization
 
 # ---------------------------------------------------------------------------- #
 # defaults
-DEFAULT_ALGORITHM = 'sigma_threshold'
-NPIXELS = 7
-EDGE_CUTOFF = None
-EDGE_FRACTION = 0.5  # maximum fractional area of source inside border region
-MONOLITHIC = True
-ROUNDNESS = (0.5, 1.5)
-DILATE = 0
-DEBLEND = False
 
-# MultiThreshold parameter defaults
-MULTI_THRESH_DEFAULTS = AttrReadItem(
-    snr=(10, 7, 5, 3),
-    npixels=(7, 5, 3),
-    deblend=(True, False),
-    dilate='auto',
-    edge_cutoff=None,
-    max_iter=5
-)
+CONFIG = ConfigNode.load_module(__file__)
 
+# CONFIG_MULTI_THRESH, CONFIG = CONFIG.split('multi_threshold')
 
 # ---------------------------------------------------------------------------- #
+
 
 class DetectionBase(LoggingMixin):
     """Base class for source detection."""
@@ -146,10 +133,11 @@ class DetectionBase(LoggingMixin):
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
-    def post_process(self, image, seg_data, npixels=NPIXELS,
-                     edge_cutoff=EDGE_CUTOFF, edge_fraction=EDGE_FRACTION,
-                     monolithic=MONOLITHIC, roundness=ROUNDNESS,
-                     dilate=DILATE, deblend=DEBLEND):
+    @update_defaults(CONFIG.filter('multi_threshold'))
+    def post_process(self, image, seg_data, npixels,
+                     edge_cutoff, edge_fraction,
+                     monolithic, roundness,
+                     dilate, deblend):
         #
         self.logger.info('Post-processing detected sources with criteria:\n{}',
                          pp.pformat(locals(), ignore=('self', 'image', 'seg_data')))
@@ -535,15 +523,11 @@ class MultiThreshold(_SourceDetectionLoop):
     # group labels
     # auto_key_template = 'sources{count}'
 
-    def __init__(self, max_iter=MULTI_THRESH_DEFAULTS.max_iter, model=None):
+    def __init__(self, max_iter=CONFIG.multi_threshold.max_iter, model=None):
         super().__init__('sigma_threshold', model, max_iter)
 
-    def __call__(self, image, mask=False,
-                 snr=MULTI_THRESH_DEFAULTS.snr,
-                 npixels=MULTI_THRESH_DEFAULTS.npixels,
-                 deblend=MULTI_THRESH_DEFAULTS.deblend,
-                 dilate=MULTI_THRESH_DEFAULTS.dilate,
-                 edge_cutoff=MULTI_THRESH_DEFAULTS.edge_cutoff):
+    @update_defaults(CONFIG.multi_threshold, mask=False)
+    def __call__(self, image, mask, snr, npixels, deblend, dilate, edge_cutoff):
         """
 
         Parameters
@@ -585,7 +569,7 @@ class MultiThreshold(_SourceDetectionLoop):
                                 deblend=deblend,
                                 dilate=dilate,
                                 edge_cutoff=edge_cutoff,
-                                max_iter=max_iter)
+                                max_iter=CONFIG.multi_threshold.max_iter)
 
 
 class SourceDetectionDescriptor:
@@ -593,7 +577,7 @@ class SourceDetectionDescriptor:
     A descriptor object for managing source detection algorithms.
     """
 
-    def __init__(self, algorithm=DEFAULT_ALGORITHM, *args, **kws):
+    def __init__(self, algorithm=CONFIG.algorithm, *args, **kws):
         self.algorithm = algorithm
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
 
@@ -645,7 +629,7 @@ class SourceDetectionMixin:
     can be used to construct image models from images.
     """
 
-    detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
+    detection = SourceDetectionDescriptor(CONFIG.algorithm)
 
     @classmethod
     def from_image(cls, image, detect=True, **detect_opts):
@@ -675,7 +659,7 @@ class SourceDetectionMixin:
         # select source detection algorithm
         if isinstance(detect, dict):
             detect_opts = dict(detect, **detect_opts)
-            detect = DEFAULT_ALGORITHM
+            detect = CONFIG.algorithm
 
         if isinstance(detect, str) and cls.detection.algorithm != detect:
             # switch algorithms
