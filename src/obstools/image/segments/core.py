@@ -19,6 +19,7 @@ from photutils.segmentation import SegmentationImage, deblend_sources
 # local
 from recipes import api, dicts
 from recipes.functionals import echo0
+from recipes.oo.temp import temporarily
 from recipes.logging import LoggingMixin
 
 # relative
@@ -26,13 +27,14 @@ from ...utils import prod
 from ...stats import geometric_median
 from ..utils import get_overlap
 from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
+from .utils import is_lazy
 from .slices import SliceDict
 from .trace import trace_boundary
 from .stats import MaskedStatsMixin
-from .utils import is_lazy
 from .groups import LabelGroupsMixin, auto_id
 from .display import SegmentPlotter, make_cmap
 from .masks import MaskContainer, SegmentMasksMixin
+
 
 # ---------------------------------------------------------------------------- #
 KNOWN_BG_STATS = {'mean', 'median'}
@@ -1380,9 +1382,14 @@ class SegmentedImage(SegmentationImage,     # base
                     self.data[s][bb] = label
 
     def deblend(self, image, npixels, **kws):
-        return self.__class__(
-            deblend_sources(image, self.data, npixels, **kws).data
-        )
+        
+        # compute areas needed for deblend below
+        self.areas 
+        
+        with temporarily(self, slices=list(self.slices.values())[1:]):
+            return self.__class__(
+                deblend_sources(image, self, npixels, progress_bar=False, **kws).data
+            )
 
     def blend(self):
         """
