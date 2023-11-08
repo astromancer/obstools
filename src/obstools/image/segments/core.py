@@ -222,7 +222,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     # Source detection
     # ------------------------------------------------------------------------ #
-    detection = SourceDetectionDescriptor(CONFIG.detect.algorithm)
+    detection = SourceDetectionDescriptor(CONFIG.parent.detect.algorithm)
 
 
     # Constructors

@@ -35,9 +35,12 @@ from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 from recipes.string import pluralize, strings
+from recipes.decorators import update_defaults
 
 # relative
+from . import CONFIG
 from .io import _FilePicklable
+from .utils import is_property
 from .image.noise import CCDNoiseModel
 from .image.sample import ImageSamplerMixin
 from .image.detect import SourceDetectionMixin
@@ -50,24 +53,12 @@ from .image.calibration import ImageCalibratorMixin
 # TODO: # each item in this container should have  MultivariateTimeSeries
 #  containing changes of observed brightness (etc ...) over time
 
-# ---------------------------------------------------------------------------- #
-# defaults
-SAMPLE_STAT = 'median'
-DEPTH = 5
-
-DETECT_REPORT_STYLE = {'title_style': ('B', '_'),
-                       'extend': 2}
-
 
 # ---------------------------------------------------------------------------- #
 get_msg = op.attrgetter('message')
 
 
-def is_property(v):
-    return isinstance(v, property)
-
 # ---------------------------------------------------------------------------- #
-
 
 class NoFile(Null):
     pass
@@ -130,6 +121,8 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
         # multiple roots: return None
 
 
+# ---------------------------------------------------------------------------- #
+
 class ImageHDU(PrimaryHDU,
                ImageSamplerMixin,
                ImageCalibratorMixin,
@@ -147,7 +140,8 @@ class ImageHDU(PrimaryHDU,
 
         return PrimaryHDU.readfrom(fileobj, checksum, ignore_missing_end, **kws)
 
-    def detect(self, stat=SAMPLE_STAT, depth=DEPTH, interval=..., report=True, **kws):
+    @update_defaults(CONFIG.image.sample)
+    def detect(self, stat, min_depth, interval=..., report=True, **kws):
         """
         Cached source detection for HDUs.
 
@@ -155,14 +149,10 @@ class ImageHDU(PrimaryHDU,
         ----------
         stat : str, optional
             Statistic to use, by default 'median'.
-        depth : int, optional
+        min_depth : int, optional
             [description], by default 5
         snr : int, optional
             [description], by default 3
-
-        Examples
-        --------
-        >>> 
 
         Returns
         -------
@@ -170,14 +160,14 @@ class ImageHDU(PrimaryHDU,
             SegmentedImage
         """
         # NOTE: `get_sample_image` and `detection` are both cached for performance
-        image = self.get_sample_image(stat, depth, interval)
+        image = self.get_sample_image(stat, min_depth, interval)
 
         if report is True:
-            report = DETECT_REPORT_STYLE
+            report = CONFIG.detect.report
         if report:
             report = {**report, 'title': self.file.name}
 
-        return self.detection(image, **kws, report=report)
+        return super().detect(image, **kws, report=report)
 
     @property
     def file(self):
@@ -243,6 +233,7 @@ class ImageHDU(PrimaryHDU,
 # class PPrintHelper(AttrTable):
 #     pass
 
+# ---------------------------------------------------------------------------- #
 
 class GlobIndexing(IndexingMixin):
     """
@@ -315,8 +306,6 @@ class GlobIndexing(IndexingMixin):
 
         return super().__getitem__(key)
 
-#
-
 
 class CampaignType(SelfAware, ListOf):
     """metaclass to avoid conflicts"""
@@ -355,15 +344,13 @@ class PhotCampaign(PPrintContainer,
     # init helpers
 
     # Pretty representations for __str__ and __repr__
-    pretty = PrettyPrinter(max_lines=25,
-                           max_items=100,
-                           sep=' | ',
-                           item_str=op.attrgetter('file.name'))
+    pretty = PrettyPrinter(
+        item_str=op.attrgetter(CONFIG.campaign['pprint'].pop('attr')),
+        **CONFIG.campaign['pprint']
+    )
 
     # Initialize pprint helper
-    tabulate = AttrTable(
-        ['name', 'target', 'obstype', 'nframes', 'ishape', 'binning']
-    )
+    tabulate = AttrTable(CONFIG.campaign.tabulate)
 
     #
     @classmethod
@@ -527,7 +514,8 @@ class PhotCampaign(PPrintContainer,
 
         return self.__class__(np.hstack((self.data, other.data)))
 
-    def coalign(self, sample_stat=SAMPLE_STAT, depth=DEPTH, plot=False, **kws):
+    @update_defaults(CONFIG.image.sample, sample_stat=CONFIG.image.sample.stat)
+    def coalign(self, sample_stat, min_depth, plot=False, **detection):
         """
         Perform image alignment internally for sample images from all stacks in
         this campaign by the method of point set registration.  This is
@@ -540,14 +528,14 @@ class PhotCampaign(PPrintContainer,
 
         Parameters
         ----------
-        depth : float
-            Simulated exposure depth (in seconds) of sample images drawn from
+        min_depth : float
+            Simulated exposure min_depth (in seconds) of sample images drawn from
             each of the image stacks in the run. This determined how many images
             from the stack will be used to create the sample image.
         sample_stat : str or callable, default='median'
             The statistic that will be used to compute the sample image from the
             stack of sample images drawn from the original stack.
-        find_kws : dict
+        detection : dict
             Keywords for object detection algorithm.
         plot: bool
             Whether to plot diagnostic figures
@@ -571,7 +559,7 @@ class PhotCampaign(PPrintContainer,
         # For each telescope, align images wrt each other
         for i in order:
             registers[i] = groups[keys[i]]._coalign(
-                sample_stat, depth, plot=plot, **kws)
+                sample_stat, min_depth, plot=plot, **detection)
 
         # match coordinates of registers against each other
         reg = registers[order[0]]
@@ -593,25 +581,25 @@ class PhotCampaign(PPrintContainer,
         # reg.data, _ = cosort(reg.order, reg.data)
         return reg
 
-    def _coalign(self, sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
-                 plot=False, **kws):
+    @update_defaults(CONFIG.image.sample, sample_stat=CONFIG.image.sample.stat)
+    def _coalign(self, sample_stat, min_depth, primary, plot, **kws):
         # check
         assert not self.varies_by('telescope')  # , 'camera')
 
-        from .image.registration import ImageRegister
+        from .image.register import ImageRegister
 
         # If no reference image indicated by user-specified `primary`, choose
         # image with highest resolution if any, otherwise, just take the first.
         # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
 
         # self.logger.debug('PRIMARY = {}', primary)
-        reg = ImageRegister.from_hdus(self, sample_stat, depth, primary, **kws)
+        reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)
         reg.fit()
 
         # first = self[primary or 0]
         # First fit detects sources and measures their CoM to establish a point
         # cloud for the coherent point drift model
-        # kws = dict(sample_stat=sample_stat, depth=depth, refine=False)
+        # kws = dict(sample_stat=sample_stat, min_depth=min_depth, refine=False)
         # reg(first, **kws)
         # Other images are fit concurrently
         # order = [primary, *np.delete(np.arange(len(self)), primary)]
@@ -645,8 +633,11 @@ class PhotCampaign(PPrintContainer,
         return reg
 
     @doc.splice(coalign, 'Parameters')
-    def coalign_survey(self, survey=None, fov=None, fov_stretch=1.2,
-                       sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
+    @update_defaults(CONFIG.image.register,
+                     CONFIG.image.sample,
+                     sample_stat=CONFIG.image.sample.stat)
+    def coalign_survey(self, survey='dss', fov=None, fov_stretch=1.2,
+                       sample_stat='median', min_depth=5, primary=None,
                        plot=False, **kws):
         """
         Align all the image stacks in this campaign with a survey image centred
@@ -680,15 +671,14 @@ class PhotCampaign(PPrintContainer,
 
         """
 
-        from .image.registration import ImageRegisterDSS
+        from .image.register import ImageRegisterDSS
 
         survey = survey.lower()
         if survey != 'dss':
             raise NotImplementedError('Only support for DSS image lookup atm.')
 
         # coalign images with each other
-        reg = self.coalign(sample_stat, depth, plot,
-                           primary=primary, **kws)
+        reg = self.coalign(sample_stat, min_depth, plot, primary=primary, **kws)
 
         # pick the DSS FoV to be slightly larger than the largest image
         if fov is None:
@@ -698,20 +688,26 @@ class PhotCampaign(PPrintContainer,
         dss = ImageRegisterDSS(self[reg.primary].coords, fov, **kws)
         dss.fit_register(reg, refine=False)
         dss.register()
+
         dss.order = reg.order
 
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
-        
+
         # for hdu, wcs in zip(self, dss.build_wcs(self)):
         #     hdu.wcs = wcs
-            
+
         return dss
 
+    @update_defaults(CONFIG.image.register,
+                     CONFIG.image.sample,
+                     sample_stat=CONFIG.image.sample.stat)
     def coalign_dss(self, fov=None, fov_stretch=1.2,
-                    sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
-                    plot=False, **kws):
-        return self.coalign_survey('dss', fov, fov_stretch, sample_stat, depth,
+                    sample_stat='median', min_depth=5,
+                    primary=None, plot=False, **kws):
+        #
+        return self.coalign_survey('dss', fov, fov_stretch,
+                                   sample_stat, min_depth,
                                    primary, plot, **kws)
 
     def close(self):

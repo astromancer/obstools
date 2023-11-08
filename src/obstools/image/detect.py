@@ -29,14 +29,35 @@ from .utils import make_border_mask
 # TODO: detect_gmm():
 
 # ---------------------------------------------------------------------------- #
-# defaults
 
 CONFIG = ConfigNode.load_module(__file__)
 
-# CONFIG_MULTI_THRESH, CONFIG = CONFIG.split('multi_threshold')
 
 # ---------------------------------------------------------------------------- #
 
+def get_config(detect, detect_opts):
+    
+    # Detect objects & segment image
+    if detect is True:
+        detect = CONFIG.filter('multi_threshold')
+
+    if detect is False:
+        # short circuit the detection loop
+        detect_opts['max_iter'] = 0
+        return detect_opts
+
+    if isinstance(detect, str):
+        detect_opts['algorithm'] = detect
+        return detect_opts
+
+    if isinstance(detect, dict):
+        return dict(detect, **detect_opts)
+
+    raise TypeError(f'Invalid type for parameter `detect`: {type(detect)}.'
+                    'Require an object type bool, str or dict.')
+
+
+# ---------------------------------------------------------------------------- #
 
 class DetectionBase(LoggingMixin):
     """Base class for source detection."""
@@ -85,7 +106,7 @@ class DetectionBase(LoggingMixin):
 
     def detect(self, image, mask=None, *args, report=False, **kws):
 
-        seg = self.__call__(image, mask, *args, **kws)
+        seg = self(image, mask, *args, **kws)
 
         if report:
             if report is True:
@@ -572,7 +593,7 @@ class MultiThreshold(_SourceDetectionLoop):
                                 max_iter=CONFIG.multi_threshold.max_iter)
 
 
-class SourceDetectionDescriptor:
+class SourceDetectionDescriptor(LoggingMixin):
     """
     A descriptor object for managing source detection algorithms.
     """
@@ -582,6 +603,7 @@ class SourceDetectionDescriptor:
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
 
     def __call__(self, image, *args, **kws):
+        # NOTE: caching happens here
         return self._algorithm.detect(image, *args, **kws)
 
     def __repr__(self):
@@ -617,6 +639,7 @@ class SourceDetectionDescriptor:
 
     @algorithm.setter
     def algorithm(self, algorithm):
+        self.logger.debug('Switcing detection algorithm: {}', algorithm)
         self._algorithm = DetectionBase.resolve(algorithm)()
 
     def report(self, image, seg, show=5, **kws):
@@ -655,23 +678,6 @@ class SourceDetectionMixin:
         -------
 
         """
-
-        # select source detection algorithm
-        if isinstance(detect, dict):
-            detect_opts = dict(detect, **detect_opts)
-            detect = CONFIG.algorithm
-
-        if isinstance(detect, str) and cls.detection.algorithm != detect:
-            # switch algorithms
-            cls.detection.algorithm = detect
-
-        # Detect objects & segment image
-        # detect_opts = dict(detect if isinstance(detect, dict) else {},
-        #                    **detect_opts)
-        if not detect:
-            # short circuit the detection loop
-            detect_opts['max_iter'] = 0
-
         # Basic constructor that initializes the object from an image. The
         # base version here runs a detection algorithm to separate foreground
         # objects and background, but doesn't actually include any physically
@@ -679,9 +685,15 @@ class SourceDetectionMixin:
         # models to the segments.
 
         # Detect objects & init with segmented image
-        return cls.detection(image, **detect_opts)
+        return cls.detect(image, **get_config(detect, detect_opts))
 
-    def detect(self, image, *args, report=True, **kws):
+    def detect(self, image, algorithm=CONFIG.algorithm, *args, report=True, **kws):
+
+        # select source detection algorithm
+        if isinstance(algorithm, str) and self.detection.algorithm != algorithm:
+            # switch algorithms
+            self.detection.algorithm = algorithm
+
         # subclasses to implement specifics by overwriting this method
         return self.detection(image, *args, report=report, **kws)
 

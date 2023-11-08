@@ -2,21 +2,26 @@
 Sampling and statistics of images from a stack.
 """
 
-# std
-from collections.abc import Collection
-
 # third-party
 import numpy as np
 from astropy.utils import lazyproperty
 
 # local
-from recipes.caching import Cached as cached
+from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
+from recipes.caching import Cached as cached
 from recipes.utils import duplicate_if_scalar
+from recipes.decorators import update_defaults
 
 # relative
 from .. import _hdu_hasher, cachePaths
 
+
+# ---------------------------------------------------------------------------- #
+CONFIG = ConfigNode.load_module(__file__)
+
+
+# ---------------------------------------------------------------------------- #
 
 class BootstrapResample(LoggingMixin):
     """
@@ -73,10 +78,10 @@ class BootstrapResample(LoggingMixin):
         if subset is ...:
             subset = size
 
-        if not isinstance(subset, slice):    
+        if not isinstance(subset, slice):
             # make a slice
             subset = slice(*duplicate_if_scalar(subset, 1, raises=False))
-        
+
         *interval, _ = subset.indices(size)
         i, j = interval
         isize = j - i
@@ -91,7 +96,7 @@ class BootstrapResample(LoggingMixin):
                 'with replacement, there will be repeat elements in the drawn '
                 'sample. This may skew the computed statistic.', isize, n
             )
-        
+
         # NB!! Don't slice here if we are sampling from entire file.
         if size == isize == n:
             self.logger.debug('Sample size equals data size. Returning entire '
@@ -100,7 +105,7 @@ class BootstrapResample(LoggingMixin):
 
         self.logger.debug('Selecting {:d} elements from interval ({:d}, {:d}) '
                           'for sample.', n, *interval)
-                          
+
         # get frame indices (subspace sampled with replacement)
         return self.data[np.random.randint(i, j, n)]
 
@@ -115,24 +120,6 @@ class BootstrapResample(LoggingMixin):
 
     def median(self, n=None, subset=...):
         return np.ma.median(self.draw(n, subset), self.axis)
-
-# class ImageSampler(BootstrapResample):
-#     def __init__(self, stat='median', sample_size=None, subset=..., axis=0):
-#         #
-#         BootstrapResample.__init__(self, None, sample_size, subset, axis)
-#
-#         self.func = getattr(self, stat, None)
-#         if self.func is None:
-#             raise ValueError('Invalid statistic')
-#
-#     def __call__(self, data):
-#         self.func(data)
-#
-#
-# class ImageSamplerHDU(ImageSampler):
-#     def __init__(self, sample_size=None, subset=..., axis=0):
-#         # delay data
-#         BootstrapResample.__init__(self, None, sample_size, subset, axis)
 
 
 class ImageSamplerMixin:
@@ -172,6 +159,7 @@ class ImageSamplerMixin:
     # disabled by default. We enable this cache in the pipeline to reduce
     # unnecessary repeat computation.
     @cached(cachePaths.samples, typed={'self': _hdu_hasher}, enabled=False)
+    @update_defaults(CONFIG)
     def get_sample_image(self, stat='median', min_depth=5, subset=...):
         """
         Get sample image to a certain minimum simulated exposure depth by
@@ -195,10 +183,12 @@ class ImageSamplerMixin:
 
         n = int(np.ceil(min_depth // self.timing.exp)) or 1
 
-        self.logger.info('Computing {stat} of {n} images (simulated exposure '
-                         'depth of {min_depth:.1f} seconds) for sample image '
-                         'from {name!r} for the data interval {subset}.',
-                         **locals(), name=self.file.name)
+        self.logger.info(
+            'Computing {stat} of {n} images (simulated exposure depth of '
+            '{min_depth:.1f} seconds) for sample image from {name!r} for the '
+            'full data set.' if subset is ... else 'data interval {subset}.',
+            **locals(), name=self.file.name
+        )
 
         sampler = getattr(self.sampler, stat)
         return sampler(n, subset)

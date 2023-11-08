@@ -278,7 +278,7 @@ def scale_combine(images, stat='mean'):
 def deep_sky(images, fovs, params, resolution=None, statistic='mean',
              masked=True):
     # todo rename
-    from obstools.image.registration import roto_translate_yx
+    from obstools.image.register import roto_translate_yx
 
     data = []
     gy, gx = [], []

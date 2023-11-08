@@ -29,6 +29,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 from loguru import logger
+from drizzle.drizzle import Drizzle
 from mpl_multitab import MplMultiTab
 from joblib import Parallel, delayed
 from astropy import wcs
@@ -40,16 +41,17 @@ from scipy.interpolate import NearestNDInterpolator
 
 # local
 import recipes.pprint as pp
+from recipes import api
 from recipes.string import indent
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.lists import cosort, split_like
 from recipes.utils import duplicate_if_scalar
+from recipes.decorators import update_defaults
 
 # relative
-from .. import transforms as tf
+from .. import CONFIG, transforms as tf
 from ..campaign import ImageHDU
-from ..stats import geometric_median
 from ..modelling import UnconvergedOptimization
 from ..utils import STScIServerError, get_coordinates, get_dss
 from .utils import non_masked
@@ -60,12 +62,7 @@ from .image import ImageContainer, SkyImage
 
 
 # ---------------------------------------------------------------------------- #
-#  defaults
-HOP = True
-REFINE = True
-SAMPLE_STAT = 'median'
-DEPTH = 5
-PLOT = False
+cfg = CONFIG.image.register
 
 
 # ---------------------------------------------------------------------------- #
@@ -261,9 +258,9 @@ def plot_clusters(ax, features, labels, colours=None, cmap=None, nrs=False,
 #     return np.ma.MaskedArray(xy, nans)
 
 # estimate_source_locations / estimate_source_positions / measure_position_dither
-def _sanitize_data(xy, detect_freq_min):
+def _sanitize_data(xy, source_detection_threshold):
 
-    assert 0 < detect_freq_min < 1
+    assert 0 < source_detection_threshold < 1
 
     n, n_sources, _ = xy.shape
     nans = np.isnan(np.ma.getdata(xy))
@@ -283,7 +280,7 @@ def _sanitize_data(xy, detect_freq_min):
     # not be detected in many frames. Cluster centroids are not an accurate
     # estimator of relative position for these sources since it's an
     # incomplete sample. Only sources that are detected in at least
-    # `detect_freq_min` fraction of the frames will be used to calculate
+    # `source_detection_threshold` fraction of the frames will be used to calculate
     # frame xy offset.
 
     # Any measure of centrality for cluster centers is only a good estimator
@@ -294,7 +291,7 @@ def _sanitize_data(xy, detect_freq_min):
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
                     'measurements.', n_ignore, n, n_ignore / n)
 
-    # if detect_freq_min:
+    # if source_detection_threshold:
 
     n_detections_per_source = np.zeros(n_sources, int)
     w = np.where(~bad)[1]
@@ -302,7 +299,7 @@ def _sanitize_data(xy, detect_freq_min):
     n_detections_per_source[u] = np.bincount(w)[u]
 
     f_det = (n_detections_per_source / n_use)
-    use_sources = f_det > detect_freq_min
+    use_sources = f_det > source_detection_threshold
     i_use, = np.where(use_sources)
     if not len(i_use):
         raise ValueError(
@@ -314,7 +311,7 @@ def _sanitize_data(xy, detect_freq_min):
     if np.any(~use_sources):
         logger.info('Ignoring {:d}/{:d} sources with low (<={:.0%}) detection '
                     'frequency for frame shift measurement.',
-                    n_sources - len(i_use), n_sources, detect_freq_min)
+                    n_sources - len(i_use), n_sources, source_detection_threshold)
 
     return xy, ~ignore_frames, use_sources, nans
 
@@ -329,8 +326,11 @@ def _select_data(xy, good, use_sources, nans):
     return xyc
 
 
-def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
-                            report=True):
+@api.synonyms(center='centre')
+@update_defaults(cfg.measure)
+def compute_centres_offsets(xy, outlier_distance=None,
+                            source_detection_threshold=0.9,
+                            centre=np.ma.mean, report=True):
     """
     Measure the relative positions of detected sources from the individual
     location measurements in xy. Use the locations of the most-often
@@ -339,9 +339,9 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
     Parameters
     ----------
     xy:     array, shape (n_points, n_sources, 2)
-    d_cut:  float
+    outlier_distance:  float
         distance cutoff 
-    detect_freq_min: float
+    source_detection_threshold: float
         Required detection frequency of individual sources in order for
         them to be used
 
@@ -350,14 +350,14 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
     xy, centres, σxy, δxy, outlier_indices
     """
 
-    xy, good, use_sources, nans = _sanitize_data(xy, detect_freq_min)
+    xy, good, use_sources, nans = _sanitize_data(xy, source_detection_threshold)
     n, n_sources, _ = xy.shape
 
     # NOTE: we actually want to know where the cluster centres would be
     #  without a specific point to measure delta better
 
     # first estimate of relative positions comes from unshifted cluster centers
-    # Compute cluster centres as geometric median
+    # Compute cluster centres with user `centre` function
     xyc = _select_data(xy, good, use_sources, nans)
 
     # delay centre compute for fainter sources until after re-centering
@@ -373,7 +373,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
     # compute positions of all sources with frame offsets measured from best
     # and brightest sources
     centres[use_sources], σxy[use_sources], δxy[good], out = \
-        _measure_positions_offsets(xyc, centres[use_sources], d_cut)
+        _measure_positions_offsets(xyc, centres[use_sources], outlier_distance, centre)
     #
     for i in np.where(~use_sources)[0]:
         # mask for bad frames in δxy will propagate here
@@ -392,7 +392,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
     if report:
         try:
             #                                          counts
-            report_measurements(xy, centres, σxy, δxy, None, detect_freq_min)
+            report_measurements(xy, centres, σxy, δxy, None, source_detection_threshold)
 
         except Exception as err:
             logger.exception('Report failed')
@@ -400,7 +400,7 @@ def compute_centres_offsets(xy, d_cut=None, detect_freq_min=0.9, centre=np.mean,
     return xy, centres, σxy, δxy, outlier_indices
 
 
-def _measure_positions_offsets(xy, centres, d_cut=None, centroid=geometric_median):
+def _measure_positions_offsets(xy, centres, outlier_distance, centre_func):
 
     # ensure we have at least some centres
     assert not np.all(np.ma.getmask(centres))
@@ -422,12 +422,12 @@ def _measure_positions_offsets(xy, centres, d_cut=None, centroid=geometric_media
 
         # shifted cluster centers (all sources)
         xy_shifted = xym - xy_offsets
-        # Compute cluster centres as geometric median of shifted clusters
+        # Compute cluster centres  median of shifted clusters
         centres = np.ma.empty((n_sources, 2))
         for i in range(n_sources):
-            centres[i] = centroid(xy_shifted[:, i])
+            centres[i] = centre_func(xy_shifted[:, i], 1)
 
-        if d_cut is None:
+        if outlier_distance is None:
             # break out here without removing any points
             return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
@@ -443,7 +443,7 @@ def _measure_positions_offsets(xy, centres, d_cut=None, centroid=geometric_media
             warnings.filterwarnings('ignore')
             d = np.sqrt((cxr * cxr).sum(-1))
 
-        out_new = (d > d_cut)
+        out_new = (d > outlier_distance)
         out_new = np.ma.getdata(out_new) | np.ma.getmask(out_new)
 
         changed = (outliers != out_new).any()
@@ -458,7 +458,7 @@ def _measure_positions_offsets(xy, centres, d_cut=None, centroid=geometric_media
             raise ValueError('Too many outliers!!')
 
         logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
-                    n_out, n_points, (n_out / n_points), d_cut)
+                    n_out, n_points, (n_out / n_points), outlier_distance)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
 
@@ -615,7 +615,8 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
                              col_headers=col_headers,
                              totals=[-1],
                              formatters=formatters,
-                             **TABLE_STYLE)
+                             )
+    # **cfg.measure.report
 
     # fix formatting with percentage in total.
     # TODO Still need to think of a cleaner solution for this
@@ -625,6 +626,11 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     logger.info('\n{:s}{:s}', tbl, extra)
 
     return tbl
+
+
+# ---------------------------------------------------------------------------- #
+# TODO: switch for units to arcminutes or whatever ??
+# TODO: uncertainty on center of mass from pixel noise!!!
 
 
 class ImageRegister(ImageContainer, LoggingMixin):
@@ -656,13 +662,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: say something about the matching algorithm and that it's lightning
     #  fast for nearly_aligned images with few sources
 
-    # TODO: move to config
-    find_kws = dict(snr=3.,
-                    npixels=5,
-                    edge_cutoff=2,
-                    deblend=False)
-    """default source finding keywords"""
-
     refining = True
     """Refine fitting by running gradient descent after basin-hopping search."""
 
@@ -670,25 +669,26 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # _search_area_stretch = 1.25
 
     # Sigma for GMM as a fraction of minimal distance between sources
-    _dmin_frac_sigma = 3
-    _sigma_fallback = 10  # TODO: move to config
+    _sigma_distance_scale = cfg.align.sigma_distance_scale
+    _sigma_fallback = cfg.align.sigma_fallback
 
-    # TODO: switch for units to arcminutes or whatever ??
-    # TODO: uncertainty on center of mass from pixel noise!!!
+    # ------------------------------------------------------------------------ #
 
     @classmethod
-    def from_hdus(cls, run, sample_stat=SAMPLE_STAT, depth=DEPTH, primary=None,
-                  fit_angle=True, **kws):
+    @update_defaults(sample_stat=CONFIG.image.sample.stat, **CONFIG.image.sample)
+    def from_hdus(cls, run, sample_stat='median', min_depth=5,
+                  primary=None, fit_angle=True, **kws):
         # get sample images etc
         # `from_hdu` is used since the sample image and source detection results
         # are cached (persistantly), so this should be fast on repeated calls.
-        images = [SkyImage.from_hdu(hdu, sample_stat, depth,
-                                    **{**cls.find_kws, **kws})
+        find_kws = CONFIG.image.detect.filter('multi_threshold')
+        images = [SkyImage.from_hdu(hdu, sample_stat, min_depth,
+                                    **{**find_kws, **kws})
                   for hdu in run]
         return cls(images, primary=primary, fit_angle=fit_angle, **kws)
 
     # @classmethod                # p0 -----------
-    # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=PLOT,
+    # def from_images(cls, images, fovs, p0=(0,0,0), primary=None, plot=cfg.plot,
     #                 fit_angle=True, **kws):
 
     #     # initialize workers
@@ -700,10 +700,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #         )
 
     #     return cls._from_images(images, fovs, angles=0, primary=None,
-    #                             plot=PLOT, fit_angle=True, **kws)
+    #                             plot=cfg.plot, fit_angle=True, **kws)
 
     # @classmethod                # p0 -----------
-    # def _from_images(cls, images, fovs, angles=0, primary=None, plot=PLOT,
+    # def _from_images(cls, images, fovs, angles=0, primary=None, plot=cfg.plot,
     #                  fit_angle=True, **kws):
 
     #     n = len(images)
@@ -742,7 +742,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # TODO: init from single image???
 
         if kws:
-            self.find_kws.update(kws)
+            self.find_kws = {**CONFIG.image.detect.filter('multi_threshold'),
+                             **kws}
 
         # init container
         ImageContainer.__init__(self, images, fovs)
@@ -769,7 +770,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.fit_angle = bool(fit_angle)
         self._xy = None
         self.primary = int(primary)
-        self.target_coords_pixels = None
         self.sigmas = None
         # self._xy = None
         # keep track of minimal separation between sources
@@ -925,7 +925,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                            'fallback value: {}', self._sigma_fallback)
             return self._sigma_fallback
 
-        return self.min_dist / self._dmin_frac_sigma
+        return self.min_dist / self._sigma_distance_scale
 
     @lazyproperty
     def sigma(self):
@@ -976,7 +976,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
                          '{self.__class__.__name__}()(image, fov)')
 
     # TODO: refine_mcmc
-    def fit(self, obj=None, p0=None, hop=HOP, refine=None, plot=PLOT, **kws):
+    def fit(self, obj=None, p0=None,
+            hop=cfg.hop, refine=None,
+            plot=cfg.plot, **kws):
         """
         Flexible fitting method that dispatches fitting method based on the
         type of `obj`, and aggregates results. If this is the first time
@@ -998,11 +1000,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # dispatch fit
         refine = refine or self.refining
-        fitters = {type(None):              self._fit_internal,
-                   ImageRegister:           self.fit_register,
-                   (np.ndarray, SkyImage):  self.fit_image,
-                   abc.Collection:          self.fit_sequence,
-                   ImageHDU:                self.fit_hdu}
+        fitters = {
+            type(None):              self._fit_internal,
+            ImageRegister:           self.fit_register,
+            (np.ndarray, SkyImage):  self.fit_image,
+            abc.Collection:          self.fit_sequence,
+            ImageHDU:                self.fit_hdu
+        }
         for types, fit in fitters.items():
             if isinstance(obj, types):
                 break
@@ -1043,7 +1047,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # self[i:] = self.fit_sequence(obj, p0, hop, refine, plot, **kws)
         # return self
 
-    def fit_register(self, reg, p0=None, hop=HOP, refine=REFINE, plot=PLOT, **kws):
+    def fit_register(self, reg, p0=None,
+                     hop=cfg.hop, refine=cfg.refine,
+                     plot=cfg.plot, **kws):
         """
         cross match with another `ImageRegister` and aggregate points
         """
@@ -1067,8 +1073,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #     ax.plot(*xy.T, 'x')
         # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
 
-    def fit_sequence(self, items, p0=None, hop=HOP, refine=REFINE,
-                     plot=PLOT, njobs=1, **kws):
+    def fit_sequence(self, items, p0=None,
+                     hop=cfg.hop, refine=cfg.refine,
+                     plot=cfg.plot, njobs=1, **kws):
         #
         assert len(items)
 
@@ -1095,14 +1102,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # self.register()
         # return images
 
-    def fit_hdu(self, hdu, p0=None, hop=HOP, refine=REFINE,
-                plot=PLOT, sample_stat=SAMPLE_STAT, depth=DEPTH, **kws):
+    def fit_hdu(self, hdu, p0=None,
+                hop=cfg.hop, refine=cfg.refine,
+                plot=cfg.plot, sample_stat=CONFIG.image.sample.stat,
+                min_depth=CONFIG.image.sample.min_depth, **kws):
         """
 
         Parameters
         ----------
         hdu
-        depth
+        min_depth
         sample_stat
 
         Returns
@@ -1110,13 +1119,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         """
         return self.fit_image(
-            SkyImage.from_hdu(hdu, sample_stat, depth,
+            SkyImage.from_hdu(hdu, sample_stat, min_depth,
                               **{**self.find_kws, **kws}),
             p0, None, hop, refine, plot
         )
 
-    def fit_image(self, image, p0=None, hop=HOP, refine=REFINE,
-                  plot=PLOT, fov=None, **kws):
+    def fit_image(self, image, p0=None,
+                  hop=cfg.hop, refine=cfg.refine,
+                  plot=cfg.plot, fov=None, **kws):
         """
         If p0 is None:
             Search heuristic for image offset and rotation.
@@ -1154,7 +1164,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return image
 
     # @timer
-    def fit_points(self, xy, p0=None, hop=HOP, refine=REFINE, plot=PLOT):
+    def fit_points(self, xy, p0=None,
+                   hop=cfg.hop, refine=cfg.refine,
+                   plot=cfg.plot):
 
         if p0 is None:
             p0 = np.zeros(self.dof)
@@ -1187,12 +1199,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
             return pr
 
         if hop:
-            self.logger.debug('Gradient descent failed, falling back to previous result.')
+            self.logger.debug(
+                'Gradient descent failed, falling back to previous result.'
+            )
             return p
 
         raise UnconvergedOptimization()
 
-    def _dxy_hop(self, xy, plot=PLOT):
+    def _dxy_hop(self, xy, plot=cfg.plot):
         # This is a strategic brute force search along all the offset values
         # that will align pairs of points in the two fields for a known
         # rotation. One of the test offsets is the true offset value. Each
@@ -1243,7 +1257,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     # TODO: relative brightness
 
-    def refine(self, fit_angle=True, plot=PLOT):
+    def refine(self, fit_angle=True, plot=cfg.plot):
         """
         Refine alignment parameters by fitting transform parameters for each
         image using maximum likelihood objective for gmm model with peaks
@@ -1306,7 +1320,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                     + ' parameters.', ratio)
         return ratio
 
-    def register(self, clf=None, plot=PLOT):
+    def register(self, clf=None, plot=cfg.plot):
 
         self.check_has_data()
 
@@ -1381,17 +1395,38 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # relabel all segmentedImages for cross image consistency
         new_labels = []
+
         for cluster_labels, image in zip(self.labels_per_image, self):
             # relabel image segments
             image_labels = cluster_labels + 1
             reorder = ...
             if np.any(image.seg.labels != image_labels):
+                old = image.seg.copy()
                 image.seg.relabel_many(image_labels)
                 # have to reorder the features
                 use = (image_labels != 0)
                 reorder = [*image_labels[use].argsort(), *np.where(~use)[0]]
+
                 image.xy = image.xy[reorder]
                 image.counts = image.counts[reorder]
+
+                try:
+                    assert image.seg.nlabels == len(image.xy) == len(image.counts)
+                except Exception as err:
+                    import sys, textwrap
+                    from IPython import embed
+                    from better_exceptions import format_exception
+                    embed(header=textwrap.dedent(
+                            f"""\
+                            Caught the following {type(err).__name__} at 'register.py':1412:
+                            %s
+                            Exception will be re-raised upon exiting this embedded interpreter.
+                            """) % '\n'.join(format_exception(*sys.exc_info()))
+                    )
+                    raise
+                    
+                
+                    
 
             new_labels.extend(cluster_labels[reorder])
 
@@ -1422,7 +1457,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return xy, params
 
     # ------------------------------------------------------------------------ #
-    def get_centres(self, func=geometric_median):
+    def get_centres(self, func=np.ma.median):
         """
         Cluster centers via geometric median ignoring noise points
 
@@ -1502,8 +1537,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if n_sources > n_sources_most * 1.5:
             self.logger.info(
                 'Looks like we may be overfitting clusters. Image with most '
-                'sources has {n_sources_most}, while clustering produced '
-                '{n_sources} clusters. Maybe reduce bandwidth.'
+                'sources has {}, while clustering produced '
+                '{} clusters. Maybe reduce bandwidth.',
+                n_sources_most, n_sources
             )
 
     # def check_labelled(self):
@@ -1516,8 +1552,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #                     '`register` to fit clustering model '
         #                     'to the measured centre-of-mass points')
 
-    def recentre(self, centre_distance_cut=None, f_detect_measure=0.25,
-                 plot=PLOT):
+    @update_defaults(cfg.measure)
+    def recentre(self,
+                 outlier_distance=None,
+                 source_detection_threshold=0.25,
+                 plot=False):
         """
         Measure frame dither, recenter, and recompute object positions.
         This re-centering algorithm can accurately measure the position of
@@ -1532,8 +1571,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         Parameters
         ----------
-        centre_distance_cut
-        f_detect_measure
+        outlier_distance
+        source_detection_threshold
         plot
 
         Returns
@@ -1547,7 +1586,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         logger.info('Measuring cluster centres, frame xy-offsets')
         _, centres, xy_std, xy_offsets, outliers = \
-            compute_centres_offsets(xy, centre_distance_cut, f_detect_measure)
+            compute_centres_offsets(xy, outlier_distance, source_detection_threshold)
 
         # decide whether to accept new params! likelihood ratio test
         lhr = self.lh_ratio(
@@ -1674,7 +1713,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def drizzle(self, path, outwcs, pixfrac, ignore=()):
 
-        from drizzle.drizzle import Drizzle
+        self.logger.info('Creating drizzle image with pixfrac = {} at {!s}.',
+                         pixfrac, path)
 
         if len(self.wcss) != len(self) - len(ignore):
             raise ValueError('First do `reg.build_wcs(run)`.')
@@ -1682,14 +1722,28 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # Get the WCS for the output image
         drizzle = Drizzle(outwcs=outwcs, pixfrac=pixfrac)
 
-        # Add the input images to the existing output image
-        wcss = iter(self.wcss)
-        for i, image in enumerate(self):
-            if i not in ignore:
-                fscale = image.counts[image.seg.labels == 2].item()
-                data = (image.data - image.seg.mean(image.data, 0)) / fscale
-                drizzle.add_image(data, next(wcss),
-                                  expin=image.meta['EXPOSURE'])
+        try:
+            # Add the input images to the existing output image
+            wcss = iter(self.wcss)
+            for i, image in enumerate(self):
+                if i not in ignore:
+                    fscale = image.counts[image.seg.labels == 2].item()
+                    data = (image.data - image.seg.mean(image.data, 0)) / fscale
+                    drizzle.add_image(data, next(wcss),
+                                      expin=image.meta['EXPOSURE'])
+        except Exception as err:
+            import sys
+            import textwrap
+            from IPython import embed
+            from better_exceptions import format_exception
+            embed(header=textwrap.dedent(
+                f"""\
+                    Caught the following {type(err).__name__} at 'register.py':1710:
+                    %s
+                    Exception will be re-raised upon exiting this embedded interpreter.
+                    """) % '\n'.join(format_exception(*sys.exc_info()))
+            )
+            raise
 
         drizzle.write(path)
 
@@ -1938,13 +1992,20 @@ class ImageRegisterDSS(ImageRegister):
 
         # TODO: proper motion correction
         # TODO: move some of this code to utils
-
+        error = None
         for srv in self._servers:
             try:
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
                 break
-            except STScIServerError:
-                logger.warning('Failed to retrieve image from server: {!r}', srv)
+            except STScIServerError as error:
+                logger.warning('Failed to retrieve image from server: {!r}\n{}',
+                               srv, error)
+                error = error
+        else:
+            raise ValueError(
+                f'Could not retrieve image from any server in {self._servers}.'
+                f'Last error:\n{error}'
+            )
 
         # DSS data array
         data = self.hdu[0].data.astype(float)
@@ -1971,7 +2032,7 @@ class ImageRegisterDSS(ImageRegister):
 
     def remap_labels(self, target=None, flux_sort=False, trim=False):
         if target is None:
-            target, = self.clustering.predict([self.target_coords_pixels])
+            target, = self.clustering.predict([self.target_coords_pixel])
             target = self.labels[self.clustering.labels_ == target][0]
 
         return super().remap_labels(target, flux_sort)
@@ -2016,7 +2077,7 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
-    def register(self, clf=None, plot=PLOT):
+    def register(self, clf=None, plot=cfg.plot):
         # trim=True
         # if trim:
         #     self._trim_labels()

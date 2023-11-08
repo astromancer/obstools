@@ -1,6 +1,13 @@
 image:
+    sample:
+        stat:               median
+        min_depth:          5
+
     detect:
-        algorithm:  sigma_threshold
+        algorithm:          sigma_threshold
+        snr:                3
+
+        # post-processing filters
         npixels:            7
         edge_cutoff:        null
         edge_fraction:      0.5  # maximum fractional area of source inside border region
@@ -17,6 +24,102 @@ image:
             dilate:         auto
             edge_cutoff:    null
             max_iter:       5
+
+        report:
+            title_style:    [B, _]
+            extend:         2
+
+    register:
+        survey:                     dss
+        fov_stretch:                1.2
+        hop:                        True
+        fit_angle:                  True
+        refine:                     True
+        plot:                       False
+
+        measure:
+            centre:                         mean
+            source_detection_threshold:     0.25
+            outlier_distance:               Null
+            report:                         True
+        
+        align:
+            sigma_distance_scale:           3
+            sigma_fallback:                 10
+
+
+    display:
+        image:
+            cmap:           Null  # 'cmr.voltage_r',
+            hist:           False
+            sliders:        False
+            cbar:           False
+
+        contours:    
+            cmap:           hot
+            lw:             1.5
+
+        frame:
+            fc:             none
+            lw:             1
+            ec:             '0.5'
+
+        marker: 
+            marker:         x
+            color:          w
+            ls:             none
+
+        text: 
+            size:           xx-small
+            color:          w
+            weight:         heavy
+            offset:         5
+
+    segments:
+        display:
+            contours:  
+                cmap:       hot
+                alpha:      1
+                lw:         1.25
+                emboss:     2.5
+
+            text:  
+                color:      w
+                alpha:      0.5
+                weight:     heavy
+                va:         center
+                ha:         center
+                emboss:     [1, k]
+
+            console:
+                extend:     1
+                cmap:       null
+                contour:    [r, B]
+
+                stats:
+                    flux:       
+                        header:         Flux [ADU]
+                        thousands:      ' '
+                    com:        
+                        header:         Position (y, x) [px]
+                        significant:    1
+                    areas:      
+                        header:         Area [px²]
+
+                    roundness:  
+                        header:         Roundness
+                        significant:    3
+
+
+campaign:
+    pprint:
+        max_lines:  25
+        max_items:  100
+        sep:        ' | '
+        attr:       file.name
+
+    tabulate:
+        [name, target, obstype, nframes, ishape, binning]
 
 
 lc:
