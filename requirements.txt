@@ -1,15 +1,18 @@
 loguru
 addict
-anytree
-more_itertools
-stdlib_list
 pyyaml
+anytree
+decorator
+stdlib_list
+more_itertools
+better_exceptions
 
 numpy
-numpydoc
 joblib
 astropy
 photutils
+drizzle
+
 scikit_learn
 emcee
 
@@ -18,8 +21,8 @@ APLpy
 
 pyxides
 docsplice
-decorator
-better_exceptions
+numpydoc
+
 git+https://github.com/astromancer/motley
 git+https://github.com/astromancer/recipes
 git+https://github.com/astromancer/scrawl
