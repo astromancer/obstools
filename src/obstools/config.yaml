@@ -32,20 +32,120 @@ image:
     register:
         survey:                     dss
         fov_stretch:                1.2
-        hop:                        True
-        fit_angle:                  True
-        refine:                     True
-        plot:                       False
+
+        plot:
+            align:
+                # plot model probability image + matched coordinates for each image
+                show:       True
+                color:      r
+                marker:     o
+                ms:         12
+                mfc:        none
+
+            clusters:
+                show:               True
+                centres:            True
+                frames:             True
+                nrs:                True
+                show_bandwidth:     True
+                trim_labels:        False
+
+            mosaic:                 False
+
+
+        align:
+            hop:                        True
+            fit_angle:                  True
+            refine:                     True
+            
+            sigma_distance_scale:       3
+            sigma_fallback:             10
 
         measure:
             centre:                         mean
             source_detection_threshold:     0.25
             outlier_distance:               Null
             report:                         True
-        
-        align:
-            sigma_distance_scale:           3
-            sigma_fallback:                 10
+
+        cluster:
+            algorithm:              MeanShift
+            
+            plot:
+                features:
+                    s:                  25
+                    marker:             '*'
+                    cmap:               null
+                    label:              Centroids ({} images)
+                
+                centres:
+                    marker:             +
+                    color:              k
+                    ms:                 2.5
+                    alpha:              1
+
+                labels:
+                    size:               8
+                    emboss:
+                        linewidth:      1.5
+                        color:          '0.2'
+
+                outliers:
+                    color:              r
+                    marker:             x
+                    alpha:              0.5
+
+                bandwidth:
+                    ec:                 '0.2'
+                    alpha:              0.75
+                    label:              '{algorithm}(bandwidth={bandwidth:.3f})'
+
+                frames:
+                    fc:                 none
+                    lw:                 1
+                    ec:                 '0.5'
+
+    mosaic:
+        ref:
+            cmap:           Greys
+            alpha:          1
+
+        alpha:
+            min:    0.025
+            cycle:  0.65
+
+        labels:
+            format: image{:i}
+            color:  w
+
+        target:
+            color:            forestgreen
+            arrow:
+                size:             10
+                head_distance:    2.5
+                offset:           [0, 0]
+
+            text:
+                offset:         3
+                emboss:
+                    linewidth:  2
+                    color:      k
+
+
+    gmm:
+        plot:
+            image:
+                grid_size:      100
+                cmap:           Blues
+                alpha:          0.5
+            points:
+                marker:         .
+                color:          k
+                ms:             1
+                label:          'Centroids'
+            peak:
+                show:           False
+                marker:         ''
+                color:          r
 
 
     display:
