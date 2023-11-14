@@ -29,6 +29,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
 from loguru import logger
+from sklearn import cluster
 from drizzle.drizzle import Drizzle
 from mpl_multitab import MplMultiTab
 from joblib import Parallel, delayed
@@ -207,7 +208,7 @@ def plot_clusters(ax, features, labels,
 #
 #     assert n_ignore != n
 #     if n_ignore:
-#         logger.info(
+#         self.logger.info(
 #                 'Ignoring %i/%i ({:.1%}) nan / masked values for position '
 #                 'measurement', n_ignore, n, (n_ignore / n) * 100)
 #
@@ -245,8 +246,8 @@ def _sanitize_data(xy, source_detection_threshold):
     # taken into account.
 
     if n_ignore:
-        logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
-                    'measurements.', n_ignore, n, n_ignore / n)
+        self.logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
+                         'measurements.', n_ignore, n, n_ignore / n)
 
     # if source_detection_threshold:
 
@@ -334,7 +335,7 @@ def compute_centres_offsets(xy, outlier_distance=None,
     #
     from IPython import embed
     embed(header="Embedded interpreter at 'src/obstools/image/register.py':334")
-    
+
     for i in np.where(~use_sources)[0]:
         # mask for bad frames in δxy will propagate here
         recentred = xy[:, i].squeeze() - δxy
@@ -671,7 +672,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     #     assert 0 < n == len(fovs)
 
     #     # message
-    #     logger.info('Aligning {:d} images on image {:d}.', n, primary)
+    #     self.logger.info('Aligning {:d} images on image {:d}.', n, primary)
 
     #     # initialize and fit
     #     return cls(images,
@@ -881,9 +882,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
     def guess_sigma(self):
         """choose sigma for GMM based on distances between detections"""
         if len(self.xy) <= 1:
-            logger.warning('Too few (< 2) sources in primary image frame to '
-                           'initialize GMM with an informed default. Using '
-                           'fallback value: {}', self._sigma_fallback)
+            self.logger.warning('Too few (< 2) sources in primary image frame to '
+                                'initialize GMM with an informed default. Using '
+                                'fallback value: {}', self._sigma_fallback)
             return self._sigma_fallback
 
         return self.min_dist / self._sigma_distance_scale
@@ -917,7 +918,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         del self.model
 
         # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
-        # logger.debug('sigma guess: {:s}', self._sigma_guess)
+        # self.logger.debug('sigma guess: {:s}', self._sigma_guess)
 
         # update minimal source seperation
         # self._min_dist = min(self._min_dist, dist_flat(xy).min())
@@ -1213,7 +1214,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
 
-        logger.debug('Grid search optimum: {!s}', p)
+        self.logger.debug('Grid search optimum: {!s}', p)
 
         if plot:
             im = self.model.gmm.plot(show_peak=False)
@@ -1261,8 +1262,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #         failed.append(i)
         #     else:
         #         params[i] += p
-        logger.log(('SUCCESS', 'INFO')[bool(failed)],
-                   'Fitting successful {:d} / {:d}', i - len(failed), i)
+        self.logger.log(('SUCCESS', 'INFO')[bool(failed)],
+                        'Fitting successful {:d} / {:d}', i - len(failed), i)
 
         # likelihood ratio test
         xyn = list(map(tf.affine, self.coms, params, self.rscale))
@@ -1283,9 +1284,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def lh_ratio(self, xy0, xy1):
         ratio = self.model.lh_ratio(xy0, xy1)
-        logger.info('Likelihood ratio: {:.5f}\n\t'
-                    + ('Keeping same', 'Accepting new')[ratio > 1]
-                    + ' parameters.', ratio)
+        self.logger.info('Likelihood ratio: {:.5f}\n\t'
+                         + ('Keeping same', 'Accepting new')[ratio > 1]
+                         + ' parameters.', ratio)
         return ratio
 
     def register(self, clf=None, plot=CONFIG.plot.clusters.show):
@@ -1294,7 +1295,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # clustering + relative position measurement
         self.cluster_points(clf or self.clustering)
-        
+
         # make the cluster centres the target constellation
         self.xy = self.xyt_block.mean(0)
 
@@ -1452,12 +1453,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         Classifier for clustering source coordinates in order to cross identify
         sources.
         """
-        from sklearn.cluster import MeanShift
 
         # choose bandwidth based on minimal distance between sources
-        return MeanShift(**{**kws,
-                            **dict(bandwidth=self.min_dist / 2,
-                                   cluster_all=False)})
+        return cluster.MeanShift(**{**kws,
+                                    **dict(bandwidth=self.min_dist / 2,
+                                           cluster_all=False)})
 
     def cluster_points(self, clf=None):
         """
@@ -1467,9 +1467,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # clustering to cross-identify sources
         self.check_has_data()
         if len(self) == 1:
-            logger.warning('{} contains only one image. Using position '
-                           'measurements from this image directly.',
-                           self.__class__.__name__)
+            self.logger.warning('{} contains only one image. Using position '
+                                'measurements from this image directly.',
+                                self.__class__.__name__)
             self.xy = self[0].xy
             self.labels = np.arange(len(self.xy))
             return
@@ -1495,8 +1495,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         n_sources = self.n_sources()
         n_noise = self.n_noise()
         # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-        logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise)',
-                    n_sources, n - n_noise, n, n_noise)
+        self.logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise)',
+                         n_sources, n - n_noise, n, n_noise)
 
         # sanity check
         n_sources_most = max(map(len, self.coms))
@@ -1550,7 +1550,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         xy = self.xyt_block
 
-        logger.info('Measuring cluster centres, frame xy-offsets')
+        self.logger.info('Measuring cluster centres, frame xy-offsets')
         _, centres, xy_std, xy_offsets, outliers = \
             compute_centres_offsets(xy, outlier_distance, source_detection_threshold)
 
@@ -1973,8 +1973,8 @@ class ImageRegisterDSS(ImageRegister):
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
                 break
             except STScIServerError as error:
-                logger.warning('Failed to retrieve image from server: {!r}\n{}',
-                               srv, error)
+                self.logger.warning('Failed to retrieve image from server: {!r}\n{}',
+                                    srv, error)
                 error = error
         else:
             raise ValueError(
