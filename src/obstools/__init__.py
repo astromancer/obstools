@@ -15,9 +15,6 @@ from recipes.caching import Reject, hashers
 # ---------------------------------------------------------------------------- #
 # config
 CONFIG = ConfigNode.load_module(__file__)
-measure['centre'] = \
-    getattr(np.ma, (measure := CONFIG.image.register.measure).pop('centre'))
-del measure
 
 #
 logger.disable('obstools')

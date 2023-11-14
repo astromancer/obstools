@@ -67,6 +67,11 @@ CONFIG = ConfigNode.load_module(__file__)
 IMG_CONFIG = CONFIG.parent
 SAMPLE_CONFIG = IMG_CONFIG.sample
 
+# get centre statistic function
+CONFIG.measure['centre'] = getattr(np.ma, CONFIG.measure.pop('centre'))
+# get clustering class
+CONFIG.cluster['algorithm'] = getattr(cluster, CONFIG.measure.pop('algorithm'))
+
 
 # ---------------------------------------------------------------------------- #
 
