@@ -41,7 +41,7 @@ from scipy.interpolate import NearestNDInterpolator
 
 # local
 import recipes.pprint as pp
-from recipes import api
+from recipes import api, op
 from recipes.string import indent
 from recipes.config import ConfigNode
 from recipes.functionals import echo0
@@ -52,9 +52,9 @@ from recipes.utils import duplicate_if_scalar, not_null
 
 # relative
 from .. import transforms as tf
-from ..campaign import ImageHDU
 from ..modelling import UnconvergedOptimization
 from ..utils import STScIServerError, get_coordinates, get_dss
+from .hdu import ImageHDU
 from .utils import non_masked
 from .mosaic import MosaicPlotter
 from .gmm import CoherentPointDrift
@@ -63,17 +63,58 @@ from .image import ImageContainer, SkyImage
 
 
 # ---------------------------------------------------------------------------- #
+
 CONFIG = ConfigNode.load_module(__file__)
-IMG_CONFIG = CONFIG.parent
-SAMPLE_CONFIG = IMG_CONFIG.sample
+CONFIG_IMAGE = CONFIG.parent
+CONFIG_SAMPLE = CONFIG_IMAGE.sample
+CONFIG_ALIGN = dict(
+    **CONFIG.flatten(levels=0),
+    **CONFIG_SAMPLE,
+    sample_stat=CONFIG_SAMPLE.stat
+)
 
 # get centre statistic function
 CONFIG.measure['centre'] = getattr(np.ma, CONFIG.measure.pop('centre'))
 # get clustering class
-CONFIG.cluster['algorithm'] = getattr(cluster, CONFIG.measure.pop('algorithm'))
+CONFIG.cluster['classifier'] = getattr(cluster, CONFIG.cluster.pop('classifier'))
 
 
 # ---------------------------------------------------------------------------- #
+
+def _get_config(obj):
+    return {} if obj is True else obj
+
+
+def _ensure_dict(obj):
+    return dict(_get_config(obj))
+
+
+def _duplicate_config(config, n):
+    if isinstance(config, dict) or not isinstance(config, abc.Iterable):
+        config = itt.repeat(config, n)
+    return list(config)
+
+
+def _get_plot_config(obj):
+    # resolve plot config
+    if isinstance(obj, bool):
+        return dict(mosaic=obj, alignment=obj, cluster=obj)
+
+    if not isinstance(obj, dict):
+        raise TypeError(f'Object on type {type(obj)} cannot be used as plot '
+                        f'config.')
+
+    allowed = {'mosaic', 'alignment', 'clusters'}
+    if any(set(obj.keys()) - allowed):
+        raise ValueError(
+            f'Only {allowed} keywords are allowed for `plot` parameter.'
+        )
+
+    return obj
+
+
+# ---------------------------------------------------------------------------- #
+
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
     """Recenter and scale"""
@@ -642,13 +683,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # ------------------------------------------------------------------------ #
 
     @classmethod
-    @update_defaults(sample_stat=SAMPLE_CONFIG.stat, **SAMPLE_CONFIG)
+    @update_defaults(sample_stat=CONFIG_SAMPLE.stat, **CONFIG_SAMPLE)
     def from_hdus(cls, run, sample_stat='median', min_depth=5,
                   primary=None, fit_angle=True, **kws):
         # get sample images etc
         # `from_hdu` is used since the sample image and source detection results
         # are cached (persistantly), so this should be fast on repeated calls.
-        find_kws = IMG_CONFIG.detect.filter('multi_threshold')
+        find_kws = CONFIG_IMAGE.detect.filter('multi_threshold')
         images = [SkyImage.from_hdu(hdu, sample_stat, min_depth,
                                     **{**find_kws, **kws})
                   for hdu in run]
@@ -709,7 +750,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # TODO: init from single image???
 
         if kws:
-            self.find_kws = {**IMG_CONFIG.detect.filter('multi_threshold'),
+            self.find_kws = {**CONFIG_IMAGE.detect.filter('multi_threshold'),
                              **kws}
 
         # init container
@@ -748,6 +789,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # state variable placeholders
         self.labels = None
         self._colour_sequence_cache = ()
+        self._figure_cache = []
 
         # WCS
         self.wcss = []
@@ -945,9 +987,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # TODO: refine_mcmc
 
     @update_defaults(CONFIG.align.filter('refine'))
-    def fit(self, obj=None, p0=None,
-            hop=True, refine=None,
-            plot=False, **kws):
+    def fit(self, obj=None, p0=None, hop=True, refine=None, plot=False, **kws):
         """
         Flexible fitting method that dispatches fitting method based on the
         type of `obj`, and aggregates results. If this is the first time
@@ -971,7 +1011,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         refine = refine or self.refining
         fitters = {
             type(None):              self._fit_internal,
-            ImageRegister:           self.fit_register,
+            ImageRegister:           self.fit_registry,
             (np.ndarray, SkyImage):  self.fit_image,
             abc.Collection:          self.fit_sequence,
             ImageHDU:                self.fit_hdu
@@ -1016,9 +1056,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # self[i:] = self.fit_sequence(obj, p0, hop, refine, plot, **kws)
         # return self
     @update_defaults(CONFIG.align)
-    def fit_register(self, reg, p0=None,
-                     hop=True, refine=True,
-                     plot=False, **kws):
+    def fit_registry(self, reg, p0=None, hop=True, refine=True, plot=False, **kws):
         """
         cross match with another `ImageRegister` and aggregate points
         """
@@ -1043,17 +1081,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
 
     @update_defaults(CONFIG.align)
-    def fit_sequence(self, items, p0=None,
-                     hop=True, refine=True,
-                     plot=False, njobs=1, **kws):
+    def fit_sequence(self, items, p0=None, hop=True, refine=True, plot=False,
+                     njobs=1, **kws):
         #
-        assert len(items)
+        assert (n := len(items))
 
         if p0 is None:
-            p0 = ()
+            p0 = itt.repeat(p0, n)
         else:
             p0 = np.array(p0)
-            assert p0.shape == (len(items), self.dof)
+            assert p0.shape == (n, self.dof)
 
         # run fitting concurrently
         # with Parallel(n_jobs=njobs) as parallel:
@@ -1062,21 +1099,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
         #         for image, p00 in itt.zip_longest(items, p0)
         #     )
 
+        if isinstance(plot, dict) or not isinstance(plot, abc.Iterable):
+            plot = itt.repeat(plot, n)
+
         return [self.fit(image, p0, hop, refine, plot, **kws)
-                for image, p0 in itt.zip_longest(items, p0)]
-
-        # images.insert(primary, self[primary])
-        # self.data[:] = images
-
-        # fit clusters to points
-        # self.register()
-        # return images
+                for image, p0, plot in zip(items, p0, plot)]
 
     @update_defaults(CONFIG.align)
-    def fit_hdu(self, hdu, p0=None,
-                hop=True, refine=True, plot=False,
-                sample_stat=SAMPLE_CONFIG.stat,
-                min_depth=SAMPLE_CONFIG.min_depth,
+    def fit_hdu(self, hdu, p0=None, hop=True, refine=True, plot=False,
+                sample_stat=CONFIG_SAMPLE.stat, min_depth=CONFIG_SAMPLE.min_depth,
                 **kws):
         """
 
@@ -1097,9 +1128,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         )
 
     @update_defaults(CONFIG.align)
-    def fit_image(self, image, p0=None,
-                  hop=True, refine=True,
-                  plot=False, fov=None, **kws):
+    def fit_image(self, image, p0=None, hop=True, refine=True, plot=False,
+                  fov=None, **kws):
         """
         If p0 is None:
             Search heuristic for image offset and rotation.
@@ -1138,9 +1168,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     # @timer
     @update_defaults(CONFIG.align)
-    def fit_points(self, xy, p0=None,
-                   hop=True, refine=True,
-                   plot=False):
+    def fit_points(self, xy, p0=None, hop=True, refine=True, plot=False):
 
         if p0 is None:
             p0 = np.zeros(self.dof)
@@ -1222,8 +1250,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.logger.debug('Grid search optimum: {!s}', p)
 
         if plot:
-            im = self.model.gmm.plot(show_peak=False)
-            im.ax.plot(*(xy + p).T, 'ro', ms=12, mfc='none')
+            plot = _ensure_dict(plot)
+            display = self.model.gmm.plot(**_ensure_dict(plot.get('model', {})))
+            display.ax.plot(*(xy + p).T, **_ensure_dict(plot.get('points', {})))
+            self._figure_cache.append(display)
 
         # restore sigma
         self.model.fit_angle = state
@@ -1305,8 +1335,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.xy = self.xyt_block.mean(0)
 
         if plot:
-            plot = {} if plot is True else plot
-            art = self.plot_clusters(**plot)
+            return self.plot_clusters(**_ensure_dict(plot))
 
     # ------------------------------------------------------------------------ #
 
@@ -1453,16 +1482,20 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     # ------------------------------------------------------------------------ #
     @lazyproperty
-    def clustering(self, *args, **kws):
+    def clustering(self, *args, bandwidth=None, **kws):
         """
         Classifier for clustering source coordinates in order to cross identify
         sources.
         """
+        cfg = CONFIG.cluster
 
         # choose bandwidth based on minimal distance between sources
-        return cluster.MeanShift(**{**kws,
-                                    **dict(bandwidth=self.min_dist / 2,
-                                           cluster_all=False)})
+        bandwidth = bandwidth or self.min_dist / cfg.bandwidth_distance_scale
+
+        return cfg.classifier(*args,
+                              **{**kws,
+                                 'bandwidth': bandwidth,
+                                 'cluster_all': cfg.cluster_all})
 
     def cluster_points(self, clf=None):
         """
@@ -1489,7 +1522,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # X = scaler.fit_transform(np.vstack(xy))
 
         self.logger.info('Clustering {:d} position measurements to cross '
-                         'identify sources using:{:s}', n, indent(f'\n{clf}'))
+                         'identify sources using:{:s}.', n, indent(f'\n{clf}'))
         #
         self.labels = clf.fit(X).labels_
 
@@ -2062,8 +2095,9 @@ class ImageRegisterDSS(ImageRegister):
         # if trim:
         #     self._trim_labels()
 
-        super().register(clf, plot)
+        art = super().register(clf, plot)
         self.relabel()
+        return art
 
     def _trans_to_image(self, index, unit='pixel'):
         assert unit in {'fraction', 'pixel', 'arcmin'}
@@ -2186,6 +2220,226 @@ class ImageRegisterDSS(ImageRegister):
 
         return super().drizzle(path, outwcs, pixfrac, (0,))
 
-# class TransformedImage():
-#     def set_p(self):
-#         self.art.set_transform()
+
+# ---------------------------------------------------------------------------- #
+
+class RegistrationMixin:
+
+    @update_defaults(**CONFIG_ALIGN)
+    def coalign_dss(self, fov=None, fov_stretch=1.2,
+                    sample_stat='median', min_depth=5,
+                    primary=None, plot=False, **kws):
+        #
+        return self.coalign_survey('dss', fov, fov_stretch,
+                                   sample_stat, min_depth,
+                                   primary, plot, **kws)
+
+    def close(self):
+        # close all files
+        self.calls('_file.close')
+    # @doc.splice(coalign, 'Parameters')
+
+    @api.synonyms(plots='plot')
+    @update_defaults(**CONFIG_ALIGN)
+    def coalign_survey(self, survey='dss', fov=None, fov_stretch=1.2,
+                       sample_stat='median', min_depth=5, primary=None,
+                       plot=False, **kws):
+        """
+        Align all the image stacks in this campaign with a survey image centred
+        on the same field. In astronomical parlance, this is a first order wcs /
+        astrometry estimation fitting only for 3 parameters per frame: 
+            xy-offset : The offset in pixels of the source position wrt to the
+                coordinates given in the header
+            theta : The rotation (in radians) of the image wrt equatorial
+                coordinates.
+
+        Parameters
+        ----------
+        primary : int, default None
+            The index of the image that will be used as the reference image for
+            the alignment. If `None`, the highest resolution image amongst the
+            observations will be used.
+        fov : float or array-like of size 2 or None
+            Field of view of survey image in arcminutes. If not given, the
+            field size will be taken as the maximal extent of the aligned
+            images multiplied by the scaling factor `fov_stretch`.
+        fov_stretch : float
+            Scaling factor for automatically choosing the field of view size of
+            the survey image. This factor is multiplied by the maximal extent of
+            the (partially overlapping) aligned images to get the field of view
+            size of the survey image.
+
+
+        Returns
+        -------
+        `ImageRegisterDSS` object
+
+        """
+
+        survey = survey.lower()
+        if survey != 'dss':
+            raise NotImplementedError('Only support for DSS image lookup atm.')
+
+        # coalign images with each other
+        reg = self.coalign(sample_stat, min_depth, plot, primary=primary, **kws)
+
+        # pick the DSS FoV to be slightly larger than the largest image
+        if fov is None:
+            fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
+
+        #
+        dss = ImageRegisterDSS(self[reg.primary].coords, fov, **kws)
+        dss.fit_registry(reg, refine=False)
+        dss.register()
+
+        dss.order = reg.order
+
+        # dss.recentre(plot=plot)
+        # _, better = imr.refine(plot=plot)
+
+        # for hdu, wcs in zip(self, dss.build_wcs(self)):
+        #     hdu.wcs = wcs
+
+        return dss
+
+    @update_defaults(CONFIG_ALIGN)
+    def coalign(self, sample_stat, min_depth, plot=False, **detection):
+        """
+        Perform image alignment internally for sample images from all stacks in
+        this campaign by the method of point set registration.  This is
+        essentially a search heuristic that finds the positional and rotational
+        offset between partially or fully overlapping images.  The
+        implementation of the image registration algorithm is handled inside the
+        :class:`ImageRegister` class.
+
+        See: https://en.wikipedia.org/wiki/Image_registration for the basics
+
+        Parameters
+        ----------
+        min_depth : float
+            Simulated exposure min_depth (in seconds) of sample images drawn from
+            each of the image stacks in the run. This determined how many images
+            from the stack will be used to create the sample image.
+        sample_stat : str or callable, default='median'
+            The statistic that will be used to compute the sample image from the
+            stack of sample images drawn from the original stack.
+        detection : dict
+            Keywords for object detection algorithm.
+        plot: bool
+            Whether to plot diagnostic figures
+
+
+        Returns
+        -------
+
+        """
+
+        # group observations by telescope / instrument
+        groups, indices = self.group_by('telescope', return_index=True)
+
+        # start with the group having the most observations.  This will help
+        # later when we need to align the different groups with each other
+        keys, indices = zip(*indices.items())
+        order = np.argsort(list(map(len, indices)))[::-1]
+
+        # create data containers
+        registers = np.empty(len(groups), 'O')
+
+        # resolve plot config
+        n = len(self), len(registers)
+        plot = _get_plot_config(plot)
+
+        inner = np.array([
+            {**plot, 'alignment': align}
+            for align in _duplicate_config(plot.get('alignment', False), len(self))
+        ], 'O')
+
+        # plot_clusters = plot.get('clusters', False)
+        # plot_mosaic = plot.get('mosaic', False)
+
+        # For each telescope, align images wrt each other first
+
+        for i in order:
+            registers[i] = r = groups[keys[i]]._coalign(
+                sample_stat, min_depth, plot=inner[indices[i]], **detection)
+            # r._figure_cache
+
+        # match coordinates of registers against each other
+        reg = registers[order[0]]
+        for i in order[1:]:
+            reg.fit(registers[i])
+            reg.register()
+
+        # refine alignment
+        # refine = 5
+        for _ in range(5):
+            # likelihood ratio for gmm model before and and after refine
+            _, lhr = reg.refine()
+            if lhr < 1.01:
+                break
+
+            reg.recentre()
+
+        reg.order = np.hstack([indices[o] for o in order])
+        # reg.data, _ = cosort(reg.order, reg.data)
+
+        if plot_clusters := plot.get('clusters', False):
+            reg.plot_clusters(**_ensure_dict(plot_clusters))
+
+        if plot_mosaic :=  plot.get('mosaic', False):
+            reg.mosaic(**_ensure_dict(plot_mosaic))
+
+        return reg
+
+    @update_defaults(CONFIG_ALIGN)
+    def _coalign(self, sample_stat, min_depth, primary, plot, **kws):
+        # check
+        assert not self.varies_by('telescope')  # , 'camera')
+
+        # If no reference image indicated by user-specified `primary`, choose
+        # image with highest resolution if any, otherwise, just take the first.
+        # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
+
+        # self.logger.debug('PRIMARY = {}', primary)
+        reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)
+        reg.fit(plot=plot.get('alignment', False))
+
+        from IPython import embed
+        embed(header="Embedded interpreter at 'src/obstools/campaign.py':637")
+
+        # first = self[primary or 0]
+        # First fit detects sources and measures their CoM to establish a point
+        # cloud for the coherent point drift model
+        # kws = dict(sample_stat=sample_stat, min_depth=min_depth, refine=False)
+        # reg(first, **kws)
+        # Other images are fit concurrently
+        # order = [primary, *np.delete(np.arange(len(self)), primary)]
+        # rest = self[order]
+        # reg(rest, **kws)
+        # reg.order = order
+
+        if (mosaic := plot.get('mosaic', False)):
+            mosaic = reg.mosaic(**mosaic)
+
+        # return reg, idx
+
+        # make sure we have the best possible alignment amongst sample images.
+        # register constellation of stars by fitting clusters to center-of-mass
+        # measurements. Refine the fit, by ...
+        reg.register(plot=plot.get('cluster', False))
+
+        # refine alignment
+        # refine = 5
+        for _ in range(5):
+            # likelihood ratio for gmm model before and and after refine
+            _, lhr = reg.refine()
+            if lhr < 1.01:
+                break
+
+            reg.recentre()
+
+        # reg.refine(plot=plot)
+        # reg.recentre(plot=plot)
+        return reg
+
+    # ------------------------------------------------------------------------ #

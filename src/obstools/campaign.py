@@ -16,12 +16,9 @@ from collections import UserList, abc
 # third-party
 import numpy as np
 from loguru import logger
-from astropy.utils import lazyproperty
-from astropy.io.fits.hdu import PrimaryHDU
 from astropy.io.fits.hdu.base import _BaseHDU
 
 # local
-import docsplice as doc
 from motley.table.attrs import AttrTable
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexingMixin
@@ -35,18 +32,14 @@ from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin
 from recipes.string.brackets import braces
 from recipes.string import pluralize, strings
-from recipes.decorators import update_defaults
 
 # relative
 from . import CONFIG
-from .io import _FilePicklable
 from .utils import is_property
-from .image.noise import CCDNoiseModel
-from .image.sample import ImageSamplerMixin
-from .image.detect import SourceDetectionMixin
-from .image.calibration import ImageCalibratorMixin
+from .image.register import RegistrationMixin
 
 
+# ---------------------------------------------------------------------------- #
 # TODO: multiprocess generic methods
 # TODO: Create an abstraction layer that can split and merge multiple time
 #        series data sets
@@ -59,7 +52,6 @@ get_msg = op.attrgetter('message')
 
 
 # ---------------------------------------------------------------------------- #
-
 class NoFile(Null):
     pass
 
@@ -119,115 +111,6 @@ class FileList(UserList, Vectorized):  # ListOf(FilenameHelper)
             return root
 
         # multiple roots: return None
-
-
-# ---------------------------------------------------------------------------- #
-
-class ImageHDU(PrimaryHDU,
-               ImageSamplerMixin,
-               ImageCalibratorMixin,
-               SourceDetectionMixin,
-               LoggingMixin):
-    """
-    Some extra methods and properties to support PhotCampaign features.
-    """
-
-    @classmethod
-    def readfrom(cls, fileobj, checksum=False, ignore_missing_end=False, **kws):
-
-        if not isinstance(fileobj, _FilePicklable):
-            fileobj = _FilePicklable(fileobj)
-
-        return PrimaryHDU.readfrom(fileobj, checksum, ignore_missing_end, **kws)
-
-    @update_defaults(CONFIG.image.sample)
-    def detect(self, stat, min_depth, interval=..., report=True, **kws):
-        """
-        Cached source detection for HDUs.
-
-        Parameters
-        ----------
-        stat : str, optional
-            Statistic to use, by default 'median'.
-        min_depth : int, optional
-            [description], by default 5
-        snr : int, optional
-            [description], by default 3
-
-        Returns
-        -------
-        seg
-            SegmentedImage
-        """
-        # NOTE: `get_sample_image` and `detection` are both cached for performance
-        image = self.get_sample_image(stat, min_depth, interval)
-
-        if report is True:
-            report = CONFIG.detect.report
-        if report:
-            report = {**report, 'title': self.file.name}
-
-        return super().detect(image, **kws, report=report)
-
-    @property
-    def file(self):
-        return self._FilenameHelperClass(self)
-
-    @property
-    def ishape(self):
-        """Image frame shape"""
-        return self.shape[-2:]
-
-    @property
-    def ndim(self):
-        return len(self.shape)
-
-    @lazyproperty
-    def fov(self):
-        # field of view
-        return self.get_fov()
-
-    def get_fov(self):
-        raise NotImplementedError
-
-    @property
-    def pixel_scale(self):
-        return self.fov / self.ishape
-
-    @lazyproperty
-    def pa(self):
-        return self.get_rotation()
-
-    def get_rotation(self):
-        """
-        Get the instrument rotation (position angle) wrt the sky in radians
-        """
-        raise NotImplementedError
-
-    @lazyproperty
-    def noise_model(self):
-        return CCDNoiseModel(self.readout.noise, self.readout.preAmpGain)
-
-    # plotting
-    def show(self, **kws):
-        """Display the data. """
-
-        if (nd := self.ndim) == 2:
-            from scrawl.image import ImageDisplay
-
-            im = ImageDisplay(self.data, **kws)
-            # Note: `self.section` fails with 2d data
-
-        elif nd == 3:
-            from .image.display import FitsVideo
-
-            im = FitsVideo(self, **kws)
-
-        else:
-            raise TypeError(f'Can only display 2D or 3D data. Your data is {nd}D.')
-
-        im.figure.canvas.manager.set_window_title(self.file.name)
-        return im
 
 
 # class PPrintHelper(AttrTable):
@@ -306,6 +189,7 @@ class GlobIndexing(IndexingMixin):
 
         return super().__getitem__(key)
 
+# ---------------------------------------------------------------------------- #
 
 class CampaignType(SelfAware, ListOf):
     """metaclass to avoid conflicts"""
@@ -316,7 +200,8 @@ class PhotCampaign(PPrintContainer,
                    CampaignType(_BaseHDU),  # pylint: disable=abstract-method
                    AttrGrouper,
                    Vectorized,
-                   LoggingMixin):
+                   LoggingMixin,
+                   RegistrationMixin):
     """
     A class containing multiple CCD observations potentially from different
     instruments and telescopes. Provides an interface for basic operations on
@@ -514,206 +399,7 @@ class PhotCampaign(PPrintContainer,
 
         return self.__class__(np.hstack((self.data, other.data)))
 
-    @update_defaults(CONFIG.image.sample, sample_stat=CONFIG.image.sample.stat)
-    def coalign(self, sample_stat, min_depth, plot=False, **detection):
-        """
-        Perform image alignment internally for sample images from all stacks in
-        this campaign by the method of point set registration.  This is
-        essentially a search heuristic that finds the positional and rotational
-        offset between partially or fully overlapping images.  The
-        implementation of the image registration algorithm is handled inside the
-        :class:`ImageRegister` class.
-
-        See: https://en.wikipedia.org/wiki/Image_registration for the basics
-
-        Parameters
-        ----------
-        min_depth : float
-            Simulated exposure min_depth (in seconds) of sample images drawn from
-            each of the image stacks in the run. This determined how many images
-            from the stack will be used to create the sample image.
-        sample_stat : str or callable, default='median'
-            The statistic that will be used to compute the sample image from the
-            stack of sample images drawn from the original stack.
-        detection : dict
-            Keywords for object detection algorithm.
-        plot: bool
-            Whether to plot diagnostic figures
-
-
-        Returns
-        -------
-
-        """
-        # group observations by telescope / instrument
-        groups, indices = self.group_by('telescope', return_index=True)
-
-        # start with the group having the most observations.  This will help
-        # later when we need to align the different groups with each other
-        keys, indices = zip(*indices.items())
-        order = np.argsort(list(map(len, indices)))[::-1]
-
-        # create data containers
-        registers = np.empty(len(groups), 'O')
-
-        # For each telescope, align images wrt each other
-        for i in order:
-            registers[i] = groups[keys[i]]._coalign(
-                sample_stat, min_depth, plot=plot, **detection)
-
-        # match coordinates of registers against each other
-        reg = registers[order[0]]
-        for i in order[1:]:
-            reg.fit(registers[i])
-            reg.register()
-
-        # refine alignment
-        # refine = 5
-        for _ in range(5):
-            # likelihood ratio for gmm model before and and after refine
-            _, lhr = reg.refine()
-            if lhr < 1.01:
-                break
-
-            reg.recentre()
-
-        reg.order = np.hstack([indices[o] for o in order])
-        # reg.data, _ = cosort(reg.order, reg.data)
-        return reg
-
-    @update_defaults(CONFIG.image.sample, sample_stat=CONFIG.image.sample.stat)
-    def _coalign(self, sample_stat, min_depth, primary, plot, **kws):
-        # check
-        assert not self.varies_by('telescope')  # , 'camera')
-
-        from .image.register import ImageRegister
-
-        # If no reference image indicated by user-specified `primary`, choose
-        # image with highest resolution if any, otherwise, just take the first.
-        # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
-
-        # self.logger.debug('PRIMARY = {}', primary)
-        reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)
-        reg.fit()
-
-        # first = self[primary or 0]
-        # First fit detects sources and measures their CoM to establish a point
-        # cloud for the coherent point drift model
-        # kws = dict(sample_stat=sample_stat, min_depth=min_depth, refine=False)
-        # reg(first, **kws)
-        # Other images are fit concurrently
-        # order = [primary, *np.delete(np.arange(len(self)), primary)]
-        # rest = self[order]
-        # reg(rest, **kws)
-        # reg.order = order
-
-        #
-        if plot:
-            reg.mosaic()
-
-        # return reg, idx
-
-        # make sure we have the best possible alignment amongst sample images.
-        # register constellation of stars by fitting clusters to center-of-mass
-        # measurements. Refine the fit, by ...
-        reg.register(plot=plot)
-
-        # refine alignment
-        # refine = 5
-        for _ in range(5):
-            # likelihood ratio for gmm model before and and after refine
-            _, lhr = reg.refine()
-            if lhr < 1.01:
-                break
-
-            reg.recentre()
-
-        # reg.refine(plot=plot)
-        # reg.recentre(plot=plot)
-        return reg
-
-    @doc.splice(coalign, 'Parameters')
-    @update_defaults(CONFIG.image.register,
-                     CONFIG.image.sample,
-                     sample_stat=CONFIG.image.sample.stat)
-    def coalign_survey(self, survey='dss', fov=None, fov_stretch=1.2,
-                       sample_stat='median', min_depth=5, primary=None,
-                       plot=False, **kws):
-        """
-        Align all the image stacks in this campaign with a survey image centred
-        on the same field. In astronomical parlance, this is a first order wcs /
-        astrometry estimation fitting only for 3 parameters per frame: 
-            xy-offset : The offset in pixels of the source position wrt to the
-                coordinates given in the header
-            theta : The rotation (in radians) of the image wrt equatorial
-                coordinates.
-
-        Parameters
-        ----------
-        primary : int, default None
-            The index of the image that will be used as the reference image for
-            the alignment. If `None`, the highest resolution image amongst the
-            observations will be used.
-        fov : float or array-like of size 2 or None
-            Field of view of survey image in arcminutes. If not given, the
-            field size will be taken as the maximal extent of the aligned
-            images multiplied by the scaling factor `fov_stretch`.
-        fov_stretch : float
-            Scaling factor for automatically choosing the field of view size of
-            the survey image. This factor is multiplied by the maximal extent of
-            the (partially overlapping) aligned images to get the field of view
-            size of the survey image.
-
-
-        Returns
-        -------
-        `ImageRegisterDSS` object
-
-        """
-
-        from .image.register import ImageRegisterDSS
-
-        survey = survey.lower()
-        if survey != 'dss':
-            raise NotImplementedError('Only support for DSS image lookup atm.')
-
-        # coalign images with each other
-        reg = self.coalign(sample_stat, min_depth, plot, primary=primary, **kws)
-
-        # pick the DSS FoV to be slightly larger than the largest image
-        if fov is None:
-            fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
-
-        #
-        dss = ImageRegisterDSS(self[reg.primary].coords, fov, **kws)
-        dss.fit_register(reg, refine=False)
-        dss.register()
-
-        dss.order = reg.order
-
-        # dss.recentre(plot=plot)
-        # _, better = imr.refine(plot=plot)
-
-        # for hdu, wcs in zip(self, dss.build_wcs(self)):
-        #     hdu.wcs = wcs
-
-        return dss
-
-    @update_defaults(CONFIG.image.register,
-                     CONFIG.image.sample,
-                     sample_stat=CONFIG.image.sample.stat)
-    def coalign_dss(self, fov=None, fov_stretch=1.2,
-                    sample_stat='median', min_depth=5,
-                    primary=None, plot=False, **kws):
-        #
-        return self.coalign_survey('dss', fov, fov_stretch,
-                                   sample_stat, min_depth,
-                                   primary, plot, **kws)
-
-    def close(self):
-        # close all files
-        self.calls('_file.close')
-
+    # ------------------------------------------------------------------------ #
     @property
     def phot(self):
         # The photometry interface

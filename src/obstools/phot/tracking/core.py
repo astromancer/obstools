@@ -26,7 +26,7 @@ from recipes.dicts import AttrReadItem
 
 # relative
 from ...image.noise import CCDNoiseModel
-from ...image.registration import ImageRegister
+from ...image.register import ImageRegister
 from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
 from ..proc import FrameProcessor

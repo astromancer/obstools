@@ -34,24 +34,15 @@ image:
         fov_stretch:                1.2
 
         plot:
-            align:
-                # plot model probability image + matched coordinates for each image
-                show:       True
-                color:      r
-                marker:     o
-                ms:         12
-                mfc:        none
-
+            mosaic:                 False
+            alignment:              False
             clusters:
-                show:               True
+                show:               False
                 centres:            True
                 frames:             True
                 nrs:                True
                 show_bandwidth:     True
                 trim_labels:        False
-
-            mosaic:                 False
-
 
         align:
             hop:                        True
@@ -61,6 +52,14 @@ image:
             sigma_distance_scale:       3
             sigma_fallback:             10
 
+            # plot model probability image + matched coordinates for each image
+            plot:
+                model:              True
+                points:
+                    color:      orangered
+                    marker:     o
+                    ms:         12
+
         measure:
             centre:                         mean
             source_detection_threshold:     0.25
@@ -68,11 +67,13 @@ image:
             report:                         True
 
         cluster:
-            algorithm:              MeanShift
+            classifier:                 MeanShift
+            bandwidth_distance_scale:   2
+            cluster_all:                False
             
             plot:
                 features:
-                    s:                  25
+                    size:               25
                     marker:             '*'
                     cmap:               null
                     label:              Centroids ({} images)
@@ -130,20 +131,19 @@ image:
                     linewidth:  2
                     color:      k
 
-
     gmm:
         plot:
             image:
-                grid_size:      100
                 cmap:           Blues
                 alpha:          0.5
+                grid_size:      100
             points:
-                marker:         .
-                color:          k
-                ms:             1
-                label:          'Centroids'
+                color:      k
+                marker:     x
+                ms:         2
+                mfc:        none
+                label:      Centroids
             peak:
-                show:           False
                 marker:         ''
                 color:          r
 

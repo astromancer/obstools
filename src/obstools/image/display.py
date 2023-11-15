@@ -3,7 +3,7 @@
 from scrawl.video import VideoDisplay
 
 # relative
-from ..campaign import ImageHDU
+from ..hdu import ImageHDU
 
 
 class FitsVideo(VideoDisplay):
