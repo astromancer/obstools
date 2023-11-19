@@ -281,7 +281,7 @@ class MultiGauss(Model):
 
         # plot locations
         if show_xy:
-            im.ax.plot(*self.xy.T, **CONFIG.plot.points)
+            im.ax.plot(*self.xy.T, **{'ls':'', **CONFIG.plot.points})
 
         # mark peak
         if show_peak:

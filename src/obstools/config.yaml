@@ -58,6 +58,7 @@ image:
                 points:
                     color:      orangered
                     marker:     o
+                    mfc:        none
                     ms:         12
 
         measure:

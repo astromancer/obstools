@@ -221,7 +221,7 @@ def plot_clusters(ax, features, labels,
     points = ax.scatter(*features[core_sample_indices_].T,
                         **scatter_kws)
     #
-    outliers, = ax.plot(*features[~ok].T, **config.outliers)
+    outliers, = ax.plot(*features[~ok].T, **{'ls': '', **config.outliers})
 
     if nrs:
         from scrawl.utils import emboss
@@ -1895,11 +1895,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
                 frame = Rectangle(img.origin,
                                   *(img.shape[::-1] * img.scale / self.scale),
                                   angle=np.degrees(img.angle),
-                                  **CONFIG.cluster.plot.frames)
+                                  **{'fc': 'none',
+                                     **CONFIG.cluster.plot.frames})
                 ax.add_artist(frame)
 
         if centres:
-            ax.plot(*self.xy.T, centres, **CONFIG.cluster.plot.centres)
+            ax.plot(*self.xy.T, centres, **{'ls': '',  **CONFIG.cluster.plot.centres})
 
         # bandwidth size indicator.
         if show_bandwidth:
