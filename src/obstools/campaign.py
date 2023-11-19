@@ -322,7 +322,7 @@ class PhotCampaign(PPrintContainer,
 
         # sanitize filenames:  input filenames may contain None - remove these
         # note sort filenames here by alphanumeric order
-        files = groupby(sorted(filenames), bool)
+        files = groupby(bool, sorted(filenames))
         if False in files:
             cls.logger.info('Filtering `None` from filename list.')
 
