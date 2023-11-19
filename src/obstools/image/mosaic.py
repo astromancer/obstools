@@ -11,6 +11,7 @@ import more_itertools as mit
 import matplotlib.pyplot as plt
 
 # local
+from recipes import api
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 
