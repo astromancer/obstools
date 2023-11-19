@@ -92,7 +92,7 @@ def _ensure_dict(obj):
 def _duplicate_config(config, n):
     if isinstance(config, dict) or not isinstance(config, abc.Iterable):
         config = itt.repeat(config, n)
-    return list(config)
+    return np.array(list(config), 'O')
 
 
 def _get_plot_config(obj):
@@ -2346,22 +2346,15 @@ class RegistrationMixin:
         registers = np.empty(len(groups), 'O')
 
         # resolve plot config
-        n = len(self), len(registers)
         plot = _get_plot_config(plot)
-
-        inner = np.array([
-            {**plot, 'alignment': align}
-            for align in _duplicate_config(plot.get('alignment', False), len(self))
-        ], 'O')
-
-        # plot_clusters = plot.get('clusters', False)
-        # plot_mosaic = plot.get('mosaic', False)
+        alignment = _duplicate_config(plot.get('alignment', False), len(self))
 
         # For each telescope, align images wrt each other first
-
         for i in order:
             registers[i] = r = groups[keys[i]]._coalign(
-                sample_stat, min_depth, plot=inner[indices[i]], **detection)
+                sample_stat, min_depth,
+                plot={**plot, 'alignment': alignment[indices[i]]},
+                **detection)
             # r._figure_cache
 
         # match coordinates of registers against each other
@@ -2384,9 +2377,11 @@ class RegistrationMixin:
         # reg.data, _ = cosort(reg.order, reg.data)
 
         if plot_clusters := plot.get('clusters', False):
-            reg.plot_clusters(**_ensure_dict(plot_clusters))
+            plot_clusters = _ensure_dict(plot_clusters)
+            if plot_clusters.pop('show', True):
+                reg.plot_clusters(**plot_clusters)
 
-        if plot_mosaic :=  plot.get('mosaic', False):
+        if plot_mosaic := plot.get('mosaic', False):
             reg.mosaic(**_ensure_dict(plot_mosaic))
 
         return reg
@@ -2403,9 +2398,6 @@ class RegistrationMixin:
         # self.logger.debug('PRIMARY = {}', primary)
         reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)
         reg.fit(plot=plot.get('alignment', False))
-
-        from IPython import embed
-        embed(header="Embedded interpreter at 'src/obstools/campaign.py':637")
 
         # first = self[primary or 0]
         # First fit detects sources and measures their CoM to establish a point

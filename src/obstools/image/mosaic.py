@@ -79,7 +79,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
     # TODO: optional normalize and same clims
     # TODO: use WCSAxes ??
 
-    label_fmt = CONFIG.labels.get('format', 'image{:i}')
+    label_fmt = CONFIG.labels.get('format', 'image{:d}')
 
     # @property
     # def fig(self):

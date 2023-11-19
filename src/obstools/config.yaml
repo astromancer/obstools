@@ -73,7 +73,7 @@ image:
             
             plot:
                 features:
-                    size:               25
+                    s:                  25
                     marker:             '*'
                     cmap:               null
                     label:              Centroids ({} images)
@@ -101,7 +101,6 @@ image:
                     label:              '{algorithm}(bandwidth={bandwidth:.3f})'
 
                 frames:
-                    fc:                 none
                     lw:                 1
                     ec:                 '0.5'
 
@@ -115,7 +114,7 @@ image:
             cycle:  0.65
 
         labels:
-            format: image{:i}
+            format: image{:d}
             color:  w
 
         target:

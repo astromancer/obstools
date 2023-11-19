@@ -286,7 +286,7 @@ class MultiGauss(Model):
         # mark peak
         if show_peak:
             xy_peak = grid[np.unravel_index(z.argmax(), z.shape)]
-            im.ax.plot(*xy_peak, **CONFIG.plot.points.show)
+            im.ax.plot(*xy_peak, **{'ls': '', **CONFIG.plot.points})
             
         return im
 
