@@ -15,13 +15,14 @@ from joblib import Parallel, delayed
 import motley
 from recipes import api
 from recipes.string import pluralize
+from recipes.config import ConfigNode
+from recipes.logging import LoggingMixin
 from recipes.contexts import ContextStack
 from recipes.parallel.joblib import initialized
-from recipes.config import ConfigNode
 
 # relative
 from .logging import TqdmLogAdapter, TqdmStreamAdapter
-from recipes.logging import LoggingMixin
+
 
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions

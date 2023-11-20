@@ -2,10 +2,11 @@
 # third-party
 import pytest
 import numpy as np
+from conftest import *
 
 # local
 from obstools.image import ImageRegister
-from conftest import *
+
 
 # @pytest.mark.incremental
 

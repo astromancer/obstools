@@ -1,7 +1,10 @@
 
-from datetime import datetime, timedelta, date as Date
-from astropy.time import Time
+# std
 import functools as ftl
+from datetime import datetime, timedelta, date as Date
+
+# third-party
+from astropy.time import Time
 
 
 def nearest_midnight_date(t=None, switch_hour=9):

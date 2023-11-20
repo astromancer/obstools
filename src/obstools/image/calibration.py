@@ -4,7 +4,6 @@ Helpers for efficient image calibration.
 
 
 # std
-from recipes import op
 from collections import abc
 
 # third-party
@@ -13,6 +12,7 @@ from astropy.utils import lazyproperty
 from astropy.io.fits.hdu import PrimaryHDU
 
 # local
+from recipes import op
 from recipes.dicts import pformat
 from recipes.oo.property import ForwardProperty
 

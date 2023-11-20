@@ -1,11 +1,14 @@
+# std
 import csv
 from pathlib import Path
 from datetime import datetime
 
+# third-party
 import numpy as np
 from astropy.table import Table
 
-from .utils import fmt_ra, fmt_dec
+# relative
+from .utils import fmt_dec, fmt_ra
 
 
 def iter_data(csvfile):

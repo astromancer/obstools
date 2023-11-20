@@ -11,8 +11,10 @@ from scipy.special import erf
 from scipy.optimize import leastsq
 
 # local
-from obstools.modelling.core import Model
 from recipes.lists import missing_integers
+
+# relative
+from ..core import Model
 
 
 # from recipes.logging import LoggingMixin

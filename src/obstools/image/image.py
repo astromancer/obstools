@@ -28,8 +28,8 @@ from recipes.utils import duplicate_if_scalar, not_null
 from recipes.dicts import isdict, AttrDict as ArtistContainer
 
 # relative
-from .detect import SourceDetectionMixin, get_config
 from .calibration import ImageCalibratorMixin
+from .detect import SourceDetectionMixin, get_config
 
 
 # ---------------------------------------------------------------------------- #

@@ -22,18 +22,17 @@ This edition has entries for 1429 CVs.
 # std
 import re
 import logging
-import functools
 import itertools as itt
 
 # third-party
 import numpy as np
 import more_itertools as mit
+from loguru import logger
 from astropy.table import Table
 from astropy.coordinates import SkyCoord
 
 # local
 from recipes import pprint
-from recipes.logging import get_module_logger
 
 
 # TODO: check coordinates are correct?  UPDATE WITH DATA FROM ALADIN?
@@ -41,7 +40,6 @@ from recipes.logging import get_module_logger
 # TODO: read in meta data with column descriptions
 # TODO: host as public catalogue that users can contribute to!?
 
-from loguru import logger
 
 # flags
 # LIMIT_FLAGS = '<>'

@@ -1,5 +1,8 @@
-from obstools.image.noise import CCDNoiseModel
+# third-party
 from astropy import units
+
+# local
+from obstools.image.noise import CCDNoiseModel
 
 
 class TestCCDNoiseModel:

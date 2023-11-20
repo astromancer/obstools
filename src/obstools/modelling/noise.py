@@ -1,8 +1,7 @@
+
 import numpy as np
-
-from scipy.stats import poisson  # norm
 from scipy.special import erf
-
+from scipy.stats import poisson
 
 
 # __all__ = ['GaussUni', 'PoissonGauss', 'PoissonGaussAdaptive',

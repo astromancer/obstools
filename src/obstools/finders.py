@@ -8,7 +8,7 @@ import numpy as np
 from loguru import logger
 
 # relative
-from .utils import get_dss, get_coordinates, STScIServerError
+from .utils import STScIServerError, get_coordinates, get_dss
 
 
 SERVERS = {'b': ['poss2ukstu_blue', 'poss1_blue'],

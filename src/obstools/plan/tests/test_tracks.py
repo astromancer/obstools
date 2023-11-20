@@ -1,11 +1,16 @@
+# std
+import re
 import itertools as itt
-import matplotlib.pyplot as plt
+from pathlib import Path
+
+# third-party
+import pytest
+import matplotlib.pyplot
+import more_itertools as mit
+
+# local
 from obstools.plan import SkyTracks
 from obstools.plan.limits import HARD_LIMITS, SOFT_LIMITS, TelescopeLimits
-import pytest
-import re
-from pathlib import Path
-import more_itertools as mit
 
 
 # TODO:

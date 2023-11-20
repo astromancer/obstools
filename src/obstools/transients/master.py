@@ -5,25 +5,25 @@ Functions to read and parse the MASTER transient alert website:
 
 
 # std
-from astropy.coordinates import jparser
-from recipes.string import sub
 import re
-import itertools as itt
+import warnings
+import itertools
 from datetime import datetime
 from html.parser import HTMLParser
-from collections import OrderedDict
 from urllib.request import urlopen
-import warnings
 
 # third-party
 import numpy as np
-from astropy.time import Time, TimeDelta
 from astropy.table import Table
+from astropy.coordinates import jparser
+from astropy.time import Time, TimeDelta
 
 # local
+from recipes.string import sub
 from recipes.iter import first_true_idx
 
-from .utils import fmt_ra, fmt_dec
+# relative
+from .utils import fmt_dec, fmt_ra
 
 
 URL = 'http://observ.pereplet.ru/MASTER_OT.html'

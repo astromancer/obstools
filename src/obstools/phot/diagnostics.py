@@ -16,8 +16,8 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 # local
 from motley.table import Table
 from recipes.misc import is_interactive
-from scrawl.image import ImageDisplay
 from scrawl import density, ticks
+from scrawl.image import ImageDisplay
 
 
 # from motley.profiling.timers import timer

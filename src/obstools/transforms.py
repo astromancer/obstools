@@ -4,7 +4,10 @@ Transformation helper functions for cartesian coordinate arrays.
 
 # TODO: move up
 
+# third-party
 import numpy as np
+
+# local
 from recipes.transforms.rotation import rotation_matrix
 
 

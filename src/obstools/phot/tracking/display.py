@@ -1,6 +1,5 @@
 
 # std
-import sys
 import itertools as itt
 import functools as ftl
 import contextlib as ctx
@@ -12,7 +11,6 @@ from mpl_multitab import MplMultiTab
 from bottleneck import nanmax, nanmin
 from matplotlib import ticker
 from matplotlib.lines import Line2D
-from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.transforms import AffineDeltaTransform
 
