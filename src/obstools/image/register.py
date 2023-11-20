@@ -1878,7 +1878,13 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.check_has_labels()
 
         n = len(self)
-        fig, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+        if (fig := kws.pop('fig')):
+            ax = fig.add_subplot()
+        elif ax:
+            fig = ax.figure
+        else:
+            fig, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+
         # ax.set_title(f'Position Measurements (CoM) {n} frames')
         labels = self.labels.copy()
         if trim_labels and len(trim_labels := self._trim_labels()):
@@ -2348,15 +2354,17 @@ class RegistrationMixin:
 
         # resolve plot config
         plot = _get_plot_config(plot)
-        alignment = _duplicate_config(plot.get('alignment', False), len(self))
+        alignment = _duplicate_config(plot.pop('alignment', False), len(self))
+        clusters = plot.pop('clusters', {})
 
         # For each telescope, align images wrt each other first
         for i in order:
-            registers[i] = r = groups[keys[i]]._coalign(
+            registers[i] = groups[keys[i]]._coalign(
                 sample_stat, min_depth,
-                plot={**plot, 'alignment': alignment[indices[i]]},
+                plot={**plot, 
+                      'alignment': alignment[indices[i]],
+                      'clusters':  clusters.get(keys[i], False)},
                 **detection)
-            # r._figure_cache
 
         # match coordinates of registers against each other
         reg = registers[order[0]]
