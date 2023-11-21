@@ -84,7 +84,7 @@ class default_units(Decorator):
     def _apply_args(self, args):
         for i, (val, unit) in enumerate(zip(args, self.default_units.values())):
             if no_unit(val) and unit:
-                logger.info('Applying default unit {} to positional argument {}'
+                logger.info('Applying default unit {} to positional argument {}.'
                             ' in function {}', unit, i, self.__wrapped__)
                 yield val * unit
             yield val

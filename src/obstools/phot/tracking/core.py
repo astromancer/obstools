@@ -282,7 +282,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         origin = self.compute_frame_offset(region_centres,
                                            weights=self.source_weights, axis=0)
         self.origin = origin[::-1].round(0).astype(int)
-        self.logger.debug('Origin set to: {}', self.origin)
+        self.logger.debug('Origin set to: {}.', self.origin)
 
         #
         self.noise_model = noise_model
@@ -452,7 +452,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
                 return False
 
             if n == _last_checked.value:
-                self.logger.debug('No new measurements since previous precision'
+                self.logger.debug('No new measurements since previous precision.'
                                   ' check - continuing...')
                 return True
 
@@ -564,7 +564,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             #     self.delta_xy[i] = off
 
         # if indices.size < 10:
-        self.logger.trace('OFFSETS frame {}: {}', i, off)
+        self.logger.trace('OFFSETS frame {}: {}.', i, off)
         # xym = self.measure_avg[indices]
 
         # update relative positions from CoM measures
@@ -590,7 +590,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         self.logger.opt(lazy=True).trace(
             'Average pos stddev: {}', lambda: self.coords['sigma'].mean(0))
 
-        # self.logger.info('OFFSET: {}', off)
+        # self.logger.info('OFFSET: {}.', off)
         # finally return the new coordinates
         return self.coords['xy'] + self.frame_info['delta_xy'][indices, None]
 
@@ -615,7 +615,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             # else we end up with nans
 
         snr[low_snr] = 0
-        # self.logger.trace('SNR weights: {}', snr / snr.sum())
+        # self.logger.trace('SNR weights: {}.', snr / snr.sum())
 
         if np.all(snr == 0):
             raise ValueError('Could not determine weights for centrality '
@@ -647,13 +647,13 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # if np.any(np.abs(dxy) > 20):
         #     raise ValueError('')
 
-        self.logger.trace('OFFSET: {}', dxy)
+        self.logger.trace('OFFSET: {}.', dxy)
 
         # Update origin
         if (np.ma.abs(dxy) > 1).any():
             new = self.update_origin(dxy, i, image)
 
-            self.logger.trace('UPDATED OFFSET {}: {} {}', i, dxy, new)
+            self.logger.trace('UPDATED OFFSET {}: {} {}.', index, dxy, new)
             return new
 
         # same origin
@@ -789,7 +789,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         for i, stat in enumerate(self.features):
             centroid = getattr(seg, stat)(data, labels, njobs=1,
                                           **self.feature_kws.get(stat, {}))
-            self.logger.trace('centroid: {}\n{}', stat, centroid)
+            self.logger.trace('centroid: {}\n{}.', stat, centroid)
             yx[i] = centroid[:, :2]
 
         # TODO: check if using grid + offset then com is faster
@@ -816,7 +816,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         for name, out in dict(frame=outframe, segment=outseg).items():
             if out.any():
-                self.logger.debug('Sanitizing out of {} measurement: {}',
+                self.logger.debug('Sanitizing out of {} measurement: {}.',
                                   name, yx[out])
 
             yx[out] = np.nan
@@ -1074,7 +1074,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
     #     ix = self.use_labels - 1
     #     inc = (vec - self.rpos[ix]) * weights
-    #     self.logger.debug('rpos increment:\n{:s}', inc)
+    #     self.logger.debug('rpos increment:\n{:s}.', inc)
     #     self.rpos[ix] += inc
 
     # def best_for_tracking(self, image, close_cut=None, snr_cut=snr_cut,
@@ -1154,7 +1154,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         obj = cls(xy, seg, labels, mask=mask, **kws)
 
         # log nice table with what's been found.
-        obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
+        obj.logger.info('Found the following sources:\n{:s}\n.', obj.pprint())
 
         return obj
 

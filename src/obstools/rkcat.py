@@ -313,7 +313,7 @@ class RKCat:
         #
         if logger.getEffectiveLevel() >= logging.INFO:
             n_cleaned = np.sum(pre != '') + np.sum(post != '')
-            logger.info('Flags stripped from {:d} data entries in {:d} columns',
+            logger.info('Flags stripped from {:d} data entries in {:d} columns.',
                         n_cleaned, len(names))
 
     def restore_flags(self, names):

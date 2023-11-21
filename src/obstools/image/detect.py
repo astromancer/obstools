@@ -142,7 +142,7 @@ class DetectionBase(LoggingMixin):
         obstools.image.segments.SegmentedImage
         """
 
-        # self.logger.debug('Running source detection algorithm: {!r} {}', )
+        # self.logger.debug('Running source detection algorithm: {!r} {}.', )
         code = self.post_process.__wrapped__.__code__
         i0, nkwo = code.co_argcount, code.co_kwonlyargcount
         kws, post = dicts.split(kws, code.co_varnames[i0:i0 + nkwo])
@@ -160,7 +160,7 @@ class DetectionBase(LoggingMixin):
                      monolithic, roundness,
                      dilate, deblend):
         #
-        self.logger.info('Post-processing detected sources with criteria:\n{}',
+        self.logger.info('Post-processing detected sources with criteria:\n{}.',
                          pp.pformat(locals(), ignore=('self', 'image', 'seg_data')))
 
         #
@@ -230,7 +230,7 @@ class DetectionBase(LoggingMixin):
         )
 
         if cutouts:
-            self.logger.info('Source images:\n{}',
+            self.logger.info('Source images:\n{}.',
                              seg.show.console.format_cutouts(image, **kws))
 
 
@@ -252,7 +252,7 @@ class SigmaThreshold(DetectionBase):
 
         """
 
-        self.logger.info('Running detect with: {:s}',
+        self.logger.info('Running detect with: {:s}.',
                          str(dict(snr=snr)))  # npixels=npixels
 
         if mask is None:
@@ -487,7 +487,7 @@ class _SourceDetectionLoop(_ResultsAggregator):
             raise StopIteration
 
         # debug log!
-        self.logger.debug('Detection iteration {:d}: {:d} new detections: {:s}',
+        self.logger.debug('Detection iteration {:d}: {:d} new detections: {:s}.',
                           self.count, new_segs.nlabels,
                           pp.collection(tuple(new_segs.labels)))
 
@@ -639,7 +639,7 @@ class SourceDetectionDescriptor(LoggingMixin):
 
     @algorithm.setter
     def algorithm(self, algorithm):
-        self.logger.debug('Switcing detection algorithm: {}', algorithm)
+        self.logger.debug('Switcing detection algorithm: {}.', algorithm)
         self._algorithm = DetectionBase.resolve(algorithm)()
 
     def report(self, image, seg, show=5, **kws):

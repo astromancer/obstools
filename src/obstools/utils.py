@@ -184,7 +184,7 @@ def convert_skycoords(ra, dec):
     try:
         return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
     except ValueError:
-        logger.warning('Could not interpret coordinates: {:s}; {:s}', ra, dec)
+        logger.warning('Could not interpret coordinates: {:s}; {:s}.', ra, dec)
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):

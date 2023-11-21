@@ -328,7 +328,7 @@ class SourceTrackerPlots(LoggingMixin):
         # event.canvas.draw()
 
     def _add_colorbars(self, polys):
-        self.logger.debug('Adding colorbars')
+        self.logger.debug('Adding colorbars.')
         for i, poly in enumerate(polys):
             ax = poly.axes
             fig = ax.figure
@@ -499,7 +499,7 @@ class TrackerVideo(VideoFeatureDisplay):
             self.legend()
 
     def get_coords(self, i):
-        # logger.debug('GETCOO', i)
+        # logger.debug('GETCOO.', i)
         tracker = self.tracker
         if np.isnan(tracker.delta_xy[i]).any():
             self.logger.debug('No measurements yet for frame {}.', i)
@@ -513,8 +513,8 @@ class TrackerVideo(VideoFeatureDisplay):
         return tracker.measurements[i]
 
     def update(self, i, draw=False):
-        # logger.debug('UPDATE', i)
-        # logger.debug('GRUMBLE' * np.isnan(tracker.delta_xy[i]).any())
+        # logger.debug('UPDATE.', i)
+        # logger.debug('GRUMBLE.' * np.isnan(tracker.delta_xy[i]).any())
         i = int(i)
         tracker = self.tracker
         if np.isnan(tracker.measurements['xy'][i]).any():

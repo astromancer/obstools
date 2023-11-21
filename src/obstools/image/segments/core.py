@@ -1365,7 +1365,7 @@ class SegmentedImage(SegmentationImage,     # base
             return self
 
         for count in range(dmax + 1):
-            self.logger.debug('round {:d}', count)
+            self.logger.debug('round {:d}.', count)
 
             mim = self.mask_sources(image, labels)
             m = np.ma.median(mim)

@@ -465,7 +465,7 @@ def _measure_positions_offsets(xy, centres, outlier_distance, centre_func):
         if n_out / n_points > 0.5:
             raise ValueError('Too many outliers!!')
 
-        logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
+        logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}.',
                     n_out, n_points, (n_out / n_points), outlier_distance)
 
     return centres, xy_shifted.std(0), xy_offsets.squeeze(), outliers
@@ -552,7 +552,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
         n_bad = bad.sum()
         no_detection, = np.where(np.equal(sources_per_image, 0))
         if len(no_detection):
-            logger.debug('There are no sources in frames: {!s}', no_detection)
+            logger.debug('There are no sources in frames: {!s}.', no_detection)
 
         if n_bad:
             extra = (f'\nn_masked = {n_bad}/{n_points_tot} '
@@ -572,7 +572,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     # s0 = xy.std((0, 1))
     # s1 = (xy - xy_offsets[:, None]).std((0, 1))
     # # Fractional variance change
-    # logger.info('Differencing change overall variance by {!r:}',
+    # logger.info('Differencing change overall variance by {!r:}.',
     #             np.array2string((s0 - s1) / s0, precision=3))
 
     # FIXME: percentage format in total wrong
@@ -631,7 +631,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
     # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
 
-    logger.info('\n{:s}{:s}', tbl, extra)
+    logger.info('\n{:s}{:s}.', tbl, extra)
 
     return tbl
 
@@ -965,7 +965,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         del self.model
 
         # self._sigma_guess = min(self._sigma_guess, self.guess_sigma(xy))
-        # self.logger.debug('sigma guess: {:s}', self._sigma_guess)
+        # self.logger.debug('sigma guess: {:s}.', self._sigma_guess)
 
         # update minimal source seperation
         # self._min_dist = min(self._min_dist, dist_flat(xy).min())
@@ -1247,7 +1247,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
 
-        self.logger.debug('Grid search optimum: {!s}', p)
+        self.logger.debug('Grid search optimum: {!s}.', p)
 
         if plot:
             plot = _ensure_dict(plot)
@@ -1319,7 +1319,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def lh_ratio(self, xy0, xy1):
         ratio = self.model.lh_ratio(xy0, xy1)
-        self.logger.info('Likelihood ratio: {:.5f}\n\t'
+        self.logger.info('Likelihood ratio: {:.5f}\n\t.'
                          + ('Keeping same', 'Accepting new')[ratio > 1]
                          + ' parameters.', ratio)
         return ratio
@@ -1533,7 +1533,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         n_sources = self.n_sources()
         n_noise = self.n_noise()
         # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-        self.logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise)',
+        self.logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise).',
                          n_sources, n - n_noise, n, n_noise)
 
         # sanity check
@@ -1588,7 +1588,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         xy = self.xyt_block
 
-        self.logger.info('Measuring cluster centres, frame xy-offsets')
+        self.logger.info('Measuring cluster centres, frame xy-offsets.')
         _, centres, xy_std, xy_offsets, outliers = \
             compute_centres_offsets(xy, outlier_distance, source_detection_threshold)
 
@@ -2018,7 +2018,7 @@ class ImageRegisterDSS(ImageRegister):
                 self.hdu = get_dss(srv, coords.ra.deg, coords.dec.deg, fov)
                 break
             except STScIServerError as error:
-                self.logger.warning('Failed to retrieve image from server: {!r}\n{}',
+                self.logger.warning('Failed to retrieve image from server: {!r}\n{}.',
                                     srv, error)
                 error = error
         else:
@@ -2404,7 +2404,7 @@ class RegistrationMixin:
         # image with highest resolution if any, otherwise, just take the first.
         # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
 
-        # self.logger.debug('PRIMARY = {}', primary)
+        # self.logger.debug('PRIMARY = {}.', primary)
         reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)
         reg.fit(plot=plot.get('alignment', False))
 

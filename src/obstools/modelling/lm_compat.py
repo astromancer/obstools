@@ -79,7 +79,7 @@ class lmMixin():
             bad = np.allclose(p, p0)
             if bad:  # model "converged" to the initial values
                 self.logger.warning('%s fit did not converge!', self)
-                self.logger.debug('input parameters identical to output')
+                self.logger.debug('input parameters identical to output.')
 
             self.logger.debug(
                 'Successfully fit %s function to stellar profile.', self)

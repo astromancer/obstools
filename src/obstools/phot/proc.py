@@ -187,7 +187,7 @@ class FrameProcessor(LoggingMixin):
             compute(worker(data, *args) for args in
                     self.get_workload(indices, njobs, progress_bar))
 
-        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
+        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s.',
         #              backend, time.time() - t_start)
 
     def _setup_compute(self, njobs, backend, context, progress_bar):

@@ -260,7 +260,7 @@ class TransformedImage(Image):
         if set_lims := (set_lims or (coords == 'world')):
             corners = self.corners
             xlim, ylim = np.array([corners.min(0), corners.max(0)]).T
-            # self.logger.debug('Updating axes limits {}', dict(xlim=xlim, ylim=ylim))
+            # self.logger.debug('Updating axes limits {}.', dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
         # add artists for blitting
@@ -447,7 +447,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         if not ok.any():
             warnings.warn('No detections for image.')
         if not ok.all():
-            logger.info('Bad measurements: {}/{}', len(ok) - sum(ok), len(ok))
+            logger.info('Bad measurements: {}/{}.', len(ok) - sum(ok), len(ok))
 
         self.xy = yx[ok, ::-1]
         self.counts = counts[ok]

@@ -602,7 +602,7 @@ class FrameProcessor(LoggingMixin):
 
         snr = opt.snr(im, photmasks, im_sky, skymask)
         low_snr = snr < OPT_SNR_THRESH
-        self.logger.debug('SNR: {:s}', snr)
+        self.logger.debug('SNR: {:s}.', snr)
         if low_snr.all():
             # skip opt
             self.logger.debug('Skipping optimization: frame {:s}. low SNR for '
@@ -730,7 +730,7 @@ class FrameProcessor(LoggingMixin):
             # TODO: kill this for loop
             ix, mdl, msg = mdlr.model_selection(g)
             if msg:
-                self.logger.warning('{} (Frame {}, Star {})', msg, i, j)
+                self.logger.warning('{} (Frame {}, Star {}).', msg, i, j)
 
             if ix == -99:
                 p = pu = None
@@ -887,10 +887,10 @@ class FrameProcessor(LoggingMixin):
 #         for j, g in enumerate(gof.swapaxes(0, 1)):  # zip(pars, paru, gof)
 #             ix, mdl, msg = self.modeller.model_selection(g)
 #             if msg:
-#                 self.logger.warning('{} (Frame {}, Star {})', (msg, i, j))
+#                 self.logger.warning('{} (Frame {}, Star {}).', (msg, i, j))
 #
 #             if ix is not None:
-#                 self.logger.info('Best model: {:s} (Frame {:d}, Star {:d})' % (mdl, i, j))
+#                 self.logger.info('Best model: {:s} (Frame {:d}, Star {:d}).' % (mdl, i, j))
 #
 #             # TODO: if best_model is self.db.bg:
 #             #     "logging.warning('Best model is BG')"

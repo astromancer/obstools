@@ -64,12 +64,12 @@ class LegendCallbacks(CallbackManager):
     @mpl_connect('pick_event')
     def on_pick(self, event):
         """Pick event handler."""
-        self.logger.debug('pick')
+        self.logger.debug('pick.')
         prx = event.artist
         if prx in self.to_orig:
             art = self.to_orig[event.artist]
             self.toggle_vis(art, prx)
-            self.logger.debug('toggled', art)
+            self.logger.debug('toggled.', art)
 
     def toggle_vis(self, art, proxy):
         """
@@ -224,12 +224,12 @@ class SourceTrackerGUI(TrackerVideo):
         scroll2.canvas.stale = True
 
     # def _redraw_group_on_change(self, i):
-    #     self.logger.debug('redraw')
+    #     self.logger.debug('redraw.')
     #     mgr = self.ui[i - 1]
     #     _draw_if_stale(mgr[mgr.tabs.currentIndex()].canvas)
 
     # def _redraw_tab_on_change(self, i):
-    #     self.logger.debug('redraw')
+    #     self.logger.debug('redraw.')
     #     mgr = self.ui[self.ui.groups.tabs.currentIndex() - 1]
     #     _draw_if_stale(mgr[i].canvas)
 

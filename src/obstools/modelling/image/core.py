@@ -594,7 +594,7 @@ class PSFModeller(SegmentedImageModel):
 #
 #         # folder = Path(folder)
 #         # if not folder.exists():
-#         #     self.logger.info('Creating folder: {:s}', str(folder))
+#         #     self.logger.info('Creating folder: {:s}.', str(folder))
 #         #     folder.mkdir(parents=True)
 #         #
 #         # self.loc = str(folder)
