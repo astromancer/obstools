@@ -14,7 +14,7 @@ from . import CONFIG
 from .noise import CCDNoiseModel
 from .sample import ImageSamplerMixin
 from .detect import SourceDetectionMixin
-from .calibration import ImageCalibratorMixin
+from .calibrate import ImageCalibratorMixin
 
 
 # ---------------------------------------------------------------------------- #

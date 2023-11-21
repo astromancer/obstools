@@ -28,7 +28,7 @@ from recipes.utils import duplicate_if_scalar, not_null
 from recipes.dicts import isdict, AttrDict as ArtistContainer
 
 # relative
-from .calibration import ImageCalibratorMixin
+from .calibrate import ImageCalibratorMixin
 from .detect import SourceDetectionMixin, get_config
 
 
