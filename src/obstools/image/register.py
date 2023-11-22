@@ -1328,14 +1328,18 @@ class ImageRegister(ImageContainer, LoggingMixin):
                          + ' parameters.', ratio)
         return ratio
 
-    def register(self, clf=None, plot=CONFIG.plot.clusters.show):
+    def register(self, clf=None, relabel=False, plot=CONFIG.plot.clusters.show):
 
         self.check_has_data()
 
         # clustering + relative position measurement
         self.cluster_points(clf or self.clustering)
 
-        # make the cluster centres the target constellation
+        if relabel:
+            # relabel clusters and segmented images
+            self.relabel()
+
+        # cluster centres become the target coordinates
         self.xy = self.xyt_block.mean(0)
 
         if plot:
@@ -1369,9 +1373,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def remap_labels(self, target, flux_sort=False):
         """
-        Re-order the *cluster* labels so that our target is 0, the rest follow
-        in descending order of brightness first listing those that occur within
-        our science images, then those in the survey image.
+        Re-order the *cluster* labels so that our `target` becomes 0, the rest
+        follow in descending order of brightness first listing those that occur
+        within our science images, then those in the survey image.
         """
         assert isinstance(target, numbers.Integral)
 
@@ -1402,12 +1406,12 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # relabel all segmentedImages for cross image consistency
         new_labels = []
-
         for cluster_labels, image in zip(self.labels_per_image, self):
             # relabel image segments
             image_labels = cluster_labels + 1
             reorder = ...
             if np.any(image.seg.labels != image_labels):
+                # self.logger.debug('Relabelling {}.')
                 old = image.seg.copy()
                 image.seg.relabel_many(image_labels)
                 # have to reorder the features
@@ -1417,25 +1421,16 @@ class ImageRegister(ImageContainer, LoggingMixin):
                 image.xy = image.xy[reorder]
                 image.counts = image.counts[reorder]
 
-                try:
-                    assert image.seg.nlabels == len(image.xy) == len(image.counts)
-                except Exception as err:
-                    import sys
-                    import textwrap
-                    from IPython import embed
-                    from better_exceptions import format_exception
-                    embed(header=textwrap.dedent(
-                        f"""\
-                            Caught the following {type(err).__name__} at 'register.py':1412:
-                            %s
-                            Exception will be re-raised upon exiting this embedded interpreter.
-                            """) % '\n'.join(format_exception(*sys.exc_info()))
-                    )
-                    raise
-
+            assert image.seg.nlabels == len(image.xy) == len(image.counts)
             new_labels.extend(cluster_labels[reorder])
 
+        # relabel
         self.labels = np.array(new_labels)
+
+        # update `xy` source coordinate centres
+        # self.update_centres()
+        # self.xy = self.xyt_block.mean(0)
+
         return new_labels
 
     # def relabel_clusters(self):
@@ -1730,28 +1725,14 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # Get the WCS for the output image
         drizzle = Drizzle(outwcs=outwcs, pixfrac=pixfrac)
 
-        try:
-            # Add the input images to the existing output image
-            wcss = iter(self.wcss)
-            for i, image in enumerate(self):
-                if i not in ignore:
-                    fscale = image.counts[image.seg.labels == 2].item()
-                    data = (image.data - image.seg.mean(image.data, 0)) / fscale
-                    drizzle.add_image(data, next(wcss),
-                                      expin=image.meta['EXPOSURE'])
-        except Exception as err:
-            import sys
-            import textwrap
-            from IPython import embed
-            from better_exceptions import format_exception
-            embed(header=textwrap.dedent(
-                f"""\
-                    Caught the following {type(err).__name__} at 'register.py':1710:
-                    %s
-                    Exception will be re-raised upon exiting this embedded interpreter.
-                    """) % '\n'.join(format_exception(*sys.exc_info()))
-            )
-            raise
+        # Add the input images to the existing output image
+        wcss = iter(self.wcss)
+        for i, image in enumerate(self):
+            if i not in ignore:
+                fscale = image.counts[image.seg.labels == 2].item()
+                data = (image.data - image.seg.mean(image.data, 0)) / fscale
+                drizzle.add_image(data, next(wcss),
+                                  expin=image.meta['EXPOSURE'])
 
         drizzle.write(path)
 
@@ -2062,16 +2043,12 @@ class ImageRegisterDSS(ImageRegister):
         return np.subtract([hdr['crpix1'], hdr['crpix2']], 0.5)
 
     def remap_labels(self, target=None, flux_sort=False, trim_labels=False):
+
         if target is None:
             target, = self.clustering.predict([self.target_coords_pixel])
-            target = self.labels[self.clustering.labels_ == target][0]
+            # target = self.labels[self.clustering.labels_ == target][0]
 
         return super().remap_labels(target, flux_sort)
-
-        # if trim_labels:
-        #     new_labels[self._trim_labels()] = -1
-
-        # return new_labels
 
     def mosaic(self, names=(), fig=None, **kws):
 
@@ -2083,8 +2060,6 @@ class ImageRegisterDSS(ImageRegister):
 
         # rescale images to DSS pixel scale
         return super().mosaic(ff.ax, [name, *names], 'pixels', **kws)
-
-        # for art, frame in mos.art
 
     def get_rotation(self):
         # transform pixel to ICRS coordinate
@@ -2108,13 +2083,19 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
-    def register(self, clf=None, plot=CONFIG.plot.clusters.show):
+    def register(self, clf=None, relabel=True, plot=CONFIG.plot.clusters.show):
         # trim=True
         # if trim:
         #     self._trim_labels()
 
-        art = super().register(clf, plot)
-        self.relabel()
+        art = super().register(clf, False, plot)
+
+        if relabel:
+            self.relabel()
+
+        # cluster centres become the target coordinates
+        self.xy = self.xyt_block.mean(0)
+
         return art
 
     def _trans_to_image(self, index, unit='pixel'):
