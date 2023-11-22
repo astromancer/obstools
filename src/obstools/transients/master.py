@@ -7,7 +7,6 @@ Functions to read and parse the MASTER transient alert website:
 # std
 import re
 import warnings
-import itertools
 from datetime import datetime
 from html.parser import HTMLParser
 from urllib.request import urlopen

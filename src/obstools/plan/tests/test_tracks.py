@@ -5,7 +5,6 @@ from pathlib import Path
 
 # third-party
 import pytest
-import matplotlib.pyplot
 import more_itertools as mit
 
 # local
