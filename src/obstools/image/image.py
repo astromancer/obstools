@@ -552,6 +552,19 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
 
 class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
+
+    # properties: vectorized attribute getters on `SkyImage`
+    images = AttrVector('data')
+    shapes = AttrVector('data.shape', output=np.array)
+    detections = AttrVector('seg')
+    coms = centroids = AttrVector('xy')
+    fovs = AttrVector('fov', output=np.array)
+    scales = AttrVector('scale', output=np.array)
+    params = AttrVector('params', output=np.array)
+    origins = AttrVector('origin', output=np.array)
+    angles = AttrVector('angles', output=np.array)
+    corners = AttrVector('corners', output=np.array)
+
     def __init__(self, images=(), fovs=()):
         """
         A container of `SkyImages`'s
@@ -601,18 +614,17 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
         n = len(self)
         return f'{self.__class__.__name__}: {n} image{"s" * bool(n)}'
 
-    # properties: vectorized attribute getters on `SkyImage`
-    images = AttrVector('data')
-    shapes = AttrVector('data.shape', output=np.array)
-    detections = AttrVector('seg')
-    coms = centroids = AttrVector('xy')
-    fovs = AttrVector('fov', output=np.array)
-    scales = AttrVector('scale', output=np.array)
-    params = AttrVector('params', output=np.array)
-    origins = AttrVector('origin', output=np.array)
-    angles = AttrVector('angles', output=np.array)
-    corners = AttrVector('corners', output=np.array)
+    def show(self, image=True, frame=True, points=False, regions=True,
+             labels=True, set_lims=None, coords='pixel', **kws):
+        """ """
+        from mpl_multitab import MplTabs
+        
+        
+        ui = MplTabs(title=self.__class__.__name__)
 
-    # @property
-    # def params(self):
-    #     return np.array(self._params)
+        for img in self:
+            tab = ui.add_tab()
+            display, art = img.show(image, frame, points, regions, labels,
+                                    set_lims, coords, fig=tab.figure, **kws)
+
+        return ui
