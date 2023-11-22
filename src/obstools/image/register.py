@@ -46,6 +46,7 @@ from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.lists import cosort, split_like
+from recipes.oo.slots import _sanitize_locals
 from recipes.decorators import update_defaults
 from recipes.utils import duplicate_if_scalar, not_null
 
@@ -1258,7 +1259,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         if model is False:
             return
 
-        self.logger.debug('Plotting fit results.')
+        self.logger.debug('Plotting fit results:, {}.', kws)
         display = self.model.gmm.plot(**ensure_dict(model), **kws)
         display.ax.plot(*xy, **{'ls': '', **ensure_dict(points)})
         # self._figure_cache.append(display)
@@ -1322,7 +1323,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
     def lh_ratio(self, xy0, xy1):
         ratio = self.model.lh_ratio(xy0, xy1)
-        self.logger.info('Likelihood ratio: {:.5f}\n\t.'
+        self.logger.info('Likelihood ratio: {:.5f}. '
                          + ('Keeping same', 'Accepting new')[ratio > 1]
                          + ' parameters.', ratio)
         return ratio
@@ -1883,6 +1884,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         Plot the identified sources (clusters) in a single frame.
         """
         # TODO: model image
+
+        self.logger.opt(lazy=True).debug(
+            'Plotting cluster identified sources.: {}.',
+            lambda: pp.pformat(_sanitize_locals(locals()))
+        )
 
         self.check_has_data()
         self.check_has_labels()

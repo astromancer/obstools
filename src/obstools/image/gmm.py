@@ -8,7 +8,9 @@ import numpy as np
 
 # local
 from scrawl.image import ImageDisplay
+from recipes.pprint import pformat
 from recipes.config import ConfigNode
+from recipes.oo.slots import _sanitize_locals
 from recipes.utils import duplicate_if_scalar
 
 # relative
@@ -257,7 +259,11 @@ class MultiGauss(Model):
 
     def plot(self, grid=None, size=CONFIG.plot.image.grid_size,
              points=True, peak=False, **kws):
-        """Image the model"""
+        """Plot an image of the model."""
+
+        self.logger.opt(lazy=True).debug(
+            'Plotting: {}.', lambda: pformat(_sanitize_locals(locals()))
+        )
 
         ndims = self.n_dims
         if ndims != 2:
