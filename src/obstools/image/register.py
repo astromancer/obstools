@@ -2363,8 +2363,15 @@ class RegistrationMixin:
         # resolve plot config
         plot = _get_plot_config(plot)
         alignment = _duplicate_config(plot.pop('alignment', False), len(self))
-        clusters = plot.pop('clusters', defaultdict(bool))
-        mosaic = plot.pop('mosaic', defaultdict(bool))
+
+        dconfig = {}
+        for item in ('mosaic', 'clusters'):
+            if config := ensure_dict(plot.pop(item, False)):
+                if not (set(config.keys()) & set(groups)):
+                    config = _duplicate_config(config)
+            dconfig[item] = config
+        mosaic = dconfig['mosaic']
+        clusters = dconfig['clusters']
 
         # For each telescope, align images wrt each other first
         for i in order:
@@ -2438,7 +2445,7 @@ class RegistrationMixin:
         # make sure we have the best possible alignment amongst sample images.
         # register constellation of stars by fitting clusters to center-of-mass
         # measurements. Refine the fit, by ...
-        reg.register(plot=plot.get('cluster', False))
+        reg.register(plot=plot.get('clusters', False))
 
         # refine alignment
         # refine = 5
