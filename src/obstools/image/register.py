@@ -11,14 +11,13 @@ Image registration (point set registration) for astronomicall images.
 #   direct image-to-image matching
 #   brute force search with gaussian mixtures on points
 
-
 # std
 import re
 import numbers
 import warnings
 import operator as op
 import itertools as itt
-from collections import abc
+from collections import abc, defaultdict
 
 # third-party
 import numpy as np
@@ -26,8 +25,8 @@ import aplpy as apl
 import matplotlib.pyplot as plt
 from matplotlib import colormaps
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle
 from matplotlib.transforms import Affine2D
+from matplotlib.patches import Circle, Rectangle
 from loguru import logger
 from sklearn import cluster
 from drizzle.drizzle import Drizzle
@@ -55,11 +54,11 @@ from .. import transforms as tf
 from ..modelling import UnconvergedOptimization
 from ..utils import STScIServerError, get_coordinates, get_dss
 from .hdu import ImageHDU
-from .utils import non_masked
 from .mosaic import MosaicPlotter
 from .gmm import CoherentPointDrift
 from .segments import SegmentedImage
-from .image import ImageContainer, SkyImage
+from .utils import ensure_dict, non_masked
+from .image import ImageContainer, SkyImage, get_axes
 
 
 # ---------------------------------------------------------------------------- #
@@ -81,18 +80,10 @@ CONFIG.cluster['classifier'] = getattr(cluster, CONFIG.cluster.pop('classifier')
 
 # ---------------------------------------------------------------------------- #
 
-def _get_config(obj):
-    return {} if obj is True else obj
-
-
-def _ensure_dict(obj):
-    return dict(_get_config(obj))
-
-
 def _duplicate_config(config, n):
     if isinstance(config, dict) or not isinstance(config, abc.Iterable):
         config = itt.repeat(config, n)
-    return np.array(list(config), 'O')
+    return np.fromiter(config, 'O')
 
 
 def _get_plot_config(obj):
@@ -789,7 +780,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # state variable placeholders
         self.labels = None
         self._colour_sequence_cache = ()
-        self._figure_cache = []
+        # self._figure_cache = []
 
         # WCS
         self.wcss = []
@@ -798,6 +789,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return (f'{super().__repr__()}; '
                 + ('unregistered' if self.labels is None else
                    f'{self.labels.max()} sources'))
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # state['_figure_cache'] = []
+        return state
 
     @property
     def dof(self):
@@ -1208,7 +1204,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         raise UnconvergedOptimization()
 
-    def _dxy_hop(self, xy, plot=False):
+    def _dxy_hop(self, xy, plot=CONFIG.align.plot):
         # This is a strategic brute force search along all the offset values
         # that will align pairs of points in the two fields for a known
         # rotation. One of the test offsets is the true offset value. Each
@@ -1246,20 +1242,27 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # r = gridsearch_mp(self.model.loss_mle, trials.T, (xy, ))
         r = [self.model.loss_mle(p, xy) for p in trials]
         p = trials[np.argmin(r)]
-
         self.logger.debug('Grid search optimum: {!s}.', p)
 
         if plot:
-            plot = _ensure_dict(plot)
-            display = self.model.gmm.plot(**_ensure_dict(plot.get('model', {})))
-            display.ax.plot(*(xy + p).T, **_ensure_dict(plot.get('points', {})))
-            self._figure_cache.append(display)
+            self._plot_fit((xy + p).T, **ensure_dict(plot))
 
         # restore sigma
         self.model.fit_angle = state
         return np.array(p)
 
     # TODO: relative brightness
+
+    def _plot_fit(self, xy, points=CONFIG.align.plot.points, model=True, **kws):
+
+        if model is False:
+            return
+
+        self.logger.debug('Plotting fit results.')
+        display = self.model.gmm.plot(**ensure_dict(model), **kws)
+        display.ax.plot(*xy, **{'ls': '', **ensure_dict(points)})
+        # self._figure_cache.append(display)
+        return display
 
     def refine(self, fit_angle=True, plot=False):
         """
@@ -1335,7 +1338,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.xy = self.xyt_block.mean(0)
 
         if plot:
-            return self.plot_clusters(**_ensure_dict(plot))
+            return self.plot_clusters(**ensure_dict(plot))
 
     # ------------------------------------------------------------------------ #
 
@@ -1533,8 +1536,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         n_sources = self.n_sources()
         n_noise = self.n_noise()
         # n_per_label = np.bincount(db.labels_[core_sample_indices_])
-        self.logger.info('Identified {:d} sources using {:d}/{:d} points ({:d} noise).',
-                         n_sources, n - n_noise, n, n_noise)
+        self.logger.success('Identified {:d} sources using {:d}/{:d} points '
+                            '({:d} noise).', n_sources, n - n_noise, n, n_noise)
 
         # sanity check
         n_sources_most = max(map(len, self.coms))
@@ -1838,17 +1841,21 @@ class ImageRegister(ImageContainer, LoggingMixin):
     # ------------------------------------------------------------------------ #
 
     def mosaic(self, axes=None, names=(), scale='sky',
-               show_ref_image=True, number_sources=False,
-               **kws):
+               show_ref_image=True, mark_target=False, number_sources=False,
+               *, fig=None, **kws):
 
         from astropy.wcs import WCS, FITSFixedWarning
 
-        mos = MosaicPlotter.from_register(self, axes, scale, show_ref_image)
+        self.logger.debug('Creating mosaic.')
+        mos = MosaicPlotter.from_register(self, axes, scale, show_ref_image, fig=fig)
         with warnings.catch_warnings():
             # Ignore a warning on using DATE-OBS in place of MJD-OBS
             warnings.filterwarnings('ignore', message="'datfix' made the change",
                                     category=FITSFixedWarning)
             mos.mosaic(names, **kws)
+
+        if mark_target:
+            mos.mark_target(**mark_target)
 
         if number_sources:
             off = -4 * self.scales.min(0)
@@ -1858,6 +1865,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
                              xy_offset=off)
 
         return mos
+
+    # alias
+    plot_mosaic = mosaic
 
     def gui(self, names=(), coords='pixel', **kws):
         gui = ImageRegistrationGUI(self, names, coords=coords,
@@ -1872,27 +1882,21 @@ class ImageRegister(ImageContainer, LoggingMixin):
         """
         Plot the identified sources (clusters) in a single frame.
         """
-        from matplotlib.patches import Rectangle
+        # TODO: model image
 
         self.check_has_data()
         self.check_has_labels()
 
-        n = len(self)
-        if (fig := kws.pop('fig')):
-            ax = fig.add_subplot()
-        elif ax:
-            fig = ax.figure
-        else:
-            fig, ax = plt.subplots()  # shape for slotmode figsize=(13.9, 2)
+        # resolve axes
+        ax = get_axes(ax, kws.pop('fig', None), **kws)
 
-        # ax.set_title(f'Position Measurements (CoM) {n} frames')
         labels = self.labels.copy()
         if trim_labels and len(trim_labels := self._trim_labels()):
             xx = (self.labels == np.transpose(np.where(trim_labels))).any(0)
             labels[xx] = -1
 
         art = plot_clusters(ax, np.vstack(self.xyt), labels, nrs=nrs,
-                            label=CONFIG.cluster.plot.features.label.format(n),
+                            label=CONFIG.cluster.plot.features.label.format(len(self)),
                             **kws)
         self._colour_sequence_cache = art.get_edgecolors()
 
@@ -1906,7 +1910,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
                 ax.add_artist(frame)
 
         if centres:
-            ax.plot(*self.xy.T, centres, **{'ls': '',  **CONFIG.cluster.plot.centres})
+            # centres = 'k+' if centres is True else centres
+            ax.plot(*self.xy.T, **{'ls': '',  **CONFIG.cluster.plot.centres})
 
         # bandwidth size indicator.
         if show_bandwidth:
@@ -1915,7 +1920,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # TODO: plot position error ellipses
         ax.legend(loc='lower left', bbox_to_anchor=(0, 1.01), handles=[art, proxy])
         ax.set_aspect('equal')
-        fig.tight_layout()
+        ax.figure.tight_layout()
         return art
 
     def _show_cluster_bandwidth(self, ax):
@@ -2062,13 +2067,13 @@ class ImageRegisterDSS(ImageRegister):
 
         # return new_labels
 
-    def mosaic(self, names=(), **kws):
+    def mosaic(self, names=(), fig=None, **kws):
 
         header = self.hdu[0].header
         name = ' '.join(filter(None, map(header.get, ('ORIGIN', 'FILTER'))))
 
         # use aplpy to setup figure
-        ff = apl.FITSFigure(self.hdu)
+        ff = apl.FITSFigure(self.hdu, figure=fig)
 
         # rescale images to DSS pixel scale
         return super().mosaic(ff.ax, [name, *names], 'pixels', **kws)
@@ -2299,6 +2304,9 @@ class RegistrationMixin:
         dss.fit_registry(reg, refine=False)
         dss.register()
 
+        # from IPython import embed
+        # embed(header="Embedded interpreter at 'src/obstools/image/register.py':2300")
+
         dss.order = reg.order
 
         # dss.recentre(plot=plot)
@@ -2355,15 +2363,18 @@ class RegistrationMixin:
         # resolve plot config
         plot = _get_plot_config(plot)
         alignment = _duplicate_config(plot.pop('alignment', False), len(self))
-        clusters = plot.pop('clusters', {})
+        clusters = plot.pop('clusters', defaultdict(bool))
+        mosaic = plot.pop('mosaic', defaultdict(bool))
 
         # For each telescope, align images wrt each other first
         for i in order:
-            registers[i] = groups[keys[i]]._coalign(
+            gid = keys[i]
+            registers[i] = groups[gid]._coalign(
                 sample_stat, min_depth,
-                plot={**plot, 
+                plot={**plot,
                       'alignment': alignment[indices[i]],
-                      'clusters':  clusters.get(keys[i], False)},
+                      'clusters':  clusters[gid],
+                      'mosaic':    mosaic[gid]},
                 **detection)
 
         # match coordinates of registers against each other
@@ -2385,13 +2396,11 @@ class RegistrationMixin:
         reg.order = np.hstack([indices[o] for o in order])
         # reg.data, _ = cosort(reg.order, reg.data)
 
-        if plot_clusters := plot.get('clusters', False):
-            plot_clusters = _ensure_dict(plot_clusters)
-            if plot_clusters.pop('show', True):
-                reg.plot_clusters(**plot_clusters)
-
-        if plot_mosaic := plot.get('mosaic', False):
-            reg.mosaic(**_ensure_dict(plot_mosaic))
+        for which, config in [('clusters', clusters), ('mosaic', mosaic)]:
+            if config := config.get('all', False):
+                config = ensure_dict(config)
+                if config.pop('show', True):
+                    getattr(reg, f'plot_{which}')(**config)
 
         return reg
 
@@ -2403,6 +2412,8 @@ class RegistrationMixin:
         # If no reference image indicated by user-specified `primary`, choose
         # image with highest resolution if any, otherwise, just take the first.
         # primary, *_ = np.argmin(self.attrs.pixel_scale, 0)
+
+        logger.debug('Plot config: {}', plot)
 
         # self.logger.debug('PRIMARY = {}.', primary)
         reg = ImageRegister.from_hdus(self, sample_stat, min_depth, primary, **kws)

@@ -1,5 +1,4 @@
 
-
 # third-party
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
@@ -11,6 +10,16 @@ from scipy.stats import binned_statistic_2d, mode
 # local
 import motley
 from motley.table import Table
+
+
+# ---------------------------------------------------------------------------- #
+
+def _get_config(obj):
+    return {} if obj is True else obj
+
+
+def ensure_dict(obj):
+    return dict(_get_config(obj))
 
 
 # ---------------------------------------------------------------------------- #

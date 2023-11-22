@@ -8,7 +8,6 @@ import itertools as itt
 # third-party
 import numpy as np
 import more_itertools as mit
-import matplotlib.pyplot as plt
 
 # local
 from recipes import api
@@ -17,7 +16,7 @@ from recipes.logging import LoggingMixin
 
 # relative
 from .. import transforms
-from .image import ImageContainer, SkyImage
+from .image import ImageContainer, SkyImage, get_axes
 
 
 # ---------------------------------------------------------------------------- #
@@ -55,6 +54,7 @@ def ulc(p, fov):
 
 
 # ---------------------------------------------------------------------------- #
+
 
 class MosaicPlotter(ImageContainer, LoggingMixin):
     """
@@ -99,7 +99,8 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         return list(self.art.keys())
 
     @classmethod
-    def from_register(cls, reg, axes=None, scale='sky', show_ref_image=True):
+    @api.synonyms(ax='axes')
+    def from_register(cls, reg, axes=None, scale='sky', show_ref_image=True, **kws):
         """
         Construct from `ImageRegister`
         """
@@ -122,10 +123,11 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             new.origin = image.origin * oscale
             images.append(new)
 
-        return cls(images, (), axes, show_ref_image, reg.primary)
+        return cls(images, (), axes, show_ref_image, reg.primary, **kws)
 
+    @api.synonyms(ax='axes')
     def __init__(self, images, fovs=(), axes=None, show_ref_image=True, ridx=0,
-                 alpha_cycle=0.65):
+                 alpha_cycle=0.65, fig=None, **kws):
         """
         Initialize with sequence `images` of :class:`SkyImages` or sequence
         image arrays `np.ndarray` and sequence `fovs` of field-of-views 
@@ -150,12 +152,8 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         self.show_ref_image = bool(show_ref_image)
 
         # setup figure
-        if axes is None:
-            self.fig, self.ax = plt.subplots()
-        else:
-            self.ax = axes
-            self.fig = axes.figure
-
+        self.ax = get_axes(axes, fig, **kws)
+        self.fig = self.ax.figure
         self.fig.tight_layout()
 
         # connect gui events

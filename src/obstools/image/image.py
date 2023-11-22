@@ -4,6 +4,7 @@ Image and image container classes
 
 
 # std
+import sys
 import pickle
 import warnings
 from collections import abc
@@ -11,6 +12,7 @@ from collections import abc
 # third-party
 import numpy as np
 import more_itertools as mit
+from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 
@@ -45,9 +47,29 @@ UNIT_CORNERS = np.array([[0., 0.],
 
 # ---------------------------------------------------------------------------- #
 
-def isdict(obj):
-    return isinstance(obj, dict)
+def get_axes(ax, fig=None, **kws):
+    if ax:
+        return ax
 
+    if fig:
+        if fig.axes:
+            return fig.axes[0]
+
+        # add axes to figure
+        assert isinstance(fig, Figure)
+        return fig.add_subplot(**kws)
+
+    # create figure with pyplot if available
+    if plt := sys.modules.get('matplotlib.pyplot'):
+        fig, ax = plt.subplots(**kws)
+        return ax
+
+    # no ui
+    fig = Figure(**kws)
+    return fig.add_subplot()
+
+
+# ---------------------------------------------------------------------------- #
 
 class Image(SelfAware, SlotHelper):  # AliasManager
     """
@@ -336,21 +358,22 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         if detect:
             # use `hdu.detection` which caches the detections on the hdu filename
             try:
-                seg = hdu.detect(sample_stat, min_depth, interval, 
+                seg = hdu.detect(sample_stat, min_depth, interval,
                                  **get_config(detect, kws))
             except Exception as err:
-                import sys, textwrap
+                import sys
+                import textwrap
                 from IPython import embed
                 from better_exceptions import format_exception
                 embed(header=textwrap.dedent(
-                        f"""\
+                    f"""\
                         Caught the following {type(err).__name__} at 'image.py':338:
                         %s
                         Exception will be re-raised upon exiting this embedded interpreter.
                         """) % '\n'.join(format_exception(*sys.exc_info()))
                 )
                 raise
-                
+
             del seg.slices  # FIXME: since this may be incorrect in the cache!!?
 
         # pull the sample image (computed in the line above) from the cache

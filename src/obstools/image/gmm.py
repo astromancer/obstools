@@ -14,7 +14,7 @@ from recipes.utils import duplicate_if_scalar
 # relative
 from .. import transforms as transform
 from ..modelling import Model
-from .utils import non_masked
+from .utils import ensure_dict, non_masked
 
 
 # ---------------------------------------------------------------------------- #
@@ -256,9 +256,7 @@ class MultiGauss(Model):
         return np.moveaxis(np.mgrid[tuple(slices)], 0, -1)
 
     def plot(self, grid=None, size=CONFIG.plot.image.grid_size,
-             show_xy=bool(CONFIG.plot.points.marker), 
-             show_peak=bool(CONFIG.plot.peak.marker), 
-             **kws):
+             points=True, peak=False, **kws):
         """Image the model"""
 
         ndims = self.n_dims
@@ -280,14 +278,16 @@ class MultiGauss(Model):
                              **kws})
 
         # plot locations
-        if show_xy:
-            im.ax.plot(*self.xy.T, **{'ls':'', **CONFIG.plot.points})
+        if points:
+            im.ax.plot(*self.xy.T,
+                       **{'ls': '', **CONFIG.plot.points, **ensure_dict(points)})
 
         # mark peak
-        if show_peak:
+        if peak:
             xy_peak = grid[np.unravel_index(z.argmax(), z.shape)]
-            im.ax.plot(*xy_peak, **{'ls': '', **CONFIG.plot.points})
-            
+            im.ax.plot(*xy_peak,
+                       **{'ls': '', **CONFIG.plot.peak, **ensure_dict(peak)})
+
         return im
 
 

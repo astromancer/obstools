@@ -134,16 +134,6 @@ class SourceTrackerPlots(LoggingMixin):
                **kws}
         )
 
-    def _get_figure(self, ui=None, label='', **kws):
-        if ui:
-            tab = ui.add_tab(f'Source {label}', fig=kws)
-            return tab.figure
-
-        if plt := sys.modules.get('matplotlib.pyplot'):
-            return plt.figure(**kws)
-
-        return Figure(**kws)
-
     def positions(self, labels=None, section=slice(None),
                   show=CONFIG.show, legend=CONFIG.legend, figsize=CONFIG.figsize,
                   ui=None, **kws):
@@ -255,7 +245,7 @@ class SourceTrackerPlots(LoggingMixin):
         # if legend:
         #     self._legend(axes[0, 0], art, show_weights)
 
-    def positions_time_series(self, ax):
+    def displacement_time_series(self, ax):
 
         assert self.tracker.measured.any()
 

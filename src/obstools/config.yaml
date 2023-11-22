@@ -38,7 +38,7 @@ image:
             alignment:              False
             clusters:
                 show:               False
-                centres:            True
+                centres:            k+
                 frames:             True
                 nrs:                True
                 show_bandwidth:     True
@@ -54,7 +54,7 @@ image:
 
             # plot model probability image + matched coordinates for each image
             plot:
-                model:              True
+                model:          False
                 points:
                     color:      orangered
                     marker:     o
