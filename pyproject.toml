@@ -37,7 +37,11 @@ dependencies = [
     "emcee", 
 
     "matplotlib", 
-    "aplpy"
+    "aplpy",
+
+    "motley",
+    "recipes",
+    "scrawl"
 ]
 
 [project.urls]
