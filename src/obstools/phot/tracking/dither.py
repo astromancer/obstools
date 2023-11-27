@@ -391,7 +391,7 @@ class PointSourceDitherModel(LoggingMixin):
             if (outliers == out).all():
                 # no new outliers
                 if outliers.any():
-                    self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}',
+                    self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}.',
                                      n_out, n_points, (n_out / n_points), self.d_cut)
                 else:
                     self.logger.info('No outliers detected for position measures.')
@@ -426,7 +426,7 @@ class PointSourceDitherModel(LoggingMixin):
             n_bad = bad.sum()
             no_detection, = np.where(np.equal(sources_per_image, 0))
             if len(no_detection):
-                self.logger.debug('There are no sources in frames: {!s}', no_detection)
+                self.logger.debug('There are no sources in frames: {!s}.', no_detection)
 
             if n_bad:
                 extra = (f'\nn_masked = {n_bad}/{n_points_tot} '
@@ -446,7 +446,7 @@ class PointSourceDitherModel(LoggingMixin):
         # s0 = xy.std((0, 1))
         # s1 = (xy - xy_offsets[:, None]).std((0, 1))
         # # Fractional variance change
-        # self.logger.info('Differencing change overall variance by {!r:}',
+        # self.logger.info('Differencing change overall variance by {!r:}.',
         #             np.array2string((s0 - s1) / s0, precision=3))
 
         # FIXME: percentage format in total wrong
@@ -504,6 +504,6 @@ class PointSourceDitherModel(LoggingMixin):
         tbl.data[-1, 0] = re.sub(r'\(\d{3,4}%\)', '', tbl.data[-1, 0])
         # tbl.data[-1, 0] = tbl.data[-1, 0].replace('(1000%)', '')
 
-        self.logger.info('\n{:s}{:s}', tbl, extra)
+        self.logger.info('\n{:s}{:s}.', tbl, extra)
 
         return tbl

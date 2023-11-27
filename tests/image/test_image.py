@@ -49,22 +49,20 @@ class TestSkyImage:
                           scale=array([0.01007813, 0.01007813]),
                           origin=array([0., 0.]),
                           angle=0.0)>'''))
-        
+
     def test_copy(self, skyimage0):
         clone = skyimage0.copy()
         assert skyimage0 == clone
-        
+
     def test_calibration(self, skyimage0):
         # SkyImage(skyimage0)
         skyimage0.set_calibrators(dark=10 * np.ones(skyimage0.shape),
                                   flat=2 * np.ones(skyimage0.shape),
                                   gain=7)
 
-        ref =  (skyimage0.data - 10) / 2 * 7
+        ref = (skyimage0.data - 10) / 2 * 7
         assert np.allclose(skyimage0[:], ref)
-        
+
         # test clone
         clone = skyimage0.copy()
         assert np.allclose(clone[:], ref)
-
-            

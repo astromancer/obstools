@@ -67,7 +67,7 @@ class PhotInterface:
         # light curve
 
         for hdu, seg in zip(day, segs):
-            logger.info('Running {:s} aperture photometry on hdu: {:s}',
+            logger.info('Running {:s} aperture photometry on hdu: {:s}.',
                         fun.__name__, hdu.file.name)
 
             flx, err = fun(hdu, seg, top, **kws)
@@ -138,7 +138,7 @@ class PhotInterface:
         segs = op.itemgetter(*order)(self.reg.detections[1:])
         segs = split_like(segs, daily.values())
         for (date, sub), segs in zip(daily.items(), segs):
-            logger.info('Starting photometry for {!r:} on {!r:}',
+            logger.info('Starting photometry for {!r:} on {!r:}.',
                         sub[0].target, date)
 
             ts.append(self.diff(fun, sub, segs, **kws))

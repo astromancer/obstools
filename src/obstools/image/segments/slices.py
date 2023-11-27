@@ -1,13 +1,15 @@
 
 
+# std
+from collections import namedtuple
+
 # third-party
 import numpy as np
 
 # local
-from pyxides.vectorize import vdict
+from recipes.dicts import vdict
 from recipes.utils import duplicate_if_scalar
 
-from collections import namedtuple
 
 # ---------------------------------------------------------------------------- #
 # simple container for 2-component objects

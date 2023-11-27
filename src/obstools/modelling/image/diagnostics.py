@@ -115,7 +115,6 @@ def image_fit_report(mdl, image, p0=None):
     return r, fig
 
 
-
 def plot_cross_section(model, p, data, grid=None, std=None, yscale=1,
                      modRes=500):
     # TODO suppress UserWarning: Warning: converting a masked element to nan

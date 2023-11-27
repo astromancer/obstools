@@ -1,7 +1,6 @@
 
 
 # std
-import operator as op
 import functools as ftl
 from collections import defaultdict
 
@@ -13,40 +12,49 @@ from photutils import detect_sources, detect_threshold
 
 # local
 import recipes.pprint as pp
-from recipes import caching, string
+from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.iter import iter_repeat_last
+from recipes import caching, dicts, string
 from recipes.oo.property import classproperty
+from recipes.decorators import update_defaults
 from motley.table import Table
-from recipes.dicts import AttrReadItem
 
 # relative
 from ..modelling import UnconvergedOptimization
+from .utils import make_border_mask
 
 
 # TODO: watershed segmentation on the negative image ?
 # TODO: detect_gmm():
 
 # ---------------------------------------------------------------------------- #
-# defaults
-DEFAULT_ALGORITHM = 'sigma_threshold'
-NPIXELS = 7
-EDGE_CUTOFF = None
-EDGE_FRACTION = 0.5  # maximum fractional area of source inside border region
-MONOLITHIC = True
-ROUNDNESS = (0.5, 1.5)
-DILATE = 0
-DEBLEND = False
 
-# MultiThreshold parameter defaults
-MULTI_THRESH_DEFAULTS = AttrReadItem(
-    snr=(10, 7, 5, 3),
-    npixels=(7, 5, 3),
-    deblend=(True, False),
-    dilate='auto',
-    edge_cutoff=None,
-    max_iter=5
-)
+CONFIG = ConfigNode.load_module(__file__)
+
+
+# ---------------------------------------------------------------------------- #
+
+def get_config(detect, detect_opts):
+    
+    # Detect objects & segment image
+    if detect is True:
+        detect = CONFIG.filter('multi_threshold')
+
+    if detect is False:
+        # short circuit the detection loop
+        detect_opts['max_iter'] = 0
+        return detect_opts
+
+    if isinstance(detect, str):
+        detect_opts['algorithm'] = detect
+        return detect_opts
+
+    if isinstance(detect, dict):
+        return dict(detect, **detect_opts)
+
+    raise TypeError(f'Invalid type for parameter `detect`: {type(detect)}.'
+                    'Require an object type bool, str or dict.')
 
 
 # ---------------------------------------------------------------------------- #
@@ -98,7 +106,7 @@ class DetectionBase(LoggingMixin):
 
     def detect(self, image, mask=None, *args, report=False, **kws):
 
-        seg = self.__call__(image, mask, *args, **kws)
+        seg = self(image, mask, *args, **kws)
 
         if report:
             if report is True:
@@ -134,10 +142,10 @@ class DetectionBase(LoggingMixin):
         obstools.image.segments.SegmentedImage
         """
 
-        # self.logger.debug('Running source detection algorithm: {!r} {}', )
-        code = self.post_process.__code__
-        post = {key: kws.pop(key) for key in code.co_varnames[3:code.co_argcount]
-                if key in kws}
+        # self.logger.debug('Running source detection algorithm: {!r} {}.', )
+        code = self.post_process.__wrapped__.__code__
+        i0, nkwo = code.co_argcount, code.co_kwonlyargcount
+        kws, post = dicts.split(kws, code.co_varnames[i0:i0 + nkwo])
 
         # Initialize
         seg_data = self.fit_predict(image, mask, **kws)
@@ -146,12 +154,13 @@ class DetectionBase(LoggingMixin):
     def fit_predict(self, *args, **kws):
         raise NotImplementedError
 
-    def post_process(self, image, seg_data, npixels=NPIXELS,
-                     edge_cutoff=EDGE_CUTOFF, edge_fraction=EDGE_FRACTION,
-                     monolithic=MONOLITHIC, roundness=ROUNDNESS,
-                     dilate=DILATE, deblend=DEBLEND):
+    @update_defaults(CONFIG.filter('multi_threshold'))
+    def post_process(self, image, seg_data, *, npixels,
+                     edge_cutoff, edge_fraction,
+                     monolithic, roundness,
+                     dilate, deblend):
         #
-        self.logger.info('Post-processing detected sources with criteria:\n{}',
+        self.logger.info('Post-processing detected sources with criteria:\n{}.',
                          pp.pformat(locals(), ignore=('self', 'image', 'seg_data')))
 
         #
@@ -221,7 +230,7 @@ class DetectionBase(LoggingMixin):
         )
 
         if cutouts:
-            self.logger.info('Source images:\n{}',
+            self.logger.info('Source images:\n{}.',
                              seg.show.console.format_cutouts(image, **kws))
 
 
@@ -243,7 +252,7 @@ class SigmaThreshold(DetectionBase):
 
         """
 
-        self.logger.info('Running detect with: {:s}',
+        self.logger.info('Running detect with: {:s}.',
                          str(dict(snr=snr)))  # npixels=npixels
 
         if mask is None:
@@ -478,7 +487,7 @@ class _SourceDetectionLoop(_ResultsAggregator):
             raise StopIteration
 
         # debug log!
-        self.logger.debug('Detection iteration {:d}: {:d} new detections: {:s}',
+        self.logger.debug('Detection iteration {:d}: {:d} new detections: {:s}.',
                           self.count, new_segs.nlabels,
                           pp.collection(tuple(new_segs.labels)))
 
@@ -535,15 +544,11 @@ class MultiThreshold(_SourceDetectionLoop):
     # group labels
     # auto_key_template = 'sources{count}'
 
-    def __init__(self, max_iter=MULTI_THRESH_DEFAULTS.max_iter, model=None):
+    def __init__(self, max_iter=CONFIG.multi_threshold.max_iter, model=None):
         super().__init__('sigma_threshold', model, max_iter)
 
-    def __call__(self, image, mask=False,
-                 snr=MULTI_THRESH_DEFAULTS.snr,
-                 npixels=MULTI_THRESH_DEFAULTS.npixels,
-                 deblend=MULTI_THRESH_DEFAULTS.deblend,
-                 dilate=MULTI_THRESH_DEFAULTS.dilate,
-                 edge_cutoff=MULTI_THRESH_DEFAULTS.edge_cutoff):
+    @update_defaults(CONFIG.multi_threshold, mask=False)
+    def __call__(self, image, mask, snr, npixels, deblend, dilate, edge_cutoff):
         """
 
         Parameters
@@ -585,19 +590,20 @@ class MultiThreshold(_SourceDetectionLoop):
                                 deblend=deblend,
                                 dilate=dilate,
                                 edge_cutoff=edge_cutoff,
-                                max_iter=max_iter)
+                                max_iter=CONFIG.multi_threshold.max_iter)
 
 
-class SourceDetectionDescriptor:
+class SourceDetectionDescriptor(LoggingMixin):
     """
     A descriptor object for managing source detection algorithms.
     """
 
-    def __init__(self, algorithm=DEFAULT_ALGORITHM, *args, **kws):
+    def __init__(self, algorithm=CONFIG.algorithm, *args, **kws):
         self.algorithm = algorithm
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
 
     def __call__(self, image, *args, **kws):
+        # NOTE: caching happens here
         return self._algorithm.detect(image, *args, **kws)
 
     def __repr__(self):
@@ -633,6 +639,7 @@ class SourceDetectionDescriptor:
 
     @algorithm.setter
     def algorithm(self, algorithm):
+        self.logger.debug('Switcing detection algorithm: {}.', algorithm)
         self._algorithm = DetectionBase.resolve(algorithm)()
 
     def report(self, image, seg, show=5, **kws):
@@ -645,7 +652,7 @@ class SourceDetectionMixin:
     can be used to construct image models from images.
     """
 
-    detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
+    detection = SourceDetectionDescriptor(CONFIG.algorithm)
 
     @classmethod
     def from_image(cls, image, detect=True, **detect_opts):
@@ -671,23 +678,6 @@ class SourceDetectionMixin:
         -------
 
         """
-
-        # select source detection algorithm
-        if isinstance(detect, dict):
-            detect_opts = dict(detect, **detect_opts)
-            detect = DEFAULT_ALGORITHM
-
-        if isinstance(detect, str) and cls.detection.algorithm != detect:
-            # switch algorithms
-            cls.detection.algorithm = detect
-
-        # Detect objects & segment image
-        # detect_opts = dict(detect if isinstance(detect, dict) else {},
-        #                    **detect_opts)
-        if not detect:
-            # short circuit the detection loop
-            detect_opts['max_iter'] = 0
-
         # Basic constructor that initializes the object from an image. The
         # base version here runs a detection algorithm to separate foreground
         # objects and background, but doesn't actually include any physically
@@ -695,9 +685,15 @@ class SourceDetectionMixin:
         # models to the segments.
 
         # Detect objects & init with segmented image
-        return cls.detection(image, **detect_opts)
+        return cls.detect(image, **get_config(detect, detect_opts))
 
-    def detect(self, image, *args, report=True, **kws):
+    def detect(self, image, algorithm=CONFIG.algorithm, *args, report=True, **kws):
+
+        # select source detection algorithm
+        if isinstance(algorithm, str) and self.detection.algorithm != algorithm:
+            # switch algorithms
+            self.detection.algorithm = algorithm
+
         # subclasses to implement specifics by overwriting this method
         return self.detection(image, *args, report=report, **kws)
 

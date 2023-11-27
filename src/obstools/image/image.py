@@ -4,6 +4,7 @@ Image and image container classes
 
 
 # std
+import sys
 import pickle
 import warnings
 from collections import abc
@@ -11,15 +12,17 @@ from collections import abc
 # third-party
 import numpy as np
 import more_itertools as mit
+from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
 
 # local
-from scrawl.image import CanvasBlitHelper, ImageDisplay
+from scrawl.image import ImageDisplay
 from pyxides import ListOf
 from pyxides.getitem import IndexingMixin
 from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
+from recipes.config import ConfigNode
 from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
 from recipes.oo.property import cached_property
@@ -27,44 +30,46 @@ from recipes.utils import duplicate_if_scalar, not_null
 from recipes.dicts import isdict, AttrDict as ArtistContainer
 
 # relative
-from .detect import SourceDetectionMixin
-from .calibration import ImageCalibratorMixin
+from .calibrate import ImageCalibratorMixin
+from .detect import SourceDetectionMixin, get_config
 
 
 # ---------------------------------------------------------------------------- #
-SCALE_DFLT = 1
+CONFIG = ConfigNode.load_module(__file__)
+
+
+# ---------------------------------------------------------------------------- #
 UNIT_CORNERS = np.array([[0., 0.],
                          [1., 0.],
                          [1., 1.],
                          [0., 1.]])
 
-IMAGE_STYLE = dict(cmap=None,  # 'cmr.voltage_r',
-                   hist=False,
-                   sliders=False,
-                   cbar=False)
-
-CONTOUR_STYLE = dict(cmap='hot',
-                     lw=1.5)
-
-FRAME_STYLE = dict(fc='none',
-                   lw=1,
-                   ec='0.5')
-
-MARKER_STYLE = dict(marker='x',
-                    color='w',
-                    ls='none')
-
-TEXT_STYLE = dict(size='xx-small',
-                  color='w',
-                  weight='heavy',
-                  offset=5)
 
 # ---------------------------------------------------------------------------- #
 
+def get_axes(ax, fig=None, **kws):
+    if ax:
+        return ax
 
-def isdict(obj):
-    return isinstance(obj, dict)
+    if fig:
+        if fig.axes:
+            return fig.axes[0]
 
+        # add axes to figure
+        assert isinstance(fig, Figure)
+        return fig.add_subplot(**kws)
+
+    # create figure with pyplot if available
+    if plt := sys.modules.get('matplotlib.pyplot'):
+        fig, ax = plt.subplots(**kws)
+        return ax
+
+    # no ui
+    fig = Figure(**kws)
+    return fig.add_subplot()
+
+
+# ---------------------------------------------------------------------------- #
 
 class Image(SelfAware, SlotHelper):  # AliasManager
     """
@@ -142,13 +147,13 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         # logger.debug(f'{corners=}')
         ax = None
         if image:
-            display = ImageDisplay(self.data, **{**IMAGE_STYLE, **kws})
+            display = ImageDisplay(self.data, **{**CONFIG.display.image, **kws})
             self.art.image = display.image
             ax = display.ax
 
         # Add frame around image
         if frame:
-            frame_kws = dict(**FRAME_STYLE, alpha=kws.get('alpha'))
+            frame_kws = dict(**CONFIG.display.frame, alpha=kws.get('alpha'))
             if isdict(frame):
                 frame_kws.update(frame)
 
@@ -180,7 +185,7 @@ class TransformedImage(Image):
 
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
-    def __init__(self, data, origin=(0, 0), angle=0, scale=SCALE_DFLT, **kws):
+    def __init__(self, data, origin=(0, 0), angle=0, scale=None, **kws):
         """
         A translated, scaled, rotated image.
 
@@ -277,7 +282,7 @@ class TransformedImage(Image):
         if set_lims := (set_lims or (coords == 'world')):
             corners = self.corners
             xlim, ylim = np.array([corners.min(0), corners.max(0)]).T
-            # self.logger.debug('Updating axes limits {}', dict(xlim=xlim, ylim=ylim))
+            # self.logger.debug('Updating axes limits {}.', dict(xlim=xlim, ylim=ylim))
             ax.set(xlim=xlim, ylim=ylim)
 
         # add artists for blitting
@@ -315,8 +320,9 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
     @classmethod
     # @caches.to_file(cachePaths.skyimage, typed={'hdu': _hdu_hasher})
-    def from_hdu(cls, hdu, sample_stat='median', depth=5, interval=...,
-                 report=False, **kws):
+    def from_hdu(cls, hdu,
+                 sample_stat=CONFIG.sample.stat, min_depth=CONFIG.sample.min_depth,
+                 interval=..., detect=True, **kws):
         """
         Construct a SkyImage from an HDU by first drawing a sample image, then
         running the source detection algorithm on it.
@@ -327,7 +333,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
             [description]
         sample_stat : str, optional
             [description], by default 'median'
-        depth : int, optional
+        min_depth : int, optional
             [description], by default 10
 
         Returns
@@ -348,24 +354,49 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
             )
 
         # logger.info(str(kws))
+        seg = None
+        if detect:
+            # use `hdu.detection` which caches the detections on the hdu filename
+            try:
+                seg = hdu.detect(sample_stat, min_depth, interval,
+                                 **get_config(detect, kws))
+            except Exception as err:
+                import sys
+                import textwrap
+                from IPython import embed
+                from better_exceptions import format_exception
+                embed(header=textwrap.dedent(
+                    f"""\
+                        Caught the following {type(err).__name__} at 'image.py':338:
+                        %s
+                        Exception will be re-raised upon exiting this embedded interpreter.
+                        """) % '\n'.join(format_exception(*sys.exc_info()))
+                )
+                raise
 
-        # use `hdu.detection` which caches the detections on the hdu filename
-        seg = hdu.detect(sample_stat, depth, interval, report, **kws)
-        del seg.slices # FIXME: since this may be incorrect in the cache!!? 
+            del seg.slices  # FIXME: since this may be incorrect in the cache!!?
 
         # pull the sample image (computed in the line above) from the cache
-        image = hdu.get_sample_image(sample_stat, depth, interval)
+        image = hdu.get_sample_image(sample_stat, min_depth, interval)
 
         # TODO: if wcs is defined, use that as default
-        return cls(image, hdu.fov, angle=hdu.pa, segments=seg, **dict(hdu.header))
+        meta = dict(hdu.header)
+        # remove header comment which causes write problems
+        crap = ("  FITS (Flexible Image Transport System) format is defined in 'Astronomy"
+                "  and Astrophysics', volume 376, page 359; bibcode: 2001A&A...376..359H")
+
+        meta['COMMENT'] = [comment for comment in meta['COMMENT']
+                           if comment not in crap]
+
+        return cls(image, hdu.fov, angle=hdu.pa, segments=seg, **meta)
 
     @classmethod
-    def from_image(cls, image, fov=None, scale=SCALE_DFLT, **kws):
+    def from_image(cls, image, fov=None, scale=None, **kws):
         return cls(image, fov, scale=scale,
                    segments=super().from_image(image, **kws))
 
     # ------------------------------------------------------------------------ #
-    def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=SCALE_DFLT,
+    def __init__(self, data, fov=None, origin=(0, 0), angle=0, scale=None,
                  segments=None, **kws):
         """
         Create and SkyImage object with a know size on sky.
@@ -438,6 +469,8 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         ok = np.isfinite(yx).all(1)
         if not ok.any():
             warnings.warn('No detections for image.')
+        if not ok.all():
+            logger.info('Bad measurements: {}/{}.', len(ok) - sum(ok), len(ok))
 
         self.xy = yx[ok, ::-1]
         self.counts = counts[ok]
@@ -465,9 +498,9 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
             raise TypeError(f'Invalid points object {points} of type '
                             f'{type(points)}.')
 
-        points_style = {**MARKER_STYLE,
+        points_style = {**CONFIG.display.marker,
                         **(points if isdict(points) else {})}
-        
+
         return xy, points_style
 
     def show(self, image=True, frame=True, points=False, regions=False,
@@ -493,12 +526,13 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
             regions = regions if isdict(regions) else {}
             regions.setdefault('alpha', kws.get('alpha'))
             art.contours = self.seg.show.contours(ax, transform=transform,
-                                                  **{**CONTOUR_STYLE, **regions})
+                                                  **{**CONFIG.display.contours,
+                                                     **regions})
 
         # add label artists
         if labels:
             art.texts = self.seg.show.labels(
-                ax, **{**TEXT_STYLE, 'transform': transform,
+                ax, **{**CONFIG.display.text, 'transform': transform,
                        **(labels if isdict(labels) else {})}
             )
 
@@ -518,6 +552,19 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
 
 class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
+
+    # properties: vectorized attribute getters on `SkyImage`
+    images = AttrVector('data')
+    shapes = AttrVector('data.shape', output=np.array)
+    detections = AttrVector('seg')
+    coms = centroids = AttrVector('xy')
+    fovs = AttrVector('fov', output=np.array)
+    scales = AttrVector('scale', output=np.array)
+    params = AttrVector('params', output=np.array)
+    origins = AttrVector('origin', output=np.array)
+    angles = AttrVector('angles', output=np.array)
+    corners = AttrVector('corners', output=np.array)
+
     def __init__(self, images=(), fovs=()):
         """
         A container of `SkyImages`'s
@@ -567,18 +614,17 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
         n = len(self)
         return f'{self.__class__.__name__}: {n} image{"s" * bool(n)}'
 
-    # properties: vectorized attribute getters on `SkyImage`
-    images = AttrVector('data')
-    shapes = AttrVector('data.shape', output=np.array)
-    detections = AttrVector('seg')
-    coms = centroids = AttrVector('xy')
-    fovs = AttrVector('fov', output=np.array)
-    scales = AttrVector('scale', output=np.array)
-    params = AttrVector('params', output=np.array)
-    origins = AttrVector('origin', output=np.array)
-    angles = AttrVector('angles', output=np.array)
-    corners = AttrVector('corners', output=np.array)
+    def show(self, image=True, frame=True, points=False, regions=True,
+             labels=True, set_lims=None, coords='pixel', **kws):
+        """ """
+        from mpl_multitab import MplTabs
+        
+        
+        ui = MplTabs(title=self.__class__.__name__)
 
-    # @property
-    # def params(self):
-    #     return np.array(self._params)
+        for img in self:
+            tab = ui.add_tab()
+            display, art = img.show(image, frame, points, regions, labels,
+                                    set_lims, coords, fig=tab.figure, **kws)
+
+        return ui

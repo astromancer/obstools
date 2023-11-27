@@ -18,6 +18,7 @@ from photutils.segmentation import SegmentationImage, deblend_sources
 
 # local
 from recipes import api, dicts
+from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.oo.temp import temporarily
 from recipes.logging import LoggingMixin
@@ -26,7 +27,7 @@ from recipes.logging import LoggingMixin
 from ...utils import prod
 from ...stats import geometric_median
 from ..utils import get_overlap
-from ..detect import DEFAULT_ALGORITHM, SourceDetectionDescriptor
+from ..detect import SourceDetectionDescriptor
 from .utils import is_lazy
 from .slices import SliceDict
 from .trace import trace_boundary
@@ -34,6 +35,10 @@ from .stats import MaskedStatsMixin
 from .groups import LabelGroupsMixin, auto_id
 from .display import SegmentPlotter, make_cmap
 from .masks import MaskContainer, SegmentMasksMixin
+
+
+# ---------------------------------------------------------------------------- #
+CONFIG = ConfigNode.load_module(__file__)
 
 
 # ---------------------------------------------------------------------------- #
@@ -217,7 +222,8 @@ class SegmentedImage(SegmentationImage,     # base
 
     # Source detection
     # ------------------------------------------------------------------------ #
-    detection = SourceDetectionDescriptor(DEFAULT_ALGORITHM)
+    detection = SourceDetectionDescriptor(CONFIG.parent.detect.algorithm)
+
 
     # Constructors
     # --------------------------------------------------------------------------
@@ -1359,7 +1365,7 @@ class SegmentedImage(SegmentationImage,     # base
             return self
 
         for count in range(dmax + 1):
-            self.logger.debug('round {:d}', count)
+            self.logger.debug('round {:d}.', count)
 
             mim = self.mask_sources(image, labels)
             m = np.ma.median(mim)
@@ -1382,10 +1388,10 @@ class SegmentedImage(SegmentationImage,     # base
                     self.data[s][bb] = label
 
     def deblend(self, image, npixels, **kws):
-        
+
         # compute areas needed for deblend below
-        self.areas 
-        
+        self.areas
+
         with temporarily(self, slices=list(self.slices.values())[1:]):
             return self.__class__(
                 deblend_sources(image, self, npixels, progress_bar=False, **kws).data

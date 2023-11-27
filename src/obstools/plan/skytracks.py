@@ -33,9 +33,9 @@ from scipy.interpolate import interp1d
 
 # local
 import recipes.pprint as ppr
+from recipes import strings
 from recipes.lists import cosort
 from recipes.caching import cached
-from recipes import strings
 from recipes.logging import LoggingMixin
 from scrawl.ticks import DegreeFormatter, TransFormatter
 
@@ -1414,7 +1414,7 @@ class SkyTracks(LoggingMixin):
     def fix_legend(self):
         # Shift axes position to fit the legend nicely (long names get clipped)
 
-        self.logger.debug('Fixing Legend')
+        self.logger.debug('Fixing Legend.')
 
         leg = self.ax.get_legend()
         bb = leg.get_window_extent(self.figure._cachedRenderer)
@@ -1539,7 +1539,7 @@ class SkyTracks(LoggingMixin):
 
     def save_background(self, event=None):
         # save the background for blitting
-        self.logger.debug('save_background')
+        self.logger.debug('save_background.')
         # make tracks invisible
         set_visible((self.art, self.clock), False)
         self.canvas.draw()

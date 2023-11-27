@@ -22,31 +22,29 @@ import motley.image
 from scrawl.utils import embossed
 from recipes.dicts import isdict
 from recipes.functionals import echo
+from recipes.config import ConfigNode
 from recipes.pprint import formatters as fmt
+from recipes.decorators import update_defaults
 from recipes import api, duplicate_if_scalar, pprint
 
 
 # ---------------------------------------------------------------------------- #
-CONTOUR_STYLE = dict(cmap='hot',
-                     lw=1.5)
 
-LABEL_TEXT_STYLE = dict(color='w',
-                        alpha=0.5,
-                        weight='heavy',
-                        va='center',
-                        ha='center')
+CONFIG = ConfigNode.load_module(__file__)
 
 
-STAT_FMT = {
-    'flux':      ('Flux [ADU]',
-                  lambda x: pprint.uarray(*x, thousands=' ')),
+stats = CONFIG.console.stats.filter('header')
+FORMATTERS = {
+    'flux':
+        lambda x: pprint.uarray(*x, **stats['flux']),
     # fmt.Measurement(fmt.Decimal(0), thousands=' ', unit='ADU').unicode.starmap
-    'com':       ('Position (y, x) [px]',
-                  fmt.Collection(fmt.Decimal(1, short=False), brackets='()').map),
-    'areas':     ('Area [px²]',
-                  fmt.Decimal(0).map),
-    'roundness': ('Roundness',
-                  fmt.Decimal(3).map)
+    'com':
+        fmt.Collection(fmt.Decimal(**stats['com'], short=False),
+                       brackets='()').map,
+    'areas':
+        fmt.Decimal(0).map,
+    'roundness':
+        fmt.Decimal(**stats['roundness']).map
 }
 
 
@@ -146,14 +144,13 @@ class SegmentPlotter:
 
         ct = None
         if contours:
-            ct = self.contours(im.ax, **{**CONTOUR_STYLE,
+            ct = self.contours(im.ax, **{**CONFIG.contours,
                                          **(contours if isdict(contours) else {})})
 
         texts = []
         if label:
             # add label text (number) on each segment
-            texts = self.labels(im.ax, **{**LABEL_TEXT_STYLE,
-                                          **(label if isdict(label) else {})})
+            texts = self.labels(im.ax, **(label if isdict(label) else {}))
 
         rcol = self.seg.slices.plot(im.ax) if bbox else None
 
@@ -177,7 +174,7 @@ class SegmentPlotter:
             else:
                 raise TypeError('Please provide axes parameter `ax`.')
         #
-        kws = {**LABEL_TEXT_STYLE, **kws}
+        kws = {**CONFIG.text.filter('emboss'), **kws}
         texts = []
         for lbl, pos in self._label_positions().items():
             for x, y in pos[:, ::-1] + offset:
@@ -229,10 +226,10 @@ class SegmentPlotter:
         return pos
 
     # ------------------------------------------------------------------------ #
-    # TODO: SegmentedImageContours ??
-
+    @update_defaults(CONFIG.contours)
     def contours(self, ax=None, labels=None, legend=False,
                  linewidth=1.25, emboss=2.5, **kws):
+
         if ax is None:
             if plt := sys.modules.get('matplotlib.pyplot'):
                 ax = plt.gca()
@@ -262,6 +259,7 @@ class SegmentPlotter:
     # _default_shadow = dict(linewidth=2, foreground='k')
 
     @api.synonyms({'shadow': 'emboss'})
+    @update_defaults(CONFIG.contours)
     def get_contours(self, labels=None, emboss=2.5, alpha=1, **kws):
         """
         Get the collection of lines that trace the circumference of the
@@ -401,6 +399,7 @@ class ConsoleFormatter:
 
         return im
 
+    @update_defaults(CONFIG.console)
     def cutouts(self, image, labels=None, extend=1,
                 cmap=None, contour=('r', 'B'),
                 **kws):
@@ -426,6 +425,7 @@ class ConsoleFormatter:
         print(ims)
         return ims
 
+    @update_defaults(CONFIG.console)
     def format_cutouts(self, image, labels=..., extend=1,
                        cmap=None, contour=('r', 'B'),
                        statistics=(), **kws):
@@ -461,7 +461,8 @@ class ConsoleFormatter:
         info = {}
         if statistics:
             for stat in statistics:
-                header, fmt = STAT_FMT.get(stat, ('', echo))
+                header = CONFIG.console.stats
+                fmt = FORMATTERS.get(stat, echo)
                 result = (func_or_result(image, labels)
                           if callable(func_or_result := getattr(self.seg, stat))
                           else func_or_result)

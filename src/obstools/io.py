@@ -4,14 +4,11 @@ Input / output helpers
 
 # std
 import io
-import mmap,os
+import os
+import mmap
 
 # third-party
-from loguru import logger
 from astropy.io import fits
-
-# local
-from recipes.oo.temp import temporarily
 
 
 class _FilePicklable(fits.file._File):

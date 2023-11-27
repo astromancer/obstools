@@ -1,11 +1,10 @@
 
 # std
 import re
-import numbers
-import contextlib
 import urllib.request
 import operator as op
 import functools as ftl
+import contextlib as ctx
 from io import BytesIO
 
 # third-party
@@ -24,19 +23,23 @@ from recipes import caching
 from . import cachePaths as cached
 
 
-# from motley.profiling.timers import timer
+# ---------------------------------------------------------------------------- #
 DMS = '\N{DEGREE SIGN}\N{PRIME}\N{DOUBLE PRIME}'
 HMS = 'ʰᵐˢ'
 
 RGX_DSS_ERROR = re.compile(br'(?s)(?i:error).+?<PRE>\s*(.+)\s*</PRE>')
 
 
+# ---------------------------------------------------------------------------- #
 def prod(x):
     """
     Product of a list of numbers; ~40x faster vs np.prod for Python tuples.
     """
     return 1 if (len(x) == 0) else ftl.reduce(op.mul, x)
 
+
+def is_property(v):
+    return isinstance(v, property)
 
 
 @caching.to_file(cached.site)
@@ -45,7 +48,7 @@ def get_site(name):
     if isinstance(name, EarthLocation):
         return name
 
-    with contextlib.suppress(UnknownSiteException):
+    with ctx.suppress(UnknownSiteException):
         return EarthLocation.of_site(name)
 
     # try resolve as an address. NOTE this will almost always return a
@@ -181,7 +184,7 @@ def convert_skycoords(ra, dec):
     try:
         return SkyCoord(ra=ra, dec=dec, unit=('h', 'deg'))
     except ValueError:
-        logger.warning('Could not interpret coordinates: {:s}; {:s}', ra, dec)
+        logger.warning('Could not interpret coordinates: {:s}; {:s}.', ra, dec)
 
 
 def retrieve_coords_ra_dec(name, verbose=True, **fmt):

@@ -1,13 +1,25 @@
 
-
 # third-party
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
-from scipy.stats import binned_statistic_2d
+from loguru import logger
+from scipy.cluster.vq import kmeans
+from scipy.spatial.distance import cdist
+from scipy.stats import binned_statistic_2d, mode
 
 # local
 import motley
 from motley.table import Table
+
+
+# ---------------------------------------------------------------------------- #
+
+def _get_config(obj):
+    return {} if obj is True else obj
+
+
+def ensure_dict(obj):
+    return dict(_get_config(obj))
 
 
 # ---------------------------------------------------------------------------- #
@@ -278,7 +290,7 @@ def scale_combine(images, stat='mean'):
 def deep_sky(images, fovs, params, resolution=None, statistic='mean',
              masked=True):
     # todo rename
-    from obstools.image.registration import roto_translate_yx
+    from obstools.image.register import roto_translate_yx
 
     data = []
     gy, gx = [], []
@@ -376,3 +388,53 @@ def _view_neighbours(array, n, pad_value=0):
     new_shape = tuple(d) + (h - n + 1, w - n + 1, n, n)
     new_strides = padded.strides * 2
     return as_strided(padded, new_shape, new_strides, writeable=False)
+
+# ---------------------------------------------------------------------------- #
+
+
+def id_sources_kmeans(images, segmentations):
+    # combine segmentation for sample images into global segmentation
+    # this gives better overall detection probability and yields more accurate
+    # optimization results
+
+    # this function also uses kmeans clustering to id sources within the overall
+    # constellation of sources across sample images.  This is fast but will
+    # mis-identify sources if the size of camera dither between frames is on the
+    # order of the distance between sources in the image.
+
+    coms = []
+    snr = []
+    for image, segm in zip(images, segmentations):
+        coms.append(segm.com_bg(image))
+        snr.append(segm.snr(image))
+
+    ni = len(images)
+    # use the mode of cardinality of sets of com measures
+    lengths = list(map(len, coms))
+    mode_value, counts = mode(lengths)
+    k, = mode_value
+    # nsources = list(map(len, coms))
+    # k = np.max(nsources)
+    features = np.concatenate(coms)
+
+    # rescale each feature dimension of the observation set by stddev across
+    # all observations
+    # whitened = whiten(features)
+
+    # fit
+    centroids, distortion = kmeans(features, k)  # centroids aka codebook
+    labels = cdist(centroids, features).argmin(0)
+
+    cx = np.ma.empty((ni, k, 2))
+    cx.mask = True
+    w = np.ma.empty((ni, k))
+    w.mask = True
+    indices = np.split(labels, np.cumsum(lengths[:-1]))
+    for ifr, ist in enumerate(indices):
+        cx[ifr, ist] = coms[ifr]
+        w[ifr, ist] = snr[ifr]
+
+    # shifts calculated as snr-weighted average
+    shifts = np.ma.average(cx - centroids, 1, np.dstack([w, w]))
+
+    return cx, centroids, np.asarray(shifts)

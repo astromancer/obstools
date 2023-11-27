@@ -8,7 +8,7 @@ multiprocessing
 
 # std
 import inspect
-import functools
+import functools as ftl
 import itertools as itt
 
 # third-party
@@ -17,8 +17,6 @@ import numpy as np
 
 # local
 from recipes.pprint import decimal_repr
-
-
 
 
 # from recipes.logging import LoggingMixin
@@ -34,7 +32,7 @@ def plist(params):  # can import from lm_compat
 def convert_params(func):
     """decorator to convert lm.Parameters to a list on the fly"""
 
-    @functools.wraps(func)
+    @ftl.wraps(func)
     def wrapper(*args, **kws):
         obj, p, *rest = args
         return func(obj, plist(p), *rest, **kws)
@@ -81,7 +79,7 @@ class lmMixin():
             bad = np.allclose(p, p0)
             if bad:  # model "converged" to the initial values
                 self.logger.warning('%s fit did not converge!', self)
-                self.logger.debug('input parameters identical to output')
+                self.logger.debug('input parameters identical to output.')
 
             self.logger.debug(
                 'Successfully fit %s function to stellar profile.', self)

@@ -1,9 +1,5 @@
 
-# local
 from scrawl.video import VideoDisplay
-
-# relative
-from ..campaign import ImageHDU
 
 
 class FitsVideo(VideoDisplay):

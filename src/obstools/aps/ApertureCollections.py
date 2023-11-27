@@ -16,14 +16,15 @@ from matplotlib.transforms import (IdentityTransform,
                                    blended_transform_factory as btf)
 
 # local
-# from recipes.io import warn as Warn
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
-from recipes.dicts import TransDict, ManyToOneMap
+from recipes.dicts import ManyToOneMap, TransDict
+
+
+# from recipes.io import warn as Warn
 
 
 # from pprint import pprint
-
 
 
 # from motley import banner

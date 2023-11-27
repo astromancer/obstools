@@ -52,9 +52,9 @@ class TqdmLogAdapter:
         }
 
     def __enter__(self):
-        for sink in self.sinks.values():
+        for sink in self.streams.values():
             sink._stream = TqdmStreamAdapter(sink._stream)
 
     def __exit__(self):
-        for id_, sink in self.sinks.items():
+        for id_, sink in self.streams.items():
             sink._stream = sink._stream.stream

@@ -8,23 +8,29 @@ import itertools as itt
 # third-party
 import numpy as np
 import more_itertools as mit
-import matplotlib.pyplot as plt
 
 # local
+from recipes import api
+from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 
 # relative
 from .. import transforms
-from .image import ImageContainer, SkyImage
+from .image import ImageContainer, SkyImage, get_axes
 
+
+# ---------------------------------------------------------------------------- #
+CONFIG = ConfigNode.load_module(__file__)
+
+
+# ---------------------------------------------------------------------------- #
 
 def get_corners(p, fov):
     """Get corners relative to DSS coordinates. xy coords anti-clockwise"""
     c = np.array([[0, 0], fov[::-1]])  # lower left, upper right xy
     # corners = np.c_[c[0], c[:, 1], c[1], c[::-1, 0]].T  # / clockwise yx
     corners = np.c_[c[0], c[::-1, 0], c[1], c[:, 1]].T  # / clockwise xy
-    corners = transforms.rigid(corners, p)
-    return corners
+    return transforms.rigid(corners, p)
 
 
 def ulc(p, fov):
@@ -45,6 +51,9 @@ def ulc(p, fov):
 #         ulc_ = np.array([[0, fov[0]]])
 #         ulc[i] = trf.rigid(ulc_, p)
 #     return ulc[:, 0].min(), ulc[:, 1].max()  # xy
+
+
+# ---------------------------------------------------------------------------- #
 
 
 class MosaicPlotter(ImageContainer, LoggingMixin):
@@ -71,11 +80,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
     # TODO: optional normalize and same clims
     # TODO: use WCSAxes ??
 
-    default_cmap_ref = 'Greys'
-    alpha_cycle_value = 0.65
-
-    label_fmt = 'image%i'
-    label_props = dict(color='w')
+    label_fmt = CONFIG.labels.get('format', 'image{:d}')
 
     # @property
     # def fig(self):
@@ -94,7 +99,8 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         return list(self.art.keys())
 
     @classmethod
-    def from_register(cls, reg, axes=None, scale='sky', show_ref_image=True):
+    @api.synonyms(ax='axes')
+    def from_register(cls, reg, axes=None, scale='sky', show_ref_image=True, **kws):
         """
         Construct from `ImageRegister`
         """
@@ -117,9 +123,11 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             new.origin = image.origin * oscale
             images.append(new)
 
-        return cls(images, (), axes, show_ref_image, reg.primary)
+        return cls(images, (), axes, show_ref_image, reg.primary, **kws)
 
-    def __init__(self, images, fovs=(), axes=None, show_ref_image=True, ridx=0):
+    @api.synonyms(ax='axes')
+    def __init__(self, images, fovs=(), axes=None, show_ref_image=True, ridx=0,
+                 alpha_cycle=0.65, fig=None, **kws):
         """
         Initialize with sequence `images` of :class:`SkyImages` or sequence
         image arrays `np.ndarray` and sequence `fovs` of field-of-views 
@@ -131,7 +139,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         self.image_label = None
 
         self._counter = itt.count()
-        self._ff = self._fig = self._ax = None
+        self._ff = self.fig = self._ax = None
         self._low_lims = (np.inf, np.inf)
         self._up_lims = (-np.inf, -np.inf)
 
@@ -139,16 +147,13 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         # Scrolling forward will show each image starting at 0
         self.idx = ridx  # reference
         self.alpha_cycle = []
+        self.alpha_cycle_value = float(alpha_cycle)
         self._idx_active = -1
         self.show_ref_image = bool(show_ref_image)
 
         # setup figure
-        if axes is None:
-            self.fig, self.ax = plt.subplots()
-        else:
-            self.ax = axes
-            self.fig = axes.figure
-
+        self.ax = get_axes(axes, fig, **kws)
+        self.fig = self.ax.figure
         self.fig.tight_layout()
 
         # connect gui events
@@ -163,10 +168,10 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
     # def __call__()
 
     def mosaic(self, names=(), params=(),
-               cmap=None, cmap_ref=default_cmap_ref,
-               alpha=None, alpha_ref=1,
+               cmap=None, cmap_ref=CONFIG.ref.cmap,
+               alpha=None, alpha_ref=CONFIG.ref.alpha,
                **kws):
-        """Create a mosaiced image"""
+        """Create a mosaic image."""
 
         # choose alpha based on number of images
         n = len(self)
@@ -211,7 +216,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             p = image.params if isinstance(image, SkyImage) else (0, 0, 0)
 
         if not np.isfinite(p).all():
-            raise ValueError('Received non-finite parameter value(s)')
+            raise ValueError('Received non-finite parameter value(s).')
 
         if image is None:
             assert self.images
@@ -225,12 +230,12 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
         # name image
         if name is None:
-            name = self.label_fmt % next(self._counter)
+            name = self.label_fmt.format(next(self._counter))
 
         # plot
         # *image.origins, image.angle = p
         _, art = _, self.art[name] = image.plot(ax=self.ax,
-                                                frame=frame, 
+                                                frame=frame,
                                                 set_lims=False,
                                                 **kws)
 
@@ -294,9 +299,14 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             #     )
         return lines
 
-    def mark_target(self, name='', xy=None, colour='forestgreen',
-                    arrow_size=10, arrow_head_distance=2.5, arrow_offset=(0, 0),
-                    text_offset=3, text_props=(), **kws):
+    @api.synonyms(colour='color')
+    def mark_target(self, name='', xy=None,
+                    color=CONFIG.target.color,
+                    arrow_size=CONFIG.target.arrow.size,
+                    arrow_head_distance=CONFIG.target.arrow.head_distance,
+                    arrow_offset=CONFIG.target.arrow.offset,
+                    text_offset=CONFIG.target.text.offset,
+                    text_props=(), **kws):
 
         # TODO: determine arrow_offset automatically by looking for peak
         """
@@ -313,7 +323,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         Parameters
         ----------
         name
-        colour
+        color
         arrow_size
         arrow_head_distance:
             distance in arc seconds from source location to the arrow head
@@ -358,17 +368,14 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
             # quick and easy way to create arrows with annotation
             xy = xy_target + arrow_head_distance * i
             ann = self.ax.annotate('', xy, xy + arrow_size * i,
-                                   arrowprops=dict(**kws, fc=colour))
+                                   arrowprops=dict(**kws, fc=color))
             arrows.append(ann.arrow_patch)
 
         # text
         text_props = text_props or {}
         txt = self.ax.text(*(xy_target + text_offset), name,
-                           color=colour, **text_props)
-        # add border around text to make it stand out (like the arrows)
-        txt.set_path_effects(
-            [path_effects.Stroke(linewidth=2, foreground='black'),
-             path_effects.Normal()])
+                           color=color, **text_props)
+        emboss(txt, **CONFIG.arrow.emboss)
 
         return txt, arrows
 
@@ -460,3 +467,6 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
         # redraw
         self.fig.canvas.draw()
+
+    def save(filename, **kws):
+        return self.fig.savefig(filename, **kws)

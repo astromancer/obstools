@@ -15,13 +15,14 @@ from joblib import Parallel, delayed
 import motley
 from recipes import api
 from recipes.string import pluralize
+from recipes.config import ConfigNode
+from recipes.logging import LoggingMixin
 from recipes.contexts import ContextStack
 from recipes.parallel.joblib import initialized
-from recipes.config import ConfigNode
 
 # relative
 from .logging import TqdmLogAdapter, TqdmStreamAdapter
-from recipes.logging import LoggingMixin
+
 
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
@@ -186,7 +187,7 @@ class FrameProcessor(LoggingMixin):
             compute(worker(data, *args) for args in
                     self.get_workload(indices, njobs, progress_bar))
 
-        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s',
+        # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s.',
         #              backend, time.time() - t_start)
 
     def _setup_compute(self, njobs, backend, context, progress_bar):

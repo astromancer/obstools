@@ -512,7 +512,7 @@ class Model(OptionallyNamed, LoggingMixin):
         # ----------------
         if p0 is None:
             p0 = self.p0guess(data, *args)
-            self.logger.debug('p0 guess: {:s}', p0)
+            self.logger.debug('p0 guess: {:s}.', p0)
         else:
             p0 = np.asanyarray(p0)
 
@@ -588,7 +588,7 @@ class Model(OptionallyNamed, LoggingMixin):
                                     'identical to initial guess: {}', p0)
                 msg = ''
             else:
-                self.logger.debug('Successful fit {:s}', self.name)
+                self.logger.debug('Successful fit {:s}.', self.name)
                 # TODO: self.logger.verbose() npars, niters, gof,
                 #  ndata, etc
                 return p
@@ -715,7 +715,7 @@ class RescaleInternal(DataTransformBase):
         if self._yscale is None:
             self._yscale = self.get_scale(data)
 
-        self.logger.debug('scale is {:s}', self._yscale)
+        self.logger.debug('scale is {:s}.', self._yscale)
         return data / self._yscale
 
     def inverse_transform(self, p, **kws):

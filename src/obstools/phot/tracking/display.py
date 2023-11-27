@@ -1,6 +1,5 @@
 
 # std
-import sys
 import itertools as itt
 import functools as ftl
 import contextlib as ctx
@@ -12,7 +11,6 @@ from mpl_multitab import MplMultiTab
 from bottleneck import nanmax, nanmin
 from matplotlib import ticker
 from matplotlib.lines import Line2D
-from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.transforms import AffineDeltaTransform
 
@@ -136,16 +134,6 @@ class SourceTrackerPlots(LoggingMixin):
                **kws}
         )
 
-    def _get_figure(self, ui=None, label='', **kws):
-        if ui:
-            tab = ui.add_tab(f'Source {label}', fig=kws)
-            return tab.figure
-
-        if plt := sys.modules.get('matplotlib.pyplot'):
-            return plt.figure(**kws)
-
-        return Figure(**kws)
-
     def positions(self, labels=None, section=slice(None),
                   show=CONFIG.show, legend=CONFIG.legend, figsize=CONFIG.figsize,
                   ui=None, **kws):
@@ -257,7 +245,7 @@ class SourceTrackerPlots(LoggingMixin):
         # if legend:
         #     self._legend(axes[0, 0], art, show_weights)
 
-    def positions_time_series(self, ax):
+    def displacement_time_series(self, ax):
 
         assert self.tracker.measured.any()
 
@@ -330,7 +318,7 @@ class SourceTrackerPlots(LoggingMixin):
         # event.canvas.draw()
 
     def _add_colorbars(self, polys):
-        self.logger.debug('Adding colorbars')
+        self.logger.debug('Adding colorbars.')
         for i, poly in enumerate(polys):
             ax = poly.axes
             fig = ax.figure
@@ -501,7 +489,7 @@ class TrackerVideo(VideoFeatureDisplay):
             self.legend()
 
     def get_coords(self, i):
-        # logger.debug('GETCOO', i)
+        # logger.debug('GETCOO.', i)
         tracker = self.tracker
         if np.isnan(tracker.delta_xy[i]).any():
             self.logger.debug('No measurements yet for frame {}.', i)
@@ -515,8 +503,8 @@ class TrackerVideo(VideoFeatureDisplay):
         return tracker.measurements[i]
 
     def update(self, i, draw=False):
-        # logger.debug('UPDATE', i)
-        # logger.debug('GRUMBLE' * np.isnan(tracker.delta_xy[i]).any())
+        # logger.debug('UPDATE.', i)
+        # logger.debug('GRUMBLE.' * np.isnan(tracker.delta_xy[i]).any())
         i = int(i)
         tracker = self.tracker
         if np.isnan(tracker.measurements['xy'][i]).any():

@@ -8,12 +8,21 @@ import numpy as np
 
 # local
 from scrawl.image import ImageDisplay
+from recipes.pprint import pformat
+from recipes.config import ConfigNode
+from recipes.oo.slots import _sanitize_locals
 from recipes.utils import duplicate_if_scalar
 
 # relative
 from .. import transforms as transform
 from ..modelling import Model
-from .utils import non_masked
+from .utils import ensure_dict, non_masked
+
+
+# ---------------------------------------------------------------------------- #
+CONFIG = ConfigNode.load_module(__file__)
+
+# ---------------------------------------------------------------------------- #
 
 
 class MultiGauss(Model):
@@ -248,8 +257,13 @@ class MultiGauss(Model):
         slices = map(slice, xyl.min(0), xyu.max(0), size * 1j)
         return np.moveaxis(np.mgrid[tuple(slices)], 0, -1)
 
-    def plot(self, grid=None, size=100, show_xy=True, show_peak=True, **kws):
-        """Image the model"""
+    def plot(self, grid=None, size=CONFIG.plot.image.grid_size,
+             points=True, peak=False, **kws):
+        """Plot an image of the model."""
+
+        self.logger.opt(lazy=True).debug(
+            'Plotting: {}.', lambda: pformat(_sanitize_locals(locals()))
+        )
 
         ndims = self.n_dims
         if ndims != 2:
@@ -263,20 +277,23 @@ class MultiGauss(Model):
         z = self((), grid)
 
         # plot an image
-        kws_ = dict(cmap='Blues', alpha=0.5)  # defaults
-        kws_.update(**kws)
         im = ImageDisplay(z.T,
                           extent=grid[[0, -1], [0, -1]].T.ravel(),
-                          **kws_)
+                          **{'sliders': False,
+                             **CONFIG.plot.image.filter('grid_size'),
+                             **kws})
 
         # plot locations
-        if show_xy:
-            im.ax.plot(*self.xy.T, '.')
+        if points:
+            im.ax.plot(*self.xy.T,
+                       **{'ls': '', **CONFIG.plot.points, **ensure_dict(points)})
 
         # mark peak
-        if show_peak:
+        if peak:
             xy_peak = grid[np.unravel_index(z.argmax(), z.shape)]
-            im.ax.plot(*xy_peak, 'rx')
+            im.ax.plot(*xy_peak,
+                       **{'ls': '', **CONFIG.plot.peak, **ensure_dict(peak)})
+
         return im
 
 

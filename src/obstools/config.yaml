@@ -1,3 +1,226 @@
+image:
+    sample:
+        stat:               median
+        min_depth:          5
+
+    detect:
+        algorithm:          sigma_threshold
+        snr:                3
+
+        # post-processing filters
+        npixels:            7
+        edge_cutoff:        null
+        edge_fraction:      0.5  # maximum fractional area of source inside border region
+        monolithic:         True
+        roundness:          [0.5, 1.5]
+        dilate:             0
+        deblend:            False
+
+        # MultiThreshold parameters
+        multi_threshold:
+            snr:            [10, 7, 5, 3]
+            npixels:        [ 7, 5, 3]
+            deblend:        [True, False]
+            dilate:         auto
+            edge_cutoff:    null
+            max_iter:       5
+
+        report:
+            title_style:    [B, _]
+            extend:         2
+
+    register:
+        survey:                     dss
+        fov_stretch:                1.2
+
+        plot:
+            mosaic:                 False
+            alignment:              False
+            clusters:
+                show:               False
+                centres:            k+
+                frames:             True
+                nrs:                True
+                show_bandwidth:     True
+                trim_labels:        False
+
+        align:
+            hop:                        True
+            fit_angle:                  True
+            refine:                     True
+            
+            sigma_distance_scale:       3
+            sigma_fallback:             10
+
+            # plot model probability image + matched coordinates for each image
+            plot:
+                model:          False
+                points:
+                    color:      orangered
+                    marker:     o
+                    mfc:        none
+                    ms:         12
+
+        measure:
+            centre:                         mean
+            source_detection_threshold:     0.25
+            outlier_distance:               Null
+            report:                         True
+
+        cluster:
+            classifier:                 MeanShift
+            bandwidth_distance_scale:   2
+            cluster_all:                False
+            
+            plot:
+                features:
+                    s:                  25
+                    marker:             '*'
+                    cmap:               null
+                    label:              Centroids ({} images)
+                
+                centres:
+                    marker:             +
+                    color:              k
+                    ms:                 2.5
+                    alpha:              1
+
+                labels:
+                    size:               8
+                    emboss:
+                        linewidth:      1.5
+                        color:          '0.2'
+
+                outliers:
+                    color:              r
+                    marker:             x
+                    alpha:              0.5
+
+                bandwidth:
+                    ec:                 '0.2'
+                    alpha:              0.75
+                    label:              '{algorithm}(bandwidth={bandwidth:.3f})'
+
+                frames:
+                    lw:                 1
+                    ec:                 '0.5'
+
+    mosaic:
+        ref:
+            cmap:           Greys
+            alpha:          1
+
+        alpha:
+            min:    0.025
+            cycle:  0.65
+
+        labels:
+            format: image{:d}
+            color:  w
+
+        target:
+            color:            forestgreen
+            arrow:
+                size:             10
+                head_distance:    2.5
+                offset:           [0, 0]
+
+            text:
+                offset:         3
+                emboss:
+                    linewidth:  2
+                    color:      k
+
+    gmm:
+        plot:
+            image:
+                cmap:           Blues
+                alpha:          0.5
+                grid_size:      100
+            points:
+                color:      k
+                marker:     x
+                ms:         2
+                mfc:        none
+                label:      Centroids
+            peak:
+                marker:         ''
+                color:          r
+
+
+    display:
+        image:
+            cmap:           Null  # 'cmr.voltage_r',
+            hist:           False
+            sliders:        False
+            cbar:           False
+
+        contours:    
+            cmap:           hot
+            lw:             1.5
+
+        frame:
+            fc:             none
+            lw:             1
+            ec:             '0.5'
+
+        marker: 
+            marker:         x
+            color:          w
+            ls:             none
+
+        text: 
+            size:           xx-small
+            color:          w
+            weight:         heavy
+            offset:         5
+
+    segments:
+        display:
+            contours:  
+                cmap:       hot
+                alpha:      1
+                lw:         1.25
+                emboss:     2.5
+
+            text:  
+                color:      w
+                alpha:      0.5
+                weight:     heavy
+                va:         center
+                ha:         center
+                emboss:     [1, k]
+
+            console:
+                extend:     1
+                cmap:       null
+                contour:    [r, B]
+
+                stats:
+                    flux:       
+                        header:         Flux [ADU]
+                        thousands:      ' '
+                    com:        
+                        header:         Position (y, x) [px]
+                        significant:    1
+                    areas:      
+                        header:         Area [px²]
+
+                    roundness:  
+                        header:         Roundness
+                        significant:    3
+
+
+campaign:
+    pprint:
+        max_lines:  25
+        max_items:  100
+        sep:        ' | '
+        attr:       file.name
+
+    tabulate:
+        [name, target, obstype, nframes, ishape, binning]
+
 
 lc:
     io:
