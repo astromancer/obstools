@@ -260,7 +260,7 @@ phot:
             # geometric_median:               1
             peak:
                 upsample: 1     # note, changing this will siginificantly affect compute times
-                filter: lanczos
+                # filter: lanczos
         
         # subtract background from image prior to computing features
         pre_subtract:       True

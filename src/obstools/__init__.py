@@ -5,6 +5,7 @@ from pathlib import Path
 # third-party
 import numpy as np
 from loguru import logger
+from platformdirs import user_cache_path
 
 # local
 from recipes.config import ConfigNode
@@ -43,7 +44,7 @@ def _hdu_hasher(hdu):
 # config(typed={ImageHDU: _hdu_hasher})
 
 # persistent caches for faster coordinate and image retrieval
-cachePath = _ = Path.home() / '.cache/obstools'  # NOTE only for linux!
+cachePath = _ = user_cache_path('obstools')
 cachePaths = AttrReadItem(
     base=_,
     coo=_ / 'coords.pkl',
