@@ -18,7 +18,7 @@ from recipes.string import pluralize
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.contexts import ContextStack
-from recipes.parallel.joblib import initialized
+from recipes.concurrent.joblib import initialized
 
 # relative
 from .logging import TqdmLogAdapter, TqdmStreamAdapter

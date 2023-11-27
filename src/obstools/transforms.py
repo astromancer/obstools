@@ -8,7 +8,7 @@ Transformation helper functions for cartesian coordinate arrays.
 import numpy as np
 
 # local
-from recipes.transforms.rotation import rotation_matrix
+from recipes.math.transforms import rotation_matrix
 
 
 def rotate(xy, theta):

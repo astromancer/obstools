@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 
 # local
-from recipes.transforms import rigid, rotate
+from recipes.math.transforms import rigid, rotate
 from obstools.image.gmm import CoherentPointDrift, MultiGauss
 
 
