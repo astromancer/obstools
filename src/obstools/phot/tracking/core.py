@@ -33,9 +33,6 @@ from .display import SourceTrackerPlots
 from .dither import PointSourceDitherModel
 
 
-# from recipes.concurrent.synced import SyncedArray, SyncedCounter
-
-# TODO: CameraTrackingModel / CameraOffset / CameraPositionModel
 # TODO: filter across frames for better shift determination ???
 # TODO: wavelet sharpen / lucky imaging for better relative positions
 
@@ -54,8 +51,7 @@ CONFIG = ConfigNode.load_module(__file__)
 _s0 = slice(None)
 
 # ---------------------------------------------------------------------------- #
-# Multiprocessing
-# sync_manager = mp.Manager()
+# Process shared variables
 # check precision of computed source positions
 precision_reached = sync_manager.Value('i', -1)
 # when was the centroid distribution spread last estimated
@@ -799,8 +795,12 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         for name, out in dict(frame=outframe, segment=outseg).items():
             if out.any():
-                self.logger.debug('Sanitizing out of {} measurement: {}.',
-                                  name, yx[out])
+                bad = (f'feature {self.features[_]}, source: {s}'
+                       for _, s in zip(*np.where(out)))
+                self.logger.opt(lazy=True).debug(
+                    'Sanitizing out of {0[0]} measurement {0[1]}: {0[2]}.',
+                    lambda: (name, list(bad), yx[out].squeeze())
+                )
 
             yx[out] = np.nan
 

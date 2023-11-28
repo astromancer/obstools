@@ -17,7 +17,7 @@ import numbers
 import warnings
 import operator as op
 import itertools as itt
-from collections import abc, defaultdict
+from collections import abc
 
 # third-party
 import numpy as np

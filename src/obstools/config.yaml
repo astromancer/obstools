@@ -260,10 +260,10 @@ phot:
         # -------------------------------------------------------------------- #
         centroids:
             # features used for tracking
-            com:                            1
+            com:            1
             peak:
                 # note: upsampling will siginificantly affect compute times
-                upsample: 1
+                upsample:   1
                 # filter: lanczos
 
         # subtract background from image prior to computing features

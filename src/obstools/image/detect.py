@@ -8,7 +8,7 @@ from collections import defaultdict
 import numpy as np
 from scipy import ndimage
 from sklearn.mixture import GaussianMixture
-from photutils import detect_sources, detect_threshold
+from photutils.segmentation import detect_sources, detect_threshold
 
 # local
 import recipes.pprint as pp
