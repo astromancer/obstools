@@ -224,9 +224,9 @@ class SegmentedImage(SegmentationImage,     # base
     # ------------------------------------------------------------------------ #
     detection = SourceDetectionDescriptor(CONFIG.parent.detect.algorithm)
 
-
     # Constructors
     # --------------------------------------------------------------------------
+
     @classmethod
     def empty_like(cls, image):
         """
@@ -1321,8 +1321,10 @@ class SegmentedImage(SegmentationImage,     # base
         if iterations == 'auto':
             return self.auto_dilate(labels)
 
-        if not isinstance(iterations, numbers.Integral):
-            raise ValueError('`iterations` parameter should be an integer.')
+        if not isinstance(iterations, numbers.Integral) or iterations < 0:
+            raise ValueError(
+                'The `iterations` parameter must be a non-negative integer.'
+            )
 
         # expand masks to 3D sequence
         labels = self.resolve_labels(labels)
