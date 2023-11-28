@@ -11,6 +11,8 @@ src/obstools/phot/_old_gui.py
 src/obstools/image/segmentation
 tests/**/_test_*
 
+.travis.yml
+
 
 #########################################
 # Editor temporary/working/backup files #
