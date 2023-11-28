@@ -17,9 +17,11 @@ from scipy.optimize import minimize
 
 # local
 from recipes import pprint
+from recipes.oo import slots
 from recipes.io import load_memmap
 from recipes.config import ConfigNode
 from recipes.dicts import AttrReadItem
+from recipes.decorators import update_defaults
 
 # relative
 from ...image.noise import CCDNoiseModel
@@ -150,6 +152,16 @@ class MarginalGaussianMLE:
 # TODO: bayesian version
 
 
+class CutOffs(slots.SlotHelper):
+
+    __slots__ = ('snr', 'edge', 'distance', 'saturation')
+
+    @update_defaults(CONFIG.cutoffs)
+    def __init__(self, snr, edge, distance, saturation):
+        super().__init__(snr=float(snr), edge=int(edge), 
+                         distance=float(distance), saturation=float(saturation))
+
+
 class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     """
     A class to track sources in CCD video to aid time series photometry.
@@ -269,7 +281,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         #
         self.noise_model = noise_model
-        self.cutoffs = AttrReadItem(cutoffs)
+        self.cutoffs = CutOffs(**cutoffs)
 
         # triggers for computing coordinate centres and weights as needed
         self._compute = AttrReadItem({k: slice(*v) for k, v, in compute.items()})
