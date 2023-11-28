@@ -21,9 +21,8 @@ dependencies = [
     "anytree", 
     "loguru", 
     "decorator", 
-    "stdlib_list", 
+    "platformdirs", 
     "more_itertools", 
-    "better_exceptions",
 
     "pyxides",
 
@@ -32,15 +31,14 @@ dependencies = [
     "astropy", 
     "drizzle", 
     "photutils", 
+    "scikit-learn",
     
-    "scikit_learn", 
-    "emcee", 
-
     "matplotlib", 
     "aplpy",
+    "mpl_multitab",
 
-    "motley",
     "recipes",
+    "motley",
     "scrawl"
 ]
 
