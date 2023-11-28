@@ -148,13 +148,13 @@ class MarginalGaussianMLE:
 # TODO: bayesian version
 
 
-class CutOffs(slots.SlotHelper):
+class MeasurementConstraints(slots.SlotHelper):
 
     __slots__ = ('snr', 'edge', 'distance', 'saturation')
 
     @update_defaults(CONFIG.cutoffs)
     def __init__(self, snr, edge, distance, saturation):
-        super().__init__(snr=float(snr), edge=int(edge), 
+        super().__init__(snr=float(snr), edge=int(edge),
                          distance=float(distance), saturation=float(saturation))
 
 
@@ -277,7 +277,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         #
         self.noise_model = noise_model
-        self.cutoffs = CutOffs(**cutoffs)
+        self.cutoffs = MeasurementConstraints(**cutoffs)
 
         # triggers for computing coordinate centres and weights as needed
         self._compute = AttrReadItem({k: slice(*v) for k, v, in compute.items()})
