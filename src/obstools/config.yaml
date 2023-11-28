@@ -1,3 +1,5 @@
+
+# ---------------------------------------------------------------------------- #
 image:
     sample:
         stat:               median
@@ -48,7 +50,7 @@ image:
             hop:                        True
             fit_angle:                  True
             refine:                     True
-            
+
             sigma_distance_scale:       3
             sigma_fallback:             10
 
@@ -71,14 +73,14 @@ image:
             classifier:                 MeanShift
             bandwidth_distance_scale:   2
             cluster_all:                False
-            
+
             plot:
                 features:
                     s:                  25
                     marker:             '*'
                     cmap:               null
                     label:              Centroids ({} images)
-                
+
                 centres:
                     marker:             +
                     color:              k
@@ -147,7 +149,6 @@ image:
                 marker:         ''
                 color:          r
 
-
     display:
         image:
             cmap:           Null  # 'cmr.voltage_r',
@@ -211,6 +212,7 @@ image:
                         significant:    3
 
 
+# ---------------------------------------------------------------------------- #
 campaign:
     pprint:
         max_lines:  25
@@ -222,6 +224,7 @@ campaign:
         [name, target, obstype, nframes, ishape, binning]
 
 
+# ---------------------------------------------------------------------------- #
 lc:
     io:
         title:  Light Curve for {}
@@ -240,6 +243,8 @@ lc:
 
         precision:  5
 
+
+# ---------------------------------------------------------------------------- #
 phot:
     proc:
         progress:
@@ -250,33 +255,34 @@ phot:
             ascii: " ╸━"
             unit:  " frames"
 
-
     # source tracking
     tracking:
-        # ------------------------------------------------------------------------ #
+        # -------------------------------------------------------------------- #
         centroids:
             # features used for tracking
             com:                            1
-            # geometric_median:               1
             peak:
-                upsample: 1     # note, changing this will siginificantly affect compute times
+                # note: upsampling will siginificantly affect compute times
+                upsample: 1
                 # filter: lanczos
-        
+
         # subtract background from image prior to computing features
         pre_subtract:       True
-        # statistic used for background
+        # statistic used for background subtraction
         bg:                 median
-        
+
         # Required positional accuracy in pixels
         precision:          0.5
-        
+
         # Per-source weights for frame offset calculation. Use "snr" for
         # signal-to-noise weighting.
         weights:            snr 
-        
 
+        # Centroid measurement filters
         cutoffs:
+            # image edge
             edge:           0
+            # signal to noise
             snr:            3.
             # Sources with signal-to-noise ratio less than this will not be 
             # considered when solving for image dither
@@ -288,6 +294,7 @@ phot:
             # this percentage of the saturation value
 
         compute:
+            # recompute frequency for position estimate
             centres: [0 , 1000, 100 ]
 
         filenames:
@@ -297,7 +304,6 @@ phot:
             source_info:        source-info.dat     # (n, nsources) structured
             feature_weights:    feature-weights.dat # (nstats, 1, 1)
             source_weights:     source-weights.dat  # nsources  
-            
 
         # ------------------------------------------------------------------------ #
         table:
@@ -322,11 +328,11 @@ phot:
                 bottom:     0.02
                 left:       0.125
                 right:      0.9
-            
+
             legend:
                 show:           on
                 show_weights:   on
-            
+
             features:
                 cmap:       rainbow
                 emboss:     1.5
@@ -349,7 +355,7 @@ phot:
                 alpha:     1
                 # fontweight:bold
 
-            position:
+            positions:
                 figsize:            [12, 6.5]
                 legend:             False
                 show:               [avg, weights, caption]  #  nulls, pixel
@@ -366,7 +372,7 @@ phot:
                     color:  null
                     zorder: 1
                     alpha:  0.35
-                
+
                 title:
                     size:       13
                     fontweight: bold

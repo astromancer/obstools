@@ -39,7 +39,7 @@ with ctx.suppress(AttributeError):  # autoreload hack
 
 CENTROIDS = CONFIG.centroids
 LABEL_CONFIG = CONFIG.labels
-CONFIG = CONFIG.position
+CONFIG = CONFIG.positions
 
 SUBPLOTSPEC = dict(
     bottom=0.075,
