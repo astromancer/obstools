@@ -212,7 +212,7 @@ class PointSourceDitherModel(LoggingMixin):
             # fix outlier indices
             idxf, idxs = np.where(out.any(1))
             idxg, = np.where(good)
-            idxu, = np.where(use_sources)
+            idxu, = np.where(source_weights != 0)
             outlier_indices = (idxg[idxf], idxu[idxs])
         else:
             outlier_indices = ()
@@ -220,7 +220,7 @@ class PointSourceDitherModel(LoggingMixin):
         # pprint!
         if report:
             try:
-                #                                  counts
+                #                              counts
                 self.report(xy, *centres, δxy, None, self.d_frq)
             except Exception as err:
                 self.logger.exception('Report failed')

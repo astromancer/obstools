@@ -8,13 +8,10 @@ import numbers
 import tempfile
 import functools as ftl
 import itertools as itt
-import contextlib as ctx
-import multiprocessing as mp
 from pathlib import Path
 
 # third-party
 import numpy as np
-from tqdm import tqdm
 from bottleneck import nanstd
 from scipy.optimize import minimize
 
@@ -29,12 +26,12 @@ from ...image.noise import CCDNoiseModel
 from ...image.register import ImageRegister
 from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
-from ..proc import FrameProcessor
+from ..proc import FrameProcessor, memory_lock, sync_manager
 from .display import SourceTrackerPlots
 from .dither import PointSourceDitherModel
 
 
-# from recipes.parallel.synced import SyncedArray, SyncedCounter
+# from recipes.concurrent.synced import SyncedArray, SyncedCounter
 
 # TODO: CameraTrackingModel / CameraOffset / CameraPositionModel
 # TODO: filter across frames for better shift determination ???
@@ -51,27 +48,17 @@ CONFIG = ConfigNode.load_module(__file__)
 
 
 # ---------------------------------------------------------------------------- #
+# default subset for `get_coords`
 _s0 = slice(None)
 
 # ---------------------------------------------------------------------------- #
 # Multiprocessing
-sync_manager = mp.Manager()
+# sync_manager = mp.Manager()
 # check precision of computed source positions
 precision_reached = sync_manager.Value('i', -1)
 # when was the centroid distribution spread last estimated
 _last_checked = sync_manager.Value('i', -1)
 _computing_centres = sync_manager.Value('b', 0)
-# default lock - does nothing
-memory_lock = ctx.nullcontext()
-
-
-def set_lock(mem_lock, tqdm_lock):
-    """
-    Initialize each process with a global variable lock.
-    """
-    global memory_lock
-    memory_lock = mem_lock
-    tqdm.set_lock(tqdm_lock)
 
 
 # ---------------------------------------------------------------------------- #
@@ -104,8 +91,8 @@ def view_field(a, fields=None):
     dtype = np.dtype({name: a.dtype.fields[name] for name in fields})
     return np.ndarray(a.shape, dtype, a, 0, a.strides)
 
-# ---------------------------------------------------------------------------- #
 
+# ---------------------------------------------------------------------------- #
 
 def wrap_int(i):
     return slice(i, i + 1) if isinstance(i, numbers.Integral) else i
@@ -126,11 +113,6 @@ def resolve_weights(features):
 
     return (weights / weights.sum()), feature_kws
 
-# class NullSlice():
-#     """Null object pattern for getitem"""
-#
-#     def __getitem__(self, item):
-#         return None
 
 # ---------------------------------------------------------------------------- #
 # Marginal gaussians
@@ -281,12 +263,15 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
         origin = self.compute_frame_offset(region_centres,
                                            weights=self.source_weights, axis=0)
+
         self.origin = origin[::-1].round(0).astype(int)
         self.logger.debug('Origin set to: {}.', self.origin)
 
         #
         self.noise_model = noise_model
         self.cutoffs = AttrReadItem(cutoffs)
+
+        # triggers for computing coordinate centres and weights as needed
         self._compute = AttrReadItem({k: slice(*v) for k, v, in compute.items()})
 
         # plotting
@@ -436,7 +421,6 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     def _check_precision_reached(self):
         self.logger.trace('Checking precision:')
 
-        #
         if (when := precision_reached.value) != -1:
             self.logger.trace('Required precision reached at frame {}.', when)
             return True
@@ -505,51 +489,35 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         return residual.squeeze()
 
-    # ------------------------------------------------------------------------ #
-    #  indices=None, njobs=-1, backend='multiprocessing',
-    #         progress_bar=True):
-    def run(self, data, **kws):
-        """
-        Start a worker pool of source trackers. The workload will be split into
-        chunks of size ``
+    def main(self, data, indices, njobs, batch_size, progress_bar, backend):
 
-        Parameters
-        ----------
-        data : array-like
-            Image stack.
-        indices : Iterable, optional
-            Indices of frames to compute, the default None, runs through all the
-            data.
-        njobs : int, optional
-            Number of concurrent woorker processes to launch, by default -1
+        # init precision flag
+        precision_reached.value = -1
 
-        progress_bar : bool, optional
-            _description_, by default True
-
-        Raises
-        ------
-        FileNotFoundError
-            If memory has not been initialized prior to calling this method.
-        """
-
-        super().run(data, **kws)
+        #
+        super().main(data, indices, njobs, batch_size, progress_bar, backend)
 
         # finally, recompute the positions
         # with memory_lock:
         self.logger.info('Final fit with full dataset.')
         self.fit(report=True)
 
-    def main(self, data, indices, njobs, progress_bar, backend):
-        # init precision flag
-        precision_reached.value = -1
-        super().main(data, indices, njobs, progress_bar, backend)
+    def get_workload(self, indices, njobs, batch_size, progress_bar):
 
-    def get_workload(self, indices, njobs, progress_bar):
-
-        batch_size = self._compute.centres.step
+        batch_size = batch_size or self._compute.centres.step
         burn_in = self._compute.centres.start // batch_size
-        return super().get_workload(indices, njobs, batch_size, burn_in,
-                                    progress_bar)
+        batches = super().get_workload(indices, njobs, batch_size, progress_bar)
+
+        update_centres = (
+            itt.chain(
+                # burn in
+                itt.repeat(False, burn_in - 1),
+                # compute every nth batch
+                itt.repeat(None)
+            )
+        )
+
+        yield from zip(batches, update_centres)
 
     def loop(self, data, indices, update_centres=None, report=True):
 
@@ -594,7 +562,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # finally return the new coordinates
         return self.coords['xy'] + self.frame_info['delta_xy'][indices, None]
 
-    def get_source_weights(self, indices=None):
+    def get_source_weights(self, indices=None, normalize=False):
 
         if not self.snr_weighting:
             # user provided weights
@@ -623,9 +591,12 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             # self.logger.warning('Received zero weight vector. Setting to
             # unity')
 
+        if normalize:
+            return snr / snr.sum()
+
         return snr
 
-    def measure(self, data, i, mask=None):
+    def measure(self, data, index, mask=None):
 
         if mask is None:
             mask = self.masks.bad_pixels  # NOTE: may be None
@@ -633,15 +604,15 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             mask |= self.masks.bad_pixels
 
         #
-        image = np.ma.MaskedArray(data[i], mask)
-        xy, weights = self._measure(image, i, self.origin)
+        image = np.ma.MaskedArray(data[index], mask)
+        xy, weights = self._measure(image, index, self.origin)
 
         # compute delta
         dxy = self.compute_frame_offset(xy, weights=weights, axis=0)
 
         if np.ma.is_masked(dxy) or ~np.isfinite(dxy).all():
             # self.logger.debug(f'{xy = }; {dxy = }')
-            raise ValueError(f'Masked or nan in xy offsets, frame {i}.')
+            raise ValueError(f'Masked or nan in xy offsets, frame {index}.')
 
         #
         # if np.any(np.abs(dxy) > 20):
@@ -651,13 +622,13 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         # Update origin
         if (np.ma.abs(dxy) > 1).any():
-            new = self.update_origin(dxy, i, image)
+            new = self.update_origin(dxy, index, image)
 
             self.logger.trace('UPDATED OFFSET {}: {} {}.', index, dxy, new)
             return new
 
         # same origin
-        self.origins[i] = self.origin
+        self.origins[index] = self.origin
         return dxy
 
     def _measure(self, image, index, origin):
@@ -1154,7 +1125,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         obj = cls(xy, seg, labels, mask=mask, **kws)
 
         # log nice table with what's been found.
-        obj.logger.info('Found the following sources:\n{:s}\n.', obj.pprint())
+        obj.logger.info('Found the following sources:\n{:s}\n', obj.pprint())
 
         return obj
 
