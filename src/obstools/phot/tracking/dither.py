@@ -212,7 +212,7 @@ class PointSourceDitherModel(LoggingMixin):
             # fix outlier indices
             idxf, idxs = np.where(out.any(1))
             idxg, = np.where(good)
-            idxu, = np.where(source_weights != 0)
+            idxu, = np.where(np.all(source_weights != 0, 0))
             outlier_indices = (idxg[idxf], idxu[idxs])
         else:
             outlier_indices = ()
