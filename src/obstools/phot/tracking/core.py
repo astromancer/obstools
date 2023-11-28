@@ -913,7 +913,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # produce message
         self.logger.opt(lazy=True).info(
             'Positions for sources estimated from the following features and '
-            'weights: \n{}',
+            'weights: \n{}.',
             lambda: pprint.pformat(dict(zip(self.features,
                                             self.feature_weights.squeeze())),
                                    lhs=str, rhs='{:4.3f}'.format, brackets='')

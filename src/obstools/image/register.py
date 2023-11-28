@@ -1867,7 +1867,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # TODO: model image
 
         self.logger.opt(lazy=True).debug(
-            'Plotting cluster identified sources.: {}.',
+            'Plotting cluster identified sources with config: {}.',
             lambda: pp.pformat(_sanitize_locals(locals()))
         )
 

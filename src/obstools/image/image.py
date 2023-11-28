@@ -553,7 +553,9 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
 class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
 
+    
     # properties: vectorized attribute getters on `SkyImage`
+    # ------------------------------------------------------------------------ #
     images = AttrVector('data')
     shapes = AttrVector('data.shape', output=np.array)
     detections = AttrVector('seg')
@@ -564,6 +566,8 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
     origins = AttrVector('origin', output=np.array)
     angles = AttrVector('angles', output=np.array)
     corners = AttrVector('corners', output=np.array)
+    
+    # ------------------------------------------------------------------------ #
 
     def __init__(self, images=(), fovs=()):
         """
