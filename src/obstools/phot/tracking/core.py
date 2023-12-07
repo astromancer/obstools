@@ -30,7 +30,7 @@ from ...image.segments import (LabelUser, SegmentsMasksHelper, get_neighbours,
                                resolve_bg)
 from ..proc import FrameProcessor, memory_lock, sync_manager
 from .display import SourceTrackerPlots
-from .dither import PointSourceDitherModel
+from .dither import PointSourceDitherModel, _sanitize_weights
 
 
 # TODO: filter across frames for better shift determination ???
@@ -60,28 +60,6 @@ _computing_centres = sync_manager.Value('b', 0)
 
 
 # ---------------------------------------------------------------------------- #
-
-def measurement_dtype(names=('value', 'sigma'), subtype=float):
-    """numpy data type for measurements with value and uncertainty."""
-    return list(zip(names, itt.repeat(subtype)))
-
-
-STRUCT_DTYPES = dict(
-    measurement=(mdtype := measurement_dtype(('xy', 'sigma'))),
-    coords=mdtype,
-    frame_info=[
-        # origin index (rows, col) of segmentation for measuring each frame
-        ('origins', int),
-        # measured xy offset for each frame
-        ('delta_xy', float)
-    ],
-    # structured series data
-    source_info=[('xy', (dt := measurement_dtype()), 2),
-                 ('flux', dt),
-                 ('snr', float),
-                 ('q', float)]
-)
-
 
 def view_field(a, fields=None):
     if fields is None:
@@ -143,8 +121,6 @@ class MarginalGaussianMLE:
 
 
 # ---------------------------------------------------------------------------- #
-
-# FIXME: remove redundant code
 # TODO: bayesian version
 
 
@@ -174,19 +150,21 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     """
 
     noise_model = None
-
     reference_index = 0
 
+    # ------------------------------------------------------------------------ #
+
+    @update_defaults(CONFIG)
     def __init__(self, coords, seg,
                  labels=None,
                  mask=None,
-                 pre_subtract=CONFIG.pre_subtract,
-                 bg=CONFIG.bg,
+                 pre_subtract=True,
+                 bg='median',
                  features=CONFIG.centroids,
-                 weights=CONFIG.weights,
-                 precision=CONFIG.precision,  # should be ~ diffraction limit
-                 cutoffs=CONFIG.cutoffs,
-                 compute=CONFIG.compute,
+                 weights='snr',
+                 precision=0.5,  # should be ~ diffraction limit
+                 cutoffs={},
+                 compute={},
                  noise_model=None):
         """
         Class for tracking camera movement by measuring location of sources
@@ -249,17 +227,21 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         self.presub = bool(pre_subtract)
         self.bg = resolve_bg(bg)
 
+        # need noise model to init dtypes next
+        self.noise_model = noise_model
+
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
-        self.measurements = self.origins = self.delta_xy \
-            = self.source_info = self.frame_info = None
+        self.measurements = self.origins = self.delta_xy = self.source_info = None
+        self.frame_info = np.array((0, np.nan), self._mmap_dtypes.frame_info,
+                                   ndmin=1)
 
         # reference position (in pixel coordinates) from which the shift will
         # be measured.
         # store origin and relative positions separately so we can update
         # self.xy0 = coords[self.reference_index]
         # self.rpos = coords - coords[self.reference_index]
-        self.coords = np.recarray((len(self.use_labels), 2), STRUCT_DTYPES['coords'])
+        self.coords = np.recarray((len(self.use_labels), 2), self._mmap_dtypes.coords)
         self.coords['xy'] = coords[self.use_labels - 1]
         self.coords['sigma'] = np.inf
 
@@ -276,7 +258,6 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         self.logger.debug('Origin set to: {}.', self.origin)
 
         #
-        self.noise_model = noise_model
         self.cutoffs = MeasurementConstraints(**cutoffs)
 
         # triggers for computing coordinate centres and weights as needed
@@ -304,6 +285,102 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # if use_labels is None:
         #     # we want only to use the sources with high snr fro CoM tracking
 
+    def __str__(self):
+        nl = '\n'
+        pre = f'{type(self).__name__}('  # coords=
+        cx = np.array2string(self.coords['xy'],
+                             precision=2, separator=', ')
+        # ppr.mapping({'coords': cx, 'source_weights'})
+        return f'{pre}{cx.replace(nl, nl.ljust(len(pre) + 1))})'
+
+    __repr__ = __str__
+
+    # ------------------------------------------------------------------------ #
+    @staticmethod
+    def measurement_dtype(names=('value', 'sigma'), subtype=float):
+        """numpy data type for measurements with value and uncertainty."""
+        return list(zip(names, itt.repeat(subtype)))
+
+    @property
+    def _mmap_dtypes(self):
+
+        # if we have a model for the CCD pixel noise, use it to compute
+        # uncertainties for location feature measurements
+        noise = bool(self.noise_model) + 1
+        coord_dtype = self.measurement_dtype(('xy', 'sigma'))
+        measurement_dtype = self.measurement_dtype()
+
+        # autopep8: off
+        return ConfigNode(
+            # fit coordinates and uncertainty estimate
+            coords=         coord_dtype,
+
+            # raw centroids: only compute sigma for raw measurements if we have
+            # a noise model for pixel data
+            measurements=   coord_dtype[:noise],
+
+            # Per-frame data
+            frame_info=     [
+                # origin index (rows, col) of segmentation for measuring each frame
+                ('origins',  int),
+                # measured xy offset for each frame
+                ('delta_xy', float)
+            ],
+
+            # structured series data for sources (value, sigma)
+            source_info=    [
+                ('xy',    measurement_dtype[:noise], 2),
+                ('flux',  measurement_dtype),
+                ('snr',   float),
+                ('q',     float)
+            ],
+
+            # Fit weights for location features
+            feature_weights=float
+        )
+
+
+    def _mmap_shapes(self, n):
+
+        # get array shapes
+        nfeatures = len(self.features)
+        nsources = len(self.use_labels)  # self.seg.nlabels
+
+        return ConfigNode(
+            # derived coordinates and uncertainty estimate
+            coords=         (nsources, 2),
+            # raw centroids
+            measurements=   (n, nfeatures, nsources, 2),
+            # frame measurements (origin, offset)
+            frame_info=     (n, 2),
+            # structured series results for sources
+            source_info=    (n, nsources),
+            # fit weights for centroid features
+            feature_weights=(nfeatures, 1, 1)
+        )
+        # autopep8: on
+
+    def _mmap_config(self, n):
+        # if we have a model for the CCD pixel noise, use it to compute
+        # uncertainties for location feature measurements
+        noise = bool(self.noise_model) + 1
+        coord_dtype = self.measurement_dtype(('xy', 'sigma'))
+        measurement_dtype = self.measurement_dtype()
+
+        config = ConfigNode()
+        shapes = self._mmap_shapes(n)
+        for name, dtype in self._mmap_dtypes.items():
+            config[name].update(
+                shape=shapes[name],
+                dtype=dtype,
+                # fill memmap array with value from __init__
+                fill=np.nan if (init := getattr(self, name, None) is None) else init
+            )
+            if init:
+                self.logger.debug('Using initial value for {}: {}', name, init)
+
+        return config
+
     def init_memory(self, n, loc=None, overwrite=False):
         """
         Initialize shared memory synchronised access wrappers. Should only be
@@ -325,53 +402,18 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             loc = tempfile.mkdtemp()
         loc = Path(loc)
 
-        # get array shapes
-        nstats = len(self.features)
-        nsources = len(self.use_labels)  # self.seg.nlabels
-
-        # if we have a model for the CCD pixel noise, use it to compute
-        # feature uncertainties
-        m_dtype = STRUCT_DTYPES['measurement'][:(bool(self.noise_model) + 1)]
-        specs = {
-            # raw centroid measuremenst
-            'measurements':     ((n, nstats, nsources, 2), m_dtype, np.nan),
-            # derived coordinates and it's uncertainty estimate
-            'coords':           ((nsources, 2), self.coords.dtype, np.nan),
-            # frame_measurements (origin, offset)
-            'frame_info':       ((n, 2), (dtype := STRUCT_DTYPES['frame_info']),
-                                 np.array((0, np.nan), dtype, ndmin=1)),
-            # structured series results for sources
-            'source_info':      ((n, nsources), STRUCT_DTYPES['source_info'], np.nan),
-            # fit weights for centroid features
-            'feature_weights':  ((nstats, 1, 1), float, 1 / nstats),
-        }
-
         # load memory
         filenames = CONFIG.filenames
-        for name, (shape, dtype, fill) in specs.items():
-            # fill memmap array with value from __init__
-            if (init_val := getattr(self, name)) is not None:
-                fill = init_val
-
+        for name, config in self._mmap_config(n).items():
             # load
-            data = load_memmap(loc / filenames[name], shape, dtype, fill,
-                               overwrite=overwrite)
+            data = load_memmap(loc / filenames[name], **config, overwrite=overwrite)
 
             # add attributes for convenience
             setattr(self, name, data)  # .view(np.recarray)
 
+        # aliases
         self.delta_xy = self.frame_info['delta_xy']
         self.origins = self.frame_info['origins']
-
-    def __str__(self):
-        nl = '\n'
-        pre = f'{type(self).__name__}('  # coords=
-        cx = np.array2string(self.coords['xy'],
-                             precision=2, separator=', ')
-        # ppr.mapping({'coords': cx, 'source_weights'})
-        return f'{pre}{cx.replace(nl, nl.ljust(len(pre) + 1))})'
-
-    __repr__ = __str__
 
     # ------------------------------------------------------------------------ #
     @property
@@ -570,14 +612,14 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # finally return the new coordinates
         return self.coords['xy'] + self.frame_info['delta_xy'][indices, None]
 
-    def get_source_weights(self, indices=None, normalize=False):
+    def get_source_weights(self, index, normalize=True):
 
         if not self.snr_weighting:
             # user provided weights
             return self.source_weights
 
         # snr weighting scheme (for robustness)
-        snr = self.source_info['snr'][indices]
+        snr = self.source_info['snr'][index]
 
         # ignore sources with low snr (their positions will still be recorded,
         # but not used to compute frame offsets)
@@ -596,13 +638,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         if np.all(snr == 0):
             raise ValueError('Could not determine weights for centrality '
                              'measurement from image.')
-            # self.logger.warning('Received zero weight vector. Setting to
-            # unity')
 
-        if normalize:
-            return snr / snr.sum()
-
-        return snr
+        return _sanitize_weights(snr, 1, normalize)
 
     def measure(self, data, index, mask=None):
 
@@ -653,12 +690,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         # TODO: use grid and add offset to grid when computing CoM.  Will be
         self.measurements['xy'][index] = xy
-        self.source_info['xy'][index] = xym = np.nansum(xy * weights, 0)
-
-        # if self.noise_model:
-        #     self.measure_std[index] = seg.com_std(
-        #         xy[0], image, self.noise_model(image), self.use_labels
-        #     )
+        self.source_info['xy']['value'][index] = xym = \
+            np.nansum(xy * weights, 0, keepdims=True)
 
         # Q factor (image quality)
         if 'peak' in self.features:
@@ -704,6 +737,9 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # NOTE origin in array coordinates yx!!
         if origin is None:
             origin = self.origin
+
+        # if np.sqrt(np.square(self.origin[0] - origin).sum()) > self.cutoffs.distance:
+        #     self.logger.warning('Seems like a large shift? {}', origin)
 
         # get segmented image for current origin
         seg = self.get_segments(origin, image.shape)
@@ -795,11 +831,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         for name, out in dict(frame=outframe, segment=outseg).items():
             if out.any():
-                bad = (f'feature {self.features[_]}, source: {s}'
-                       for _, s in zip(*np.where(out)))
+                bad = (f'feature: {self.features[_]!r}, source: {s}, data: {d}'
+                       for _, s, d in zip(*np.where(out), yx[out]))
                 self.logger.opt(lazy=True).debug(
-                    'Sanitizing out of {0[0]} measurement {0[1]}: {0[2]}.',
-                    lambda: (name, list(bad), yx[out].squeeze())
+                    'Sanitizing out of {0[0]} measurements: {0[1]}.',
+                    lambda: (name, '\n'.join(bad))
                 )
 
             yx[out] = np.nan
@@ -817,7 +853,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         self.logger.opt(lazy=True).trace(
             'Frame {[0]}: \norigin = {[1]}\nδxy = {[2]}',
-            lambda: i, self.origin, np.array2string(dxy, precision=2))
+            lambda: (i, self.origin, np.array2string(dxy, precision=2))
+        )
 
         # NOTE: `origin` in image yx coords
         self.origin = np.array(np.round(dxy[::-1])).astype(int)
@@ -925,197 +962,20 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     # alias
     pprint = report
 
-    # def prepare_image(self, image, origin):
-    #     """
-    #     Prepare a background image by masking sources, bad pixels and whatever
-    #     else
-
-    #     Parameters
-    #     ----------
-    #     image
-    #     origin
-
-    #     Returns
-    #     -------
-
-    #     """
-
-    #     mask = self.get_object_mask(origin, origin + image.shape)
-    #     return np.ma.MaskedArray(image, mask)
-
-    # def get_object_mask(self, start, stop):
-    #     i0, j0 = start
-    #     i1, j1 = stop
-    #     return self.masks.all[i0:i1, j0:j1] | self.masks.bad_pixels
-
-    # def get_masks(self, start, shape):
-    #     phot_masks = self.seg.get_overlap(self.masks.phot, start, shape)
-    #     sky_mask = self.seg.get_overlap(self.masks.sky, start, shape)
-    #     bad_pix = self.masks.bad_pixels
-    #     return phot_masks | bad_pix, sky_mask | bad_pix
-
-    # def sdist(self):
-    #     coo = self.coords
-    #     return cdist(coo, coo)
-
-    # def mask_image(self, image, mask=None):  # TODO prepare_background better
-    #     """
-    #     Prepare a background image by masking sources, bad pixels and whatever
-    #     else
-    #     """
-    #     # mask sources
-    #     imbg = self.seg.mask_image(image)
-    #     if mask is not None:
-    #         imbg.mask |= mask
-    #
-    #     if self.masks.bad_pixels is not None:
-    #         imbg.mask |= self.masks.bad_pixels
-    #
-    #     return imbg
-
-    # def _flux_estimate(self, image, ij):
-    #
-    #     seg.sum(image) - seg.median(image, [0]) * seg.areas
-
-    # def flux_estimate_annuli(self, image, sky_buffer=2, sky_width=10):
-    #     sky_masks = self.seg.to_annuli(sky_buffer, sky_width)
-    #     # sky_masks &= ~self.streak_mask
-
-    # def _flux_estimate_annuli(self, seg, image):
-
-    #     # add object segments to model
-    #     # stop = ij + image.shape
-    #     # slice2d = tuple(map(slice, ij, stop))
-    #     # slice3d = (slice(None),) + slice2d
-    #     # edge_mask = make_border_mask(image, edge_cutoffs)
-    #     # sm = (self.masks.sky[slice3d] & ~(edge_mask | self.masks.bad_pixels))
-
-    #     n_sources = len(self.masks.sky)
-    #     flx_bg, npix_bg = np.empty((2, n_sources), int)
-    #     counts, npix = np.ma.MaskedArray(np.empty((2, n_sources), int), True)
-    #     for i, sky in enumerate(sm):
-    #         bg_pixels = image[sky]
-    #         flx_bg[i] = self.bg(bg_pixels)
-    #         npix_bg[i] = len(bg_pixels)
-
-    #     # source counts
-    #     seg = SegmentedImage(self.seg.data[slice2d])
-    #     indices = seg.labels - 1
-    #     counts[indices] = seg.counts(image)
-    #     npix[indices] = seg.counts(np.ones_like(image))
-    #     src = counts - flx_bg * npix
-
-    #     return src, flx_bg, npix, npix_bg
-
-    # def is_bad(self, coo):
-    #     """
-    #     improve the robustness of the algorithm by removing centroids that are
-    #     bad.  Bad is inf / nan / outside segment.
-    #     """
-
-    #     # flag inf / nan values
-    #     lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
-
-    #     # filter COM positions that are outside of detection regions
-    #     lbad2 = ~self.seg.inside_segment(coo, self.use_labels)
-
-    #     return lbad | lbad2
-
-    # def is_outlier(self, coo, mad_thresh=5, jump_thresh=5):
-    #     """
-    #     improve the robustness of the algorithm by removing centroids that are
-    #     outliers.  Here an outlier is any point further that 5 median absolute
-    #     deviations away. This helps track sources in low snr conditions.
-    #     """
-    #     # flag inf / nan values
-    #     lbad = (np.isinf(coo) | np.isnan(coo)).any(1)
-
-    #     # filter centroid measurements that are obvious errors (large jumps)
-    #     r = np.sqrt(np.square(self.coords - coo).sum(1))
-    #     lj = r > jump_thresh
-
-    #     if len(coo) < 5:  # scatter large for small sample sizes``
-    #         lm = np.zeros(len(coo), bool)
-    #     else:
-    #         lm = r - np.median(r) > mad_thresh * mad(r)
-
-    #     return lj | lm | lbad
-
-    # def update_pos_point(self, coo, weights=None):
-    #     # TODO: bayesian_update
-    #     """"
-    #     Incremental average of relative positions of sources (since they are
-    #     considered static)
-    #     """
-    #     # see: https://math.stackexchange.com/questions/106700/incremental-averageing
-    #     vec = coo - coo[self.reference_index]
-    #     n = self.count + 1
-    #     if weights is None:
-    #         weights = 1. / n
-    #     else:
-    #         weights = (weights / weights.max() / n)[:, None]
-
-    #     ix = self.use_labels - 1
-    #     inc = (vec - self.rpos[ix]) * weights
-    #     self.logger.debug('rpos increment:\n{:s}.', inc)
-    #     self.rpos[ix] += inc
-
-    # def best_for_tracking(self, image, close_cut=None, snr_cut=snr_cut,
-    #                       saturation=None):
-    #     """
-    #     Find sources that are best suited for centroid tracking based on the
-    #     following criteria:
-    #     """
-    #     too_bright, too_close, too_faint = [], [], []
-    #     msg = 'Stars: {} too {} for tracking'
-    #     if saturation:
-    #         too_bright = self.too_bright(image, saturation)
-    #         if len(too_bright):
-    #             self.logger.debug(msg, str(too_bright), 'bright')
-    #     if close_cut:
-    #         too_close = self.too_close(close_cut)
-    #         if len(too_close):
-    #             self.logger.debug(msg, str(too_close), 'close')
-    #     if snr_cut:
-    #         too_faint = self.too_faint(image, snr_cut)
-    #         if len(too_faint):
-    #             self.logger.debug(msg, str(too_faint), 'faint')
-
-    #     ignore = ftl.reduce(np.union1d, (too_bright, too_close, too_faint))
-    #     ix = np.setdiff1d(np.arange(len(self.xy0)), ignore)
-    #     if len(ix) == 0:
-    #         self.logger.warning('No suitable sources found for tracking!')
-    #     return ix
-
-    # # def auto_window(self):
-    # #     sdist_b = self.sdist[snr > self._snr_thresh]
-
-    # def too_faint(self, image, threshold=snr_cut):
-    #     crude_snr = self.seg.snr(image)
-    #     return np.where(crude_snr < threshold)[0]
-
-    # def too_close(self, threshold=cutoffs.distance):
-    #     # Check for potential interference problems from sources that are close
-    #     #  together
-    #     return np.unique(np.ma.where(self.sdist() < threshold))
-
-    # def too_bright(self, data, saturation, threshold=_saturation_cut):
-    #     # Check for saturated sources by flagging pixels withing 1% of saturation
-    #     # level
-    #     # TODO: make exact
-    #     lower, upper = saturation * (threshold + np.array([-1, 1]) / 100)
-    #     # TODO check if you can improve speed here - dont have to check entire
-    #     # array?
-
-    #     satpix = np.where((lower < data) & (data < upper))
-    #     b = np.any(np.abs(np.array(satpix)[:, None].T - self.coords) < 3, 0)
-    #     w, = np.where(np.all(b, 1))
-    #     return w
+    # ------------------------------------------------------------------------ #
 
     def gui(self, hdu, **kws):
+        if (self.frame_info is None) or not self.measured.any():
+            raise ValueError('No measurement data available. Did you load the '
+                             'measurement data (`reg.init_memory(n)`)?')
+
         from obstools.phot.tracking import SourceTrackerGUI
 
+        #
         return SourceTrackerGUI(self, hdu, **kws)
+
+    # ------------------------------------------------------------------------ #
+    # Constructors
 
     @classmethod
     def from_image(cls, image, mask=None, top: int = None, detect=True, **kws):
@@ -1330,3 +1190,51 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
                            f_detect_measure)
 
         return tracker, xy, centres, delta_xy, counts, counts_med
+
+    # def prepare_image(self, image, origin):
+    #     """
+    #     Prepare a background image by masking sources, bad pixels and whatever
+    #     else
+
+    #     Parameters
+    #     ----------
+    #     image
+    #     origin
+
+    #     Returns
+    #     -------
+
+    #     """
+
+    #     mask = self.get_object_mask(origin, origin + image.shape)
+    #     return np.ma.MaskedArray(image, mask)
+
+    # def get_object_mask(self, start, stop):
+    #     i0, j0 = start
+    #     i1, j1 = stop
+    #     return self.masks.all[i0:i1, j0:j1] | self.masks.bad_pixels
+
+    # def get_masks(self, start, shape):
+    #     phot_masks = self.seg.get_overlap(self.masks.phot, start, shape)
+    #     sky_mask = self.seg.get_overlap(self.masks.sky, start, shape)
+    #     bad_pix = self.masks.bad_pixels
+    #     return phot_masks | bad_pix, sky_mask | bad_pix
+
+    # def sdist(self):
+    #     coo = self.coords
+    #     return cdist(coo, coo)
+
+    # def mask_image(self, image, mask=None):  # TODO prepare_background better
+    #     """
+    #     Prepare a background image by masking sources, bad pixels and whatever
+    #     else
+    #     """
+    #     # mask sources
+    #     imbg = self.seg.mask_image(image)
+    #     if mask is not None:
+    #         imbg.mask |= mask
+    #
+    #     if self.masks.bad_pixels is not None:
+    #         imbg.mask |= self.masks.bad_pixels
+    #
+    #     return imbg

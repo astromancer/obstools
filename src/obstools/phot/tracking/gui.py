@@ -112,10 +112,10 @@ class SourceImage(SkyImage):
 
         logger.info('Marking centroids.')
         self.art.centroids = []
-        for marker, label in markers.items():
+        for feature, (color, marker, label) in markers.items():
             im3.axi.autoscale(False)
             self.art.centroids.extend(
-                im3.axi.plot(0, 0, marker, mfc='none', label=label)
+                im3.axi.plot(0, 0, color, marker, mfc='none', label=label)
             )
         # # self.art.centroids.
         # im3.axi.plot(0, 0, 'kx', label='Mean Centroid')
@@ -206,7 +206,10 @@ class SourceTrackerGUI(TrackerVideo):
         if img.art.get('image3d'):
             return
 
-        markers = dict(self.centroid_style.values(), kx='Mean Centroid')
+        from obstools.phot.tracking import CONFIG
+        
+        #
+        markers = dict(CONFIG.plots.centroids)
         img.show(self.ui['Sources', lbl].figure, markers, cmap)
 
         # connect the cmaps so that all are the same

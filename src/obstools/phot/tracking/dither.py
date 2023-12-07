@@ -23,14 +23,9 @@ CONFIG = ConfigNode.load_module(__file__)
 
 # ---------------------------------------------------------------------------- #
 
-def _sanitize_weights(weights, n):
-    assert weights.ndim in {1, 2}
-
-    if weights.ndim == 2:
-        assert len(weights) == n
-
-    weights[weights < 0 | np.isnan(weights)] = 0
-    return weights
+def _unit_sum_constraint(w):
+    # for fitting weights
+    return np.sum(w) - 1
 
 
 def _sanitize_data(xy, detect_freq_min, source_weights):
@@ -69,11 +64,15 @@ def _sanitize_data(xy, detect_freq_min, source_weights):
     # filter
     good = ~ignore_frames
     use_sources = _filter_sources(n_sources, bad, n_use, detect_freq_min)
+
+    if source_weights is not:
+        source_weights = _sanitize_weights(source_weights, len(xy))
+        source_weights[..., ~use_sources] = 0
+        source_weights = source_weights[good]
+
+    # compress
     xy = _nan_to_masked(xy[good][..., use_sources, :],
                         nans[good][..., use_sources, :])
-
-    source_weights = _sanitize_weights(source_weights, len(xy))
-    source_weights[..., ~use_sources] = 0
 
     return xy, good, source_weights
 
@@ -116,26 +115,21 @@ def _nan_to_masked(data, nans):
     return data
 
 
-def sum1(w):
-    return np.sum(w) - 1
+def _sanitize_weights(weights, n, normalize=True):
+    assert weights.ndim in {1, 2}
 
+    if weights.ndim == 2:
+        if len(weights) != n:
+            raise ValueError(
+                f'Invalid weights with shape: {weights.shape} for {n} frames.'
+            )
 
-# def estimate_positions_offsets(data, feature_weights, source_weights):
-#     d0 = 0
-#     while True:
-#         r, d1 = _estimate_positions_offsets(data, feature_weights, source_weights, d0)
-#         if np.max(d1 - d0) < 1e-6:
-#             break
-#         d0 = d1
-#     return r, d1
+    weights[weights < 0 | np.isnan(weights)] = 0
 
+    if normalize:
+        return weights / weights.sum(-1, keepdims=True)
 
-# def _estimate_positions_offsets(data, feature_weights, source_weights, xy_deltas=0):
-#     # positions (frame, source, axis)
-#     xy = np.average(data, 1, feature_weights)
-#     xy_deltas = np.expand_dims(xy_deltas, tuple(range(1, np.ndim(xy_deltas))))
-#     r0 = (xy - xy_deltas).mean(0)
-#     return r0, np.average(xy - r0, 1, source_weights)
+    return weights
 
 
 # ---------------------------------------------------------------------------- #
@@ -214,6 +208,7 @@ class PointSourceDitherModel(LoggingMixin):
             idxg, = np.where(good)
             idxu, = np.where(np.all(source_weights != 0, 0))
             outlier_indices = (idxg[idxf], idxu[idxs])
+
         else:
             outlier_indices = ()
 
@@ -262,7 +257,7 @@ class PointSourceDitherModel(LoggingMixin):
                        np.ones(nfeatures) / nfeatures,
                        args=(xy, centres, source_weights, results),
                        bounds=[(0, 1)] * nfeatures,
-                       constraints={'type': 'eq', 'fun': sum1})
+                       constraints={'type': 'eq', 'fun': _unit_sum_constraint})
 
         assert res.success
         results = dict(feature_weights=res.x, **results, outliers=[])
@@ -303,19 +298,27 @@ class PointSourceDitherModel(LoggingMixin):
         assert not np.isnan(source_weights).any()
 
         while True:
-            r, σ, _xy, δ = self._compute_centres_offsets(
+            xym, δ, xys, r = self._compute_centres_offsets(
                 xy, centres, feature_weights, source_weights)
 
+            # Convergence check
             delta = np.abs(centres - r).max()
-
             if delta < 1e-6:
-                return r, σ, _xy, δ
+                # sqrt of unbiased variance centred coordinates
+                σ = xys.std(0, ddof=1)
+
+                # stddev
+                bias = 1 / ((s := feature_weights.sum()) - np.sum(weights ** 2) / s)
+                xy_avg_std = bias * np.sum(np.square(xy - xym) * feature_weights, -1)
+
+                return r, σ, _xy, xy_avg_std, δ
 
             centres = r
 
     def _compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
 
         # weigted average across features to get (frame, source, xy) positions
+        # see: https://en.wikipedia.org/wiki/Weighted_arithmetic_mean
         xy_avg = np.average(xy, 1, feature_weights)
 
         # xy position offset in each frame  (mean combined across sources)
@@ -338,7 +341,7 @@ class PointSourceDitherModel(LoggingMixin):
 
         centres = self.centre_func(xy_shifted, axis=0)
 
-        return centres, xy_shifted.std(0), xy_avg, delta_xy
+        return xy_avg, delta_xy, xy_shifted, centres
 
     def compute_frame_offset(self, xy, centres, weights=None, **kws):
         """
