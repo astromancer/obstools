@@ -12,6 +12,7 @@ from collections import abc
 # third-party
 import numpy as np
 import more_itertools as mit
+from loguru import logger
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D
@@ -357,22 +358,8 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         seg = None
         if detect:
             # use `hdu.detection` which caches the detections on the hdu filename
-            try:
-                seg = hdu.detect(sample_stat, min_depth, interval,
-                                 **get_config(detect, kws))
-            except Exception as err:
-                import sys
-                import textwrap
-                from IPython import embed
-                from better_exceptions import format_exception
-                embed(header=textwrap.dedent(
-                    f"""\
-                        Caught the following {type(err).__name__} at 'image.py':338:
-                        %s
-                        Exception will be re-raised upon exiting this embedded interpreter.
-                        """) % '\n'.join(format_exception(*sys.exc_info()))
-                )
-                raise
+            seg = hdu.detect(sample_stat, min_depth, interval,
+                             **get_config(detect, kws))
 
             del seg.slices  # FIXME: since this may be incorrect in the cache!!?
 
@@ -553,7 +540,6 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
 class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
 
-    
     # properties: vectorized attribute getters on `SkyImage`
     # ------------------------------------------------------------------------ #
     images = AttrVector('data')
@@ -566,7 +552,7 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
     origins = AttrVector('origin', output=np.array)
     angles = AttrVector('angles', output=np.array)
     corners = AttrVector('corners', output=np.array)
-    
+
     # ------------------------------------------------------------------------ #
 
     def __init__(self, images=(), fovs=()):
@@ -622,8 +608,7 @@ class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
              labels=True, set_lims=None, coords='pixel', **kws):
         """ """
         from mpl_multitab import MplTabs
-        
-        
+
         ui = MplTabs(title=self.__class__.__name__)
 
         for img in self:

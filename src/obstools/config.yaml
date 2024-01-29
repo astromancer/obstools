@@ -340,7 +340,7 @@ phot:
             clim_every:     0
 
         # ------------------------------------------------------------------------ #
-        plots:
+        display:
             centroids:
                 com:              [r, +, "Centre of Mass"]
                 peak:             [m, ^, "Peak"]
@@ -356,9 +356,21 @@ phot:
                 # fontweight:bold
 
             positions:
-                figsize:            [12, 6.5]
-                legend:             False
-                show:               [avg, weights, caption]  #  nulls, pixel
+                gui:
+                    title:            Position Measurements
+                    pos:              NW
+
+                figsize:        [12, 6.5]
+                subplotspec:
+                    bottom:     0.075
+                    top:        0.9
+                    left:       0.075
+                    right:      0.85
+                    hspace:     0.025
+                    wspace:     0.05
+
+                show:           [avg, weights, caption]  #  nulls, pixel
+                legend:         False
 
                 density:
                     cmap:               null

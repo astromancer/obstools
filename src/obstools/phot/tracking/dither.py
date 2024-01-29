@@ -3,6 +3,7 @@
 import re
 import math
 import operator as op
+import itertools as itt
 
 # third-party
 import numpy as np
@@ -65,10 +66,10 @@ def _sanitize_data(xy, detect_freq_min, source_weights):
     good = ~ignore_frames
     use_sources = _filter_sources(n_sources, bad, n_use, detect_freq_min)
 
-    if source_weights is not:
-        source_weights = _sanitize_weights(source_weights, len(xy))
+    if source_weights is not None:
+        source_weights = _sanitize_weights(source_weights, good.sum())
         source_weights[..., ~use_sources] = 0
-        source_weights = source_weights[good]
+        # source_weights = source_weights[good]
 
     # compress
     xy = _nan_to_masked(xy[good][..., use_sources, :],
@@ -118,15 +119,16 @@ def _nan_to_masked(data, nans):
 def _sanitize_weights(weights, n, normalize=True):
     assert weights.ndim in {1, 2}
 
+    nans = np.isnan(weights)
     if weights.ndim == 2:
-        if len(weights) != n:
+        if np.sum(~nans.any(1)) != n:
             raise ValueError(
                 f'Invalid weights with shape: {weights.shape} for {n} frames.'
             )
 
-    weights[weights < 0 | np.isnan(weights)] = 0
+    weights[weights < 0 | nans] = 0
 
-    if normalize:
+    if normalize and weights.any():
         return weights / weights.sum(-1, keepdims=True)
 
     return weights
@@ -200,7 +202,7 @@ class PointSourceDitherModel(LoggingMixin):
 
         # compute positions of all sources with frame offsets measured
         results = self._fit(xy, None, source_weights)
-        feature_weights, xy, δxy[good], *centres, out = results.values()
+        xy, δxy[good], centres, centres_sigma, out, feature_weights = results.values()
 
         if out.any():
             # fix outlier indices
@@ -220,7 +222,7 @@ class PointSourceDitherModel(LoggingMixin):
             except Exception as err:
                 self.logger.exception('Report failed')
 
-        return feature_weights, xy, δxy, *centres, outlier_indices
+        return feature_weights, xy, δxy, centres, centres_sigma, outlier_indices
 
     def _fit(self, xy, centres=None, source_weights=None):
         """
@@ -242,7 +244,6 @@ class PointSourceDitherModel(LoggingMixin):
         _type_
             _description_
         """
-
         # estimate source centres if not given from mean of unshifted positions
         if centres is None:
             centres = self.centre_func(xy, axis=(0, 1))
@@ -253,6 +254,8 @@ class PointSourceDitherModel(LoggingMixin):
         # fit weights
         results = {}
         nfeatures = xy.shape[1]
+        self.logger.debug('About to run minimize to compute optimal feature weights.')
+
         res = minimize(self._objective_feature_weights,
                        np.ones(nfeatures) / nfeatures,
                        args=(xy, centres, source_weights, results),
@@ -260,7 +263,7 @@ class PointSourceDitherModel(LoggingMixin):
                        constraints={'type': 'eq', 'fun': _unit_sum_constraint})
 
         assert res.success
-        results = dict(feature_weights=res.x, **results, outliers=[])
+        results = dict(**results, outliers=[], feature_weights=res.x)
 
         # break out here  without removing any points if no outlier clipping
         # requested (`d_cut is None`) or there are too few points for the
@@ -274,12 +277,14 @@ class PointSourceDitherModel(LoggingMixin):
     def _objective_feature_weights(self, weights, xy, centres, source_weights, results):
 
         # calculate
-        r, σ, xy, δ = self.compute_centres_offsets(xy, centres, weights, source_weights)
+        (centres, centres_sigma), (xy, σxy), δ = \
+            self.compute_centres_offsets(xy, centres, weights, source_weights)
 
         # save results
-        results.update(xy=xy, delta_xy=δ.squeeze(), centres=r, sigma_xy=σ)
+        results.update(xy=xy, delta_xy=δ.squeeze(),
+                       centres=centres, centres_sigma=centres_sigma)
 
-        return np.var(xy - δ - r, 0).sum()
+        return np.var(xy - δ - centres, 0).sum()
 
     def compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
         """
@@ -297,29 +302,47 @@ class PointSourceDitherModel(LoggingMixin):
 
         assert not np.isnan(source_weights).any()
 
-        while True:
-            xym, δ, xys, r = self._compute_centres_offsets(
+        count = itt.count()
+        while (current := next(count)) < 5:
+            # xy_feature_avg: xy features average (n, nsources)
+            # delta_xy: frame offsets
+            # xy_shifted: xy_feature_avg - delta_xy
+            xy_feature_avg, delta_xy, xy_ref_new = self._compute_centres_offsets(
                 xy, centres, feature_weights, source_weights)
 
             # Convergence check
-            delta = np.abs(centres - r).max()
+            delta = np.abs(centres - xy_ref_new).max()
+            self.logger.debug('feature_weights = {}, delta = {}',
+                              feature_weights, delta)
             if delta < 1e-6:
-                # sqrt of unbiased variance centred coordinates
-                σ = xys.std(0, ddof=1)
+                logger.info('centres converged after {} iterations.', current)
+                break
 
-                # stddev
-                bias = 1 / ((s := feature_weights.sum()) - np.sum(weights ** 2) / s)
-                xy_avg_std = bias * np.sum(np.square(xy - xym) * feature_weights, -1)
+            centres = xy_ref_new
+        else:
+            logger.warning('centres not converged after {} iterations.', current)
 
-                return r, σ, _xy, xy_avg_std, δ
+        # sqrt of unbiased variance for centred coordinates
+        # xy_shifted
+        xy_ref_sigma = (xy_feature_avg - delta_xy).std(0, ddof=1)
 
-            centres = r
+        # stddev
+        bias = 1 / ((s := feature_weights.sum()) - np.sum(feature_weights ** 2) / s)
+        xy_feature_sigma = bias * \
+            np.sum(np.square(xy - xy_feature_avg[..., None]) * feature_weights, -1)
+
+        # xy_feature_avg: xy features average (n, nsources)
+        # delta_xy: frame offsets from ref
+        #
+        return ((xy_ref_new, xy_ref_sigma),
+                (xy_feature_avg, xy_feature_sigma),
+                delta_xy)
 
     def _compute_centres_offsets(self, xy, centres, feature_weights, source_weights):
 
-        # weigted average across features to get (frame, source, xy) positions
+        # weigted average across features to get (frame, source, xy) measurement
         # see: https://en.wikipedia.org/wiki/Weighted_arithmetic_mean
-        xy_avg = np.average(xy, 1, feature_weights)
+        xy_feature_avg = np.average(xy, 1, feature_weights)
 
         # xy position offset in each frame  (mean combined across sources)
         weights = source_weights
@@ -328,20 +351,23 @@ class PointSourceDitherModel(LoggingMixin):
             weights = weights.mean(0)
 
         # offsets
-        delta_xy = self.compute_frame_offset(xy_avg, centres, weights,
+        delta_xy = self.compute_frame_offset(xy_feature_avg, centres, weights,
                                              axis=-2, keepdims=True)
 
         # shifted cluster centers (all sources)
-        xy_shifted = xy_avg - delta_xy
+        xy_shifted = xy_feature_avg - delta_xy
 
         # Compute cluster centres of shifted point clusters
         if source_weights.ndim == 2:
             # Use the per-frame source weights for cluster centres
+            # weights = np.dstack([source_weights, source_weights])
+            # weights = (source_weights[..., None] * feature_weights)
             centres = np.average(xy_shifted, 0, source_weights.mean(1))
 
-        centres = self.centre_func(xy_shifted, axis=0)
+        else:
+            centres = self.centre_func(xy_shifted, axis=0)
 
-        return xy_avg, delta_xy, xy_shifted, centres
+        return xy_feature_avg, delta_xy, centres
 
     def compute_frame_offset(self, xy, centres, weights=None, **kws):
         """
@@ -378,12 +404,12 @@ class PointSourceDitherModel(LoggingMixin):
 
         for _ in range(5):
             #
-            centres, sigma_xy, xy_avg, delta_xy = self.compute_centres_offsets(
-                xym, centres, feature_weights, source_weights)
+            (xy_ref, xy_ref_sigma), (xy_feature_avg, _), delta_xy = \
+                self.compute_centres_offsets(xym, centres, feature_weights, source_weights)
 
             # flag outliers
             # compute position residuals after recentre
-            dr = np.ma.sqrt(((xym - centres - delta_xy[:, None]) ** 2).sum(-1))
+            dr = np.ma.sqrt(((xym - xy_ref - delta_xy[:, None]) ** 2).sum(-1))
 
             out = (dr >= self.d_cut)
             out = np.ma.getdata(out) | np.ma.getmask(out)
@@ -394,17 +420,19 @@ class PointSourceDitherModel(LoggingMixin):
             if (outliers == out).all():
                 # no new outliers
                 if outliers.any():
-                    self.logger.info('Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}.',
-                                     n_out, n_points, (n_out / n_points), self.d_cut)
+                    self.logger.info(
+                        'Ignoring {:d}/{:d} ({:.1%}) values with |δr| > {:.3f}.',
+                        n_out, n_points, (n_out / n_points), self.d_cut
+                    )
                 else:
                     self.logger.info('No outliers detected for position measures.')
 
-                return dict(feature_weights=feature_weights,
-                            xy=xy_avg,
+                return dict(xy=xy_feature_avg,
                             delta_xy=delta_xy.squeeze(),
-                            centres=centres,
-                            sigma_xy=sigma_xy,
-                            outliers=outliers)
+                            centres=xy_ref,
+                            centres_sigma=xy_ref_sigma,
+                            outliers=outliers,
+                            feature_weights=feature_weights)
 
             # mask outliers
             outliers |= out

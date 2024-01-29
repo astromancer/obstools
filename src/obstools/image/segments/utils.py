@@ -103,6 +103,9 @@ def merge_segmentations(segmentations, xy_offsets, extend=True, f_accept=0.2,
     #                     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
     # If you have crowded fields you may need to run "deblend" again
     # afterwards to separate them again
+    
+    from obstools.image.segments import SegmentedImage
+    
     seg_extended = SegmentedImage(seg_image_extended)
     seg_extended.dilate(post_merge_dilate)
     seg_extended.blend()

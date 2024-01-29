@@ -22,18 +22,19 @@ from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.oo.temp import temporarily
 from recipes.logging import LoggingMixin
+from recipes.pprint.callers import describe
 
 # relative
 from ...utils import prod
 from ...stats import geometric_median
 from ..utils import get_overlap
 from ..detect import SourceDetectionDescriptor
-from .utils import is_lazy
 from .slices import SliceDict
 from .trace import trace_boundary
 from .stats import MaskedStatsMixin
 from .groups import LabelGroupsMixin, auto_id
 from .display import SegmentPlotter, make_cmap
+from .utils import is_lazy, merge_segmentations
 from .masks import MaskContainer, SegmentMasksMixin
 
 

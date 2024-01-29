@@ -1,8 +1,7 @@
 
 # std
-import itertools as itt
+import itertools as itt, sys
 import functools as ftl
-import contextlib as ctx
 from collections import defaultdict, deque
 
 # third-party
@@ -11,18 +10,19 @@ from mpl_multitab import MplMultiTab
 from bottleneck import nanmax, nanmin
 from matplotlib import ticker
 from matplotlib.lines import Line2D
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Rectangle
 from matplotlib.transforms import AffineDeltaTransform
 
 # local
 from motley.utils import vbrace
-from recipes import dicts, pprint
-from recipes.logging import LoggingMixin
 from scrawl import density
 from scrawl.video import VideoFeatureDisplay
+from recipes import dicts, pprint
+from recipes.config import ConfigNode
+from recipes.logging import LoggingMixin
 
 # relative
-from ... import CONFIG
 from ...image import SkyImage
 
 
@@ -32,42 +32,27 @@ __all__ = ['SourceTrackerPlots', 'TrackerVideo']
 
 # ---------------------------------------------------------------------------- #
 # config
-
-with ctx.suppress(AttributeError):  # autoreload hack
-    VIDCONFIG = CONFIG.phot.tracking.video
-    CONFIG = CONFIG.phot.tracking.plots
-
+CONFIG = ConfigNode.load_module(__file__)
+CONFIG_VIDEO = CONFIG.parent.video
 CENTROIDS = CONFIG.centroids
 LABEL_CONFIG = CONFIG.labels
 CONFIG = CONFIG.positions
 
-SUBPLOTSPEC = dict(
-    bottom=0.075,
-    top=0.9,
-    left=0.075,
-    right=0.85,
-    hspace=0.025,
-    wspace=0.05
-)
 
 # ---------------------------------------------------------------------------- #
 
+def _get_figure(ui=None, label='', **kws):
+    if ui:
+        tab = ui.add_tab(f'Source {label}', fig=kws)
+        return tab.figure
 
-# def _part_map(mapping, keys):
-#     for key in keys:
-#         yield key, mapping[key]
+    if plt := sys.modules.get('matplotlib.pyplot'):
+        return plt.figure(**kws)
 
-
-# def part_map(mapping, keys):
-#     return dict(_part_map(mapping, keys))
+    return Figure(**kws)
 
 
 # ---------------------------------------------------------------------------- #
-
-# class HackAxesToNotShare(Axes):
-#     def __init__(self, fig, rect, **kws):
-#         super().__init__(fig, rect, **{**kws, **dict(sharex=None, sharey=None)})
-
 
 def _format_int(x, pos):
     # print(f'{x=}')
@@ -75,8 +60,11 @@ def _format_int(x, pos):
     # return f'{(-1, 1)[x > 1] * round(abs(x)):d}'
     # return f'{x:.1f}'
 
-
 # IntFormatter = ticker.FuncFormatter(_format_int)
+
+# class HackAxesToNotShare(Axes):
+#     def __init__(self, fig, rect, **kws):
+#         super().__init__(fig, rect, **{**kws, **dict(sharex=None, sharey=None)})
 
 
 class IntLocator(ticker.IndexLocator):
@@ -96,12 +84,12 @@ def nanptp(a, axis):
 
 # ---------------------------------------------------------------------------- #
 
-
 class SourceTrackerPlots(LoggingMixin):
 
     def __init__(self, tracker):
         self.tracker = tracker
 
+    # ------------------------------------------------------------------------ #
     def image(self, image, ax=None, points='rx', contours=True,
               labels=LABEL_CONFIG, **kws):
 
@@ -134,117 +122,7 @@ class SourceTrackerPlots(LoggingMixin):
                **kws}
         )
 
-    def positions(self, labels=None, section=slice(None),
-                  show=CONFIG.show, legend=CONFIG.legend, figsize=CONFIG.figsize,
-                  ui=None, **kws):
-        """
-        For sets of measurements (m, n, 2), plot each (n, 2) feature set as on
-        its own axes as scatter / density plot. Additionally plot the shifted
-        points in the neighbouring axes to the right. Mark the pixel size and
-        diffraction limit for reference.
-        """
-        # trk = self.tracker
-
-        assert self.tracker.measured.any()
-
-        if labels is None:
-            labels = self.tracker.use_labels
-
-        if len(labels) > 1 and ui or (ui is None):
-            ui = MplMultiTab(title='Position Measurements', pos='WN')
-
-        art = {}
-        figures = []
-        for label in labels:
-            fig = self._get_figure(ui, label)
-            fig.set_size_inches(figsize)
-            figures.append(fig)
-
-            art[label] = self.positions_source(
-                fig, label - 1, (), section, show, legend, **kws
-            )
-
-        return (ui or figures), art
-
-    def positions_source(self, fig, source, features=(), section=slice(None),
-                         show=('weights', 'caption'), legend=False, **kws):
-
-        self.logger.debug('Plotting position measurements for source {}.', source)
-
-        if fig is None:
-            fig = self._get_figure()
-
-        if features:
-            if isinstance(features, str):
-                features = [features]
-        else:
-            tracker = self.tracker
-            weights = dict(zip(tracker.features, tracker.feature_weights.squeeze()))
-            features = list(self._get_features(show, weights))
-
-        #
-        assert (n_cols := len(features))
-
-        if n_cols == 1:
-            gridspec_kw = dict(right=0.8, top=0.82)
-        else:
-            gridspec_kw = SUBPLOTSPEC.copy()
-            if 'caption' in show:
-                gridspec_kw['bottom'] += 0.125
-
-        axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
-                            gridspec_kw=gridspec_kw)
-        if n_cols == 1:
-            axes = axes[:, None]
-
-        for idx, ax in np.ndenumerate(axes):
-            self._setup_scatter_axes(ax, idx, n_cols, features[idx[1]],
-                                     'weights' in show)
-            # if idx[0]:  # bottom row
-            # self._show_pixel(ax, **CONFIG.pixel)
-            # self._show_precision(ax, **CONFIG.precision)
-
-        # loop features
-        count = itt.count()
-        art = defaultdict(list)
-
-        scatter = {**CONFIG.scatter, **kws}
-        legends = dict(self._get_legend_labels('weights' in show)) if legend else {}
-
-        for feature in features:
-            # plot residuals vs shifted residuals
-            color, marker, label = CENTROIDS[feature]
-            art[feature] = tuple(self._compare_density_maps(
-                axes[:, next(count)],
-                (section, feature, source),
-                {**dict(color=color,
-                        marker=marker,
-                        label=legends.get(feature, label)),
-                 **scatter},
-                legend,
-
-            ))
-
-        polys = next(zip(*deque(art.values())[-1]))
-        # add_colorbar(polys[0])
-
-        self._cid = fig.canvas.mpl_connect(
-            'draw_event', ftl.partial(self._on_first_draw, polys=polys)
-        )
-
-        # Add caption
-        if 'caption' in show:
-            coords = self.tracker.coords
-            x, y = pprint.uarray(coords['xy'][source],
-                                 coords['sigma'][source], 2)
-            # Source {tracker.use_labels[source]}:
-            cap = dict(CONFIG.caption)
-            fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
-
-        return art
-        # if legend:
-        #     self._legend(axes[0, 0], art, show_weights)
-
+    # ------------------------------------------------------------------------ #
     def displacement_time_series(self, ax):
 
         assert self.tracker.measured.any()
@@ -262,7 +140,149 @@ class SourceTrackerPlots(LoggingMixin):
 
         return line
 
-    def _setup_scatter_axes(self, ax, index, n_cols, feature, show_weights):
+    # ------------------------------------------------------------------------ #
+    def positions(self, labels=None, section=slice(None),
+                  show=CONFIG.show, legend=CONFIG.legend, figsize=CONFIG.figsize,
+                  ui=None, **kws):
+        """
+        For sets of measurements (m, n, 2), plot each (n, 2) feature set as on
+        its own axes as scatter / density plot. Additionally plot the shifted
+        points in the neighbouring axes to the right. Mark the pixel size and
+        diffraction limit for reference.
+        """
+        # trk = self.tracker
+
+        assert self.tracker.measured.any()
+
+        if labels is None:
+            labels = self.tracker.use_labels
+
+        if (ui is None) or len(labels) > 1:
+            ui = MplMultiTab(**CONFIG.gui)
+
+        art = {}
+        figures = []
+        for label in labels:
+            fig = _get_figure(ui, label)
+            fig.set_size_inches(figsize)
+            figures.append(fig)
+
+            art[label] = self.positions_source(
+                fig, label - 1, (), section, show, legend, **kws
+            )
+
+        return (ui or figures), art
+
+    def positions_source(self, fig, source, features=(), section=slice(None),
+                         show=('weights', 'caption'),
+                         density=None, scatter=None, cbar=None,
+                         title=None, caption=None, legend=False):
+
+        self.logger.debug('Plotting position measurements for source {}.', source)
+
+        if fig is None:
+            fig = _get_figure()
+
+        if features:
+            if isinstance(features, str):
+                features = [features]
+        else:
+            tracker = self.tracker
+            weights = dict(zip(tracker.features, tracker.feature_weights.squeeze()))
+            features = list(self._get_features(show, weights))
+
+        #
+        assert (n_cols := len(features))
+
+        if n_cols == 1:
+            gridspec_kw = dict(right=0.8, top=0.82)
+        else:
+            gridspec_kw = CONFIG.subplotspec.copy()
+            if 'caption' in show:
+                gridspec_kw['bottom'] += 0.125
+
+        axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
+                            gridspec_kw=gridspec_kw)
+        if n_cols == 1:
+            axes = axes[:, None]
+
+        for idx, ax in np.ndenumerate(axes):
+            self._setup_density_map_axes(ax, idx, n_cols, features[idx[1]],
+                                         'weights' in show,
+                                         **{**(title or {}), **CONFIG.title})
+            # if idx[0]:  # bottom row
+            # self._show_pixel(ax, **CONFIG.pixel)
+            # self._show_precision(ax, **CONFIG.precision)
+
+        # loop features
+        count = itt.count()
+        art = defaultdict(list)
+
+        scatter = {**CONFIG.scatter, **(scatter or {})}
+        legends = dict(self._get_legend_labels('weights' in show)) if legend else {}
+
+        for feature in features:
+            # plot residuals vs shifted residuals
+            color, marker, label = CENTROIDS[feature]
+            art[feature] = tuple(self._compare_density_maps(
+                axes[:, next(count)],
+                (section, feature, source),
+                {**dict(color=color,
+                        marker=marker,
+                        label=legends.get(feature, label)),
+                 **scatter},
+                legend,
+                **{**(density or {}), **CONFIG.density}
+            ))
+
+        # Colorbars added on first draw
+        self.cbar = {**(cbar or {}), **CONFIG.cbar}
+        self._cid = fig.canvas.mpl_connect(
+            'draw_event', ftl.partial(self._on_first_draw,
+                                      polys=next(zip(*deque(art.values())[-1])))
+        )
+
+        # Add caption
+        if 'caption' in show:
+            coords = self.tracker.coords
+            x, y = pprint.uarray(coords['xy'][source],
+                                 coords['sigma'][source], 2)
+            # Source {tracker.use_labels[source]}:
+            cap = {**(caption or {}), **CONFIG.caption}
+            fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
+
+        return art
+        # if legend:
+        #     self._legend(axes[0, 0], art, show_weights)
+
+    def _compare_density_maps(self, axes, index,
+                              scatter_kws=CONFIG.scatter,
+                              legend=False, **kws):
+
+        #
+        density_kws = {**kws, **CONFIG.density}
+
+        for i, ax in enumerate(axes):
+            data = self.tracker.get_coords_residual(*index, shifted=bool(i))
+
+            # special case
+            special_case = {}
+            feature = index[1]
+            if (i == 0) and (feature == 'peak'):
+                special_case = dict(tessellation='rect',
+                                    bins=nanptp(data, 0).astype(int))
+
+            # plot
+            _, *art = density.scatter_map(ax, data, scatter_kws=scatter_kws,
+                                          **{**density_kws, **special_case})
+
+            yield art
+
+        if legend:
+            ax.legend(loc='upper left')  # , bbox_to_anchor=(0, 1.05)
+
+    def _setup_density_map_axes(self, ax, index, n_cols, feature, show_weights,
+                                **title_props):
 
         row, col = index
         multicol = (n_cols != 1)
@@ -290,7 +310,7 @@ class SourceTrackerPlots(LoggingMixin):
 
                 if feature != 'avg':
                     title += f'(w = {self.tracker.get_weight(feature):3.2f})'
-            ax.set_title(title, **CONFIG.title)
+            ax.set_title(title, **title_props)
         else:
             for axis in (ax.xaxis, ax.yaxis):
                 axis.set_major_locator(IntLocator(1, 0))
@@ -319,6 +339,7 @@ class SourceTrackerPlots(LoggingMixin):
 
     def _add_colorbars(self, polys):
         self.logger.debug('Adding colorbars.')
+
         for i, poly in enumerate(polys):
             ax = poly.axes
             fig = ax.figure
@@ -345,32 +366,6 @@ class SourceTrackerPlots(LoggingMixin):
                 raise ValueError(f'Unknown feature {feature!r}')
 
             yield feature
-
-    def _compare_density_maps(self, axes, index,
-                              scatter_kws=CONFIG.scatter,
-                              legend=False, **kws):
-
-        #
-        density_kws = {**CONFIG.density, **kws}
-
-        for i, ax in enumerate(axes):
-            data = self.tracker.get_coords_residual(*index, shifted=bool(i))
-
-            # special case
-            special_case = {}
-            feature = index[1]
-            if (i == 0) and (feature == 'peak'):
-                special_case = dict(tessellation='rect',
-                                    bins=nanptp(data, 0).astype(int))
-
-            # plot
-            _, *art = density.scatter_map(ax, data, scatter_kws=scatter_kws,
-                                          **{**density_kws, **special_case})
-
-            yield art
-
-        if legend:
-            ax.legend(loc='upper left')  # , bbox_to_anchor=(0, 1.05)
 
     def _show_pixel(self, ax, pos=(0, 0), **style):
         # add pixel size rect
@@ -441,7 +436,7 @@ class SourceTrackerPlots(LoggingMixin):
 class TrackerVideo(VideoFeatureDisplay):
 
     def __init__(self, tracker, data, marker_cycle=(), marker_style=(),
-                 update=True, legend=VIDCONFIG.legend.show, **kws):
+                 update=True, legend=CONFIG_VIDEO.legend.show, **kws):
 
         self.tracker = tracker
 
@@ -453,12 +448,12 @@ class TrackerVideo(VideoFeatureDisplay):
                 marker_cycle[key].append(val)
 
         # kws passed to ImageDisplay
-        fig_kws, _ = dicts.split(VIDCONFIG.copy(), 'features', 'legend')
+        fig_kws, _ = dicts.split(CONFIG_VIDEO.copy(), 'features', 'legend')
 
         # init video + feature marks
         _n, *shape = tracker.measurements.shape
         shape[0] += 1
-        marker_style = {**VIDCONFIG.features, **(marker_style or {})}
+        marker_style = {**CONFIG_VIDEO.features, **(marker_style or {})}
         VideoFeatureDisplay.__init__(self, data, np.full(shape, np.nan),
                                      marker_cycle, marker_style,
                                      **{**fig_kws, **kws})
@@ -513,7 +508,7 @@ class TrackerVideo(VideoFeatureDisplay):
 
         # update region offsets
         # print(tracker._origins[i])
-        self.regions.set_offsets(tracker.origins[i, ::-1])
+        self.regions.set_offsets(tracker.origins[i])
 
         return [*super().update(i, draw), self.regions, self.label_texts]
 
@@ -522,7 +517,7 @@ class TrackerVideo(VideoFeatureDisplay):
     #     self.ax.plot()
     #     return art
 
-    def legend(self, show_weights=VIDCONFIG.legend.show_weights, **kws):
+    def legend(self, show_weights=CONFIG_VIDEO.legend.show_weights, **kws):
         spacer = self.divider.append_axes('top', 1.2, pad=0.05)
         spacer.set_axis_off()
 

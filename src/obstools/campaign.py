@@ -30,7 +30,7 @@ from recipes.shell import bash
 from recipes.dicts import groupby
 from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin
-from recipes.string.brackets import braces
+from recipes.string.delimited import braces
 from recipes.string import pluralize, strings
 
 # relative

@@ -295,6 +295,9 @@ class MultiGauss(Model):
                        **{'ls': '', **CONFIG.plot.peak, **ensure_dict(peak)})
 
         return im
+    
+    # alias
+    display = plot
 
 
 class GaussianMixtureModel(MultiGauss):

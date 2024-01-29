@@ -342,7 +342,7 @@ class GMM(DetectionBase):
                 ax.plot(x, c, scaley=False)
 
             cmap = ListedColormap([l.get_color() for l in ax.lines])
-            obj.display(cmap=cmap, draw_labels=False)
+            self.gmm.display(cmap=cmap, draw_labels=False)
 
         return self.seg
 

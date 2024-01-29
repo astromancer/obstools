@@ -75,9 +75,13 @@ def get_overlap(reference, image, origin, shape):
     -------
 
     """
+    origin = origin.squeeze()
     if np.ma.is_masked(origin):
         raise ValueError('Cannot select image sub-region when `origin` value has'
                          ' masked elements.')
+
+    if origin.size != 2:
+        raise ValueError('`origin` should by an array of size 2.')
 
     hi = np.array(shape)
     δtop = reference.shape - hi - origin

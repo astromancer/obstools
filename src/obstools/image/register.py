@@ -284,7 +284,7 @@ def _sanitize_data(xy, source_detection_threshold):
     # taken into account.
 
     if n_ignore:
-        self.logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
+        logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
                          'measurements.', n_ignore, n, n_ignore / n)
 
     # if source_detection_threshold:
@@ -301,7 +301,7 @@ def _sanitize_data(xy, source_detection_threshold):
         raise ValueError(
             f'Detected frequency for all sources appears to be too low. There '
             f'are {n_sources} objects across {n} images. Their detection '
-            f'frequencies are: {fdet}.'
+            f'frequencies are: {f_det}.'
         )
 
     if np.any(~use_sources):
@@ -2349,6 +2349,8 @@ class RegistrationMixin:
 
         # resolve plot config
         plot = _get_plot_config(plot)
+        # from IPython import embed
+        # embed(header="Embedded interpreter at 'src/obstools/image/register.py':2351")
         alignment = _duplicate_config(plot.pop('alignment', False), len(self))
 
         dconfig = {}
@@ -2361,15 +2363,29 @@ class RegistrationMixin:
         clusters = dconfig['clusters']
 
         # For each telescope, align images wrt each other first
+        # try:
         for i in order:
-            gid = keys[i]
-            registers[i] = groups[gid]._coalign(
-                sample_stat, min_depth,
-                plot={**plot,
-                      'alignment': alignment[indices[i]],
-                      'clusters':  clusters[gid],
-                      'mosaic':    mosaic[gid]},
-                **detection)
+                gid = keys[i]
+                registers[i] = groups[gid]._coalign(
+                    sample_stat, min_depth,
+                    plot={**plot,
+                          'alignment': alignment[indices[i]],
+                          'clusters':  clusters[gid],
+                          'mosaic':    mosaic[gid]},
+                    **detection)
+        # except Exception as err:
+        #     import sys, textwrap
+        #     from IPython import embed
+        #     from better_exceptions import format_exception
+        #     embed(header=textwrap.dedent(
+        #             f"""\
+        #             Caught the following {type(err).__name__} at 'register.py':2371:
+        #             %s
+        #             Exception will be re-raised upon exiting this embedded interpreter.
+        #             """) % '\n'.join(format_exception(*sys.exc_info()))
+        #     )
+        #     raise
+            
 
         # match coordinates of registers against each other
         reg = registers[order[0]]
