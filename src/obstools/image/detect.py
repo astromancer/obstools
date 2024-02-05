@@ -344,22 +344,22 @@ class GMM(DetectionBase):
             m = self.gmm.means_.T
             v = self.gmm.covariances_.T
             w = self.gmm.weights_ / np.sqrt(2 * np.pi * v)
-            x = np.linspace(y.min(), y.max(), 250).reshape(-1, 1)
+            x = np.linspace(0, image.shape[0], 250).reshape(-1, 1)
             components = w * np.exp(-0.5 * np.square((x - m)) / v).squeeze()
 
             fig, ax = plt.subplots()
-            ax.hist(y.squeeze(), bins=100, density=True, log=True)
+            ax.hist(image.squeeze(), bins=100, density=True, log=True)
             for c in components.T:
                 ax.plot(x, c, scaley=False)
 
-            cmap = ListedColormap([l.get_color() for l in ax.lines])
+            cmap = ListedColormap([line.get_color() for line in ax.lines])
             self.gmm.display(cmap=cmap, draw_labels=False)
 
         return self.seg
 
+
 # ---------------------------------------------------------------------------- #
 # Backbone for looped source detection
-
 
 class _BackgroundFitter(DetectionBase):
     """Source detection with optional background model."""
