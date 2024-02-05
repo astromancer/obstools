@@ -3,6 +3,7 @@
 # std
 import functools as ftl
 from collections import defaultdict
+from collections.abc import MutableMapping
 
 # third-party
 import numpy as np
@@ -36,7 +37,7 @@ CONFIG = ConfigNode.load_module(__file__)
 # ---------------------------------------------------------------------------- #
 
 def get_config(detect, detect_opts):
-    
+
     # Detect objects & segment image
     if detect is True:
         detect = CONFIG.filter('multi_threshold')
@@ -58,7 +59,6 @@ def get_config(detect, detect_opts):
 
 
 # ---------------------------------------------------------------------------- #
-
 class DetectionBase(LoggingMixin):
     """Base class for source detection."""
 
@@ -100,13 +100,24 @@ class DetectionBase(LoggingMixin):
             kls = self.owner
         return kls
 
-    def __init__(self):
+    # ------------------------------------------------------------------------ #
+    def __init__(self, report=False, **kws):
         self.owner = None
-        self.params = {}
+        self.params = kws
+        self._report = report
 
-    def detect(self, image, mask=None, *args, report=False, **kws):
+    def __repr__(self):
+        return pp.pformat({'owner': self.owner,
+                        'params': self.params,
+                        'report': self.report},
+                       type(self).__name__)
+
+    def detect(self, image, mask=None, *args, report=None, **kws):
 
         seg = self(image, mask, *args, **kws)
+
+        if report is None:
+            report = self._report
 
         if report:
             if report is True:
@@ -145,7 +156,7 @@ class DetectionBase(LoggingMixin):
         # self.logger.debug('Running source detection algorithm: {!r} {}.', )
         code = self.post_process.__wrapped__.__code__
         i0, nkwo = code.co_argcount, code.co_kwonlyargcount
-        kws, post = dicts.split(kws, code.co_varnames[i0:i0 + nkwo])
+        kws, post = dicts.split({**kws, **self.params}, code.co_varnames[i0:i0 + nkwo])
 
         # Initialize
         seg_data = self.fit_predict(image, mask, **kws)
@@ -593,13 +604,14 @@ class MultiThreshold(_SourceDetectionLoop):
                                 max_iter=CONFIG.multi_threshold.max_iter)
 
 
+# ---------------------------------------------------------------------------- #
+
 class SourceDetectionDescriptor(LoggingMixin):
     """
     A descriptor object for managing source detection algorithms.
     """
 
     def __init__(self, algorithm=CONFIG.algorithm, *args, **kws):
-        self.algorithm = algorithm
         self._algorithm = DetectionBase.resolve(algorithm)(*args, **kws)
 
     def __call__(self, image, *args, **kws):
@@ -616,11 +628,11 @@ class SourceDetectionDescriptor(LoggingMixin):
         #                   self.algoritm, owner)
         self._algorithm.owner = owner
 
-    def __get__(self, obj, kls=None):
-        self.parent = obj
+    def __get__(self, instance, kls=None):
+        self.parent = instance
         return self
 
-    def __set__(self, obj, algorithm):
+    def __set__(self, instance, algorithm):
         """
         >>> class MyImage:
         ...     detect = SourceDetectionDescriptor('gmm')
@@ -631,7 +643,6 @@ class SourceDetectionDescriptor(LoggingMixin):
 
         """
         self.algorithm = algorithm
-        return self._algorithm
 
     @property
     def algorithm(self):
@@ -640,7 +651,17 @@ class SourceDetectionDescriptor(LoggingMixin):
     @algorithm.setter
     def algorithm(self, algorithm):
         self.logger.debug('Switcing detection algorithm: {}.', algorithm)
-        self._algorithm = DetectionBase.resolve(algorithm)()
+
+        if isinstance(algorithm, str):
+            self.__init__(algorithm)
+        elif isinstance(algorithm, MutableMapping):
+
+            self.__init__(**algorithm)
+
+        elif isinstance(algorithm, DetectionBase):
+            self._algorithm = algorithm
+
+        # self._algorithm = DetectionBase.resolve(algorithm)()
 
     def report(self, image, seg, show=5, **kws):
         return self._algorithm.report(image, seg, show, **kws)
