@@ -59,6 +59,8 @@ def set_lock(mem_lock, tqdm_lock):
 
 # ---------------------------------------------------------------------------- #
 
+
+
 class FrameProcessor(LoggingMixin):
 
     def __init__(self):
@@ -115,7 +117,7 @@ class FrameProcessor(LoggingMixin):
 
     @api.synonyms({'n_jobs': 'njobs'})
     def run(self, data, indices=None, njobs=-1, backend='multiprocessing',
-            batch_size=None, progress_bar=True):
+            batch_size=None, progress_bar=True, jobname=''):
         """
         Start a worker pool of source trackers. The workload will be split into
         chunks of size ``
@@ -153,12 +155,11 @@ class FrameProcessor(LoggingMixin):
 
         if njobs in (-1, None):
             njobs = mp.cpu_count()
-        
 
         # main compute
-        self.main(data, indices, njobs, batch_size, progress_bar, backend)
+        self.main(data, indices, njobs, batch_size, progress_bar, backend, jobname)
 
-    def main(self, data, indices, njobs, batch_size, progress_bar, backend):
+    def main(self, data, indices, njobs, batch_size, progress_bar, backend, jobname):
 
         # setup compute context
         context = ContextStack()
@@ -174,7 +175,7 @@ class FrameProcessor(LoggingMixin):
         # execute
         with context as compute:
             compute(worker(data, *args) for args in
-                    self.get_workload(indices, njobs, batch_size, progress_bar))
+                    self.get_workload(indices, njobs, batch_size, progress_bar, jobname))
 
         # self.logger.debug('With {} backend, pickle serialization took: {:.3f}s.',
         #              backend, time.time() - t_start)
@@ -198,14 +199,14 @@ class FrameProcessor(LoggingMixin):
 
         return worker
 
-    def get_workload(self, indices, njobs, batch_size=None, progress_bar=True):
-        
-        n  = len(indices)
+    def get_workload(self, indices, njobs, batch_size=None, progress_bar=True, jobname=''):
+
+        n = len(indices)
         njobs = int(njobs)
-        
+
         if batch_size is None:
             batch_size == (n // njobs) + (n % njobs)
-        
+
         # divide work
         batches = mit.chunked(indices, batch_size)
         n_batches = round(n / batch_size)
@@ -221,7 +222,7 @@ class FrameProcessor(LoggingMixin):
         return tqdm(batches,
                     initial=(self.measured.sum() // batch_size),
                     total=(n // batch_size), unit_scale=batch_size,
-                    disable=not progress_bar, **CONFIG.progress)
+                    disable=not progress_bar, desc=jobname, **CONFIG.progress)
 
     def loop(self, data, indices, *args, **kws):
 
