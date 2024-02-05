@@ -792,12 +792,12 @@ class SkyApertures(ApertureCollection):
 #     R_OUT_UPLIM = int(np.ceil(R_OUT))
 #     SKY_PIX_TOL = 20.
 #
-#     def __init__(self, **kwargs):
+#     def __init__(self, **kws):
 #         """
 #         Have to specify properties as keywords if not using defaults.
 #         """
-#         # if not 'check' in kwargs:       kwargs['check'] = 'sky'
-#         super().__init__(**kwargs)
+#         # if not 'check' in kws:       kws['check'] = 'sky'
+#         super().__init__(**kws)
 #         # self.inner
 #
 #     def within_allowed_range(self, radii, lowlim=None, uplim=None):
