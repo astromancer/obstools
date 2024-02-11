@@ -1,6 +1,7 @@
 
 # std
-import itertools as itt, sys
+import sys
+import itertools as itt
 import functools as ftl
 from collections import defaultdict, deque
 
@@ -174,9 +175,10 @@ class SourceTrackerPlots(LoggingMixin):
         return (ui or figures), art
 
     def positions_source(self, fig, source, features=(), section=slice(None),
-                         show=('weights', 'caption'),
+                         show=('avg', 'weights', ),
                          density=None, scatter=None, cbar=None,
-                         title=None, caption=None, legend=False):
+                         pixel=False, precision=True,
+                         title=None, caption=True, legend=False):
 
         self.logger.debug('Plotting position measurements for source {}.', source)
 
@@ -198,7 +200,7 @@ class SourceTrackerPlots(LoggingMixin):
             gridspec_kw = dict(right=0.8, top=0.82)
         else:
             gridspec_kw = CONFIG.subplotspec.copy()
-            if 'caption' in show:
+            if caption:
                 gridspec_kw['bottom'] += 0.125
 
         axes = fig.subplots(2, n_cols, sharex='row', sharey='row',
@@ -208,11 +210,17 @@ class SourceTrackerPlots(LoggingMixin):
 
         for idx, ax in np.ndenumerate(axes):
             self._setup_density_map_axes(ax, idx, n_cols, features[idx[1]],
-                                         'weights' in show,
+                                         ('weights' in show),
                                          **{**(title or {}), **CONFIG.title})
-            # if idx[0]:  # bottom row
-            # self._show_pixel(ax, **CONFIG.pixel)
-            # self._show_precision(ax, **CONFIG.precision)
+            if idx[0]:  # bottom row
+                if pixel:
+                    kws = {**(pixel if pixel is True else {}),
+                                        **CONFIG.pixel}
+                    self._show_pixel(ax, **kws)
+                if precision:
+                    kws = {**(precision if precision is True else {}),
+                           **CONFIG.precision}
+                    self._show_required_precision(ax, **kws)
 
         # loop features
         count = itt.count()
@@ -243,12 +251,14 @@ class SourceTrackerPlots(LoggingMixin):
         )
 
         # Add caption
-        if 'caption' in show:
+        if caption:
             coords = self.tracker.coords
             x, y = pprint.uarray(coords['xy'][source],
                                  coords['sigma'][source], 2)
             # Source {tracker.use_labels[source]}:
-            cap = {**(caption or {}), **CONFIG.caption}
+            if caption is True:
+                caption = {}
+            cap = {**dict(caption), **CONFIG.caption}
             fig.text(*cap.pop('pos'), cap.pop('text').format(x=x, y=y), **cap)
 
         return art
@@ -373,7 +383,7 @@ class SourceTrackerPlots(LoggingMixin):
         ax.add_patch(r)
         return r
 
-    def _show_precision(self, ax, pos=(0, 0), **style):
+    def _show_required_precision(self, ax, pos=(0, 0), **style):
         # add pixel size rect
         c = Circle(pos, self.tracker.precision, **style)
         ax.add_patch(c)
