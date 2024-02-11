@@ -121,15 +121,20 @@ def _sanitize_weights(weights, n, normalize=True):
 
     nans = np.isnan(weights)
     if weights.ndim == 2:
-        if np.sum(~nans.any(1)) != n:
+        if len(weights) != n:
             raise ValueError(
                 f'Invalid weights with shape: {weights.shape} for {n} frames.'
             )
 
     weights[weights < 0 | nans] = 0
 
-    if normalize and weights.any():
-        return weights / weights.sum(-1, keepdims=True)
+    if normalize:
+        total = weights.sum(-1, keepdims=True)
+        total[total == 0] = 1
+        # if total.sum():
+        return weights / total
+        # else:
+        #     return np.ones(weights.shape) / weights.size
 
     return weights
 
@@ -206,10 +211,29 @@ class PointSourceDitherModel(LoggingMixin):
 
         if out.any():
             # fix outlier indices
-            idxf, idxs = np.where(out.any(1))
-            idxg, = np.where(good)
-            idxu, = np.where(np.all(source_weights != 0, 0))
-            outlier_indices = (idxg[idxf], idxu[idxs])
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("error")
+                try:
+                    idxf, idxs = np.where(out.any(1))
+                    idxb, = np.where(np.all(source_weights == 0, 1))
+                    idxg, = np.where(good)
+                    idxg = np.setdiff1d(idxg, idxb)
+                    # idxu = np.arange(n_sources)
+                    outlier_indices = (idxg[idxf], idxs)
+                except Exception as err:
+                    import sys, textwrap
+                    from IPython import embed
+                    from better_exceptions import format_exception
+                    embed(header=textwrap.dedent(
+                            f"""\
+                            Caught the following {type(err).__name__} at 'dither.py':221:
+                            %s
+                            Exception will be re-raised upon exiting this embedded interpreter.
+                            """) % '\n'.join(format_exception(*sys.exc_info()))
+                    )
+                    raise
+                    
 
         else:
             outlier_indices = ()
@@ -300,7 +324,9 @@ class PointSourceDitherModel(LoggingMixin):
         frame_deltas (nframes, 2)
         """
 
-        assert not np.isnan(source_weights).any()
+        nans = np.isnan(source_weights)
+        assert not nans.all()
+        source_weights[nans] = 1
 
         count = itt.count()
         while (current := next(count)) < 5:
