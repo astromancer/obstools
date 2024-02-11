@@ -256,8 +256,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
         origin = self.compute_frame_offset(region_centres,
                                            weights=self.source_weights, axis=0)
-
-        self.origin = origin[::-1].round(0).astype(int)
+        self.origin = origin.round(0).astype(int)
         self.logger.debug('Origin  set to: xy = {}.', self.origin)
 
         #
@@ -540,24 +539,24 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         return residual.squeeze()
 
-    def main(self, data, indices, njobs, batch_size, progress_bar, backend):
+    def main(self, data, indices, njobs, batch_size, progress_bar, backend, jobname):
 
         # init precision flag
         precision_reached.value = -1
 
         #
-        super().main(data, indices, njobs, batch_size, progress_bar, backend)
+        super().main(data, indices, njobs, batch_size, progress_bar, backend, jobname)
 
         # finally, recompute the positions
         # with memory_lock:
         self.logger.info('Final fit with full dataset.')
         self.fit(report=True)
 
-    def get_workload(self, indices, njobs, batch_size, progress_bar):
+    def get_workload(self, indices, njobs, batch_size, progress_bar, jobname):
 
         batch_size = batch_size or self._compute.centres.step
         burn_in = self._compute.centres.start // batch_size
-        batches = super().get_workload(indices, njobs, batch_size, progress_bar)
+        batches = super().get_workload(indices, njobs, batch_size, progress_bar, jobname)
 
         update_centres = (
             itt.chain(
@@ -573,6 +572,10 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     def loop(self, data, indices, update_centres=None, report=True):
 
         indices = np.atleast_1d(indices)
+        # if first := indices[0]:
+        #     image = self.reg.fit_hdu(data.hdu, refine=False, interval=indices[[0, -1]])
+        #     dxy = self.compute_frame_offset(image.xy, axis=0)
+        #     self.origin = np.array(np.round(dxy)).astype(int).squeeze()
 
         # measure
         for i in indices:
@@ -637,8 +640,9 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # self.logger.trace('SNR weights: {}.', snr / snr.sum())
 
         if np.all(snr == 0):
-            raise ValueError('Could not determine weights for centrality '
-                             'measurement from image.')
+            self.logger.warning('Could not determine weights for centrality '
+                                'measurement from image.')
+            return snr
 
         return _sanitize_weights(snr, 1, normalize)
 
@@ -658,7 +662,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         if np.ma.is_masked(dxy) or ~np.isfinite(dxy).all():
             # self.logger.debug(f'{xy = }; {dxy = }')
-            raise ValueError(f'Masked or nan in xy offsets, frame {index}.')
+            self.logger.warning('Masked or nan in xy offsets, frame {}.', index)
+            return dxy
 
         # if np.any(np.abs(dxy) > 20):
         #     raise ValueError('')
@@ -686,8 +691,9 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # xy may contain nans for sanitized values
         good = ~np.isnan(xy).any(-1, keepdims=1)
         weights = self.feature_weights * good
-        weights /= weights.sum(0)
-
+        totals = weights.sum(0)
+        totals[totals == 0] = 1
+        weights /= totals
         # TODO: use grid and add offset to grid when computing CoM.  Will be
         self.measurements['xy'][index] = xy
         self.source_info['xy']['value'][index] = xym = np.nansum(xy * weights, 0)
@@ -697,9 +703,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             idx = xy[self.features.index('peak')]
             good = ~np.isnan(idx).any(1)
             idx = idx[good].astype(int)
-            n = get_neighbours(image, idx)
-
-            self.source_info['q'][index][good] = image[tuple(idx.T)] / n.sum(1)
+            n = list(get_neighbours(image, idx, func=sum))
+            self.source_info['q'][index][good] = image[tuple(idx.T)] / n
 
         # Flux with uncertainty
         flux = self.source_info['flux']
@@ -852,9 +857,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             'Frame {[0]}: \norigin = {[1]}\nδxy = {[2]}',
             lambda: (index, self.origin, np.array2string(dxy, precision=2))
         )
-
         # NOTE: `origin` in image yx coords
-        self.origin = np.array(np.round(dxy[::-1])).astype(int).squeeze()
+        self.origin = np.array(np.round(dxy)).astype(int).squeeze()
         self.origins[index] = self.origin
 
         # re-measure
