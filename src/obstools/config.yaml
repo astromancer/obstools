@@ -225,23 +225,24 @@ campaign:
 
 
 # ---------------------------------------------------------------------------- #
-lc:
+lightcurves:
     io:
-        title:  Light Curve for {}
+        txt:
+            title:  Light Curve for {}
 
-        # columns [name, unit, description]
-        columns:
-            time: 
-                [bjd, day, Barycentric Julian Date]
-                # [sidt, h  Sidereal time in seconds since midnight]
-            counts: 
-                [Flux, counts, Total integrated counts for star (background subtracted)]
-            sigma:   
-                [σFlux, counts, Standard deviation uncertainty on total counts]
-            outlier: 
-                [oflag, '', Outlier flag]
+            # columns [name, unit, description]
+            columns:
+                time: 
+                    [bjd, day, Barycentric Julian Date]
+                    # [sidt, h  Sidereal time in seconds since midnight]
+                counts: 
+                    [Flux, counts, Total integrated counts for star (background subtracted)]
+                sigma:   
+                    [σFlux, counts, Standard deviation uncertainty on total counts]
+                outlier: 
+                    [oflag, '', Outlier flag]
 
-        precision:  5
+            precision:  5
 
 
 # ---------------------------------------------------------------------------- #

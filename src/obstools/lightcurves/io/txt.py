@@ -1,5 +1,5 @@
 """
-Write light curves to plain text in utf-8
+Write light curves to plain text in utf-8, emphesis on human readable forms.
 """
 
 # std
@@ -16,6 +16,7 @@ from loguru import logger
 from recipes import op
 from recipes.dicts import pformat
 from recipes.io import read_lines
+from recipes.string import hstack
 from recipes.config import ConfigNode
 
 
@@ -23,7 +24,7 @@ from recipes.config import ConfigNode
 CONFIG = ConfigNode.load_module(__file__)
 
 # write oflag data to file
-FORMATSPEC_SRE = re.compile(r'%(\d{0,2})\.?(\d{0,2})([if])')
+REGEX_FORMAT_SPEC = re.compile(r'%(\d{0,2})\.?(\d{0,2})([if])')
 
 MULTILINE_CURLY_BRACKET = textwrap.dedent(
     '''
@@ -40,10 +41,10 @@ MULTILINE_CURLY_BRACKET = textwrap.dedent(
 
 
 def parse_format_spec(fmt):
-    if mo := FORMATSPEC_SRE.match(fmt):
+    if mo := REGEX_FORMAT_SPEC.match(fmt):
         return mo.groups()  # width, precision, dtype =
     else:
-        raise ValueError('Nope!')
+        raise ValueError('Invalid format specifier!')
 
 
 def format_list(data, fmt='%g', width=8, sep=','):
@@ -164,6 +165,13 @@ def get_column_info(nstars, has_oflag, precision=CONFIG.precision):
     # column descriptions
     col_info_text = hstack_string('\n'.join(col_info.values()),
                                   MULTILINE_CURLY_BRACKET % nstars, 3)
+
+    xx = hstack(('\n'.join(col_info.values()),
+            MULTILINE_CURLY_BRACKET % nstars), 3)
+    print( xx == col_info_text )
+    from IPython import embed
+    embed(header="Embedded interpreter at 'src/obstools/lc/io.py':166")
+
     col_info.update(zip(col_info, col_info_text.splitlines()))
 
     # build column headers
