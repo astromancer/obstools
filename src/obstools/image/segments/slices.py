@@ -7,8 +7,8 @@ from collections import namedtuple
 import numpy as np
 
 # local
-from recipes.dicts import vdict
-from recipes.utils import duplicate_if_scalar
+from recipes.containers.dicts import vdict
+from recipes.containers import duplicate_if_scalar
 
 
 # ---------------------------------------------------------------------------- #

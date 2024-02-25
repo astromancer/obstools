@@ -10,13 +10,13 @@ from matplotlib.patches import PathPatch
 from scipy.interpolate import PPoly
 
 # local
-from recipes.dicts import ManyToOneMap
 from recipes.api.synonyms import RegexTranslate
+from recipes.containers.dicts import TranslatorMap
 
 
 # ---------------------------------------------------------------------------- #
 # Logic for resolving telescope name
-TEMP = ManyToOneMap()
+TEMP = TranslatorMap()
 TEMP.add_trans({40: 1.,
                 74: 1.9})
 TEMP.add_funcs(RegexTranslate(R'40\s*(in(ch)?)?', 1.),

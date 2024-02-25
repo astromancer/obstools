@@ -18,7 +18,7 @@ from matplotlib.transforms import (IdentityTransform,
 # local
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
-from recipes.dicts import ManyToOneMap, TransDict
+from recipes.containers.dicts import TranslatorMap, ManyToOne
 
 
 # from recipes.io import warn as Warn
@@ -118,7 +118,7 @@ def pick_handler(artist, event):
 #     return anyhit, props
 
 
-class KeywordTranslator(TransDict):
+class KeywordTranslator(ManyToOne):
     """Dictionary for translating keywords"""
 
     def __call__(self, dic=None, **kws):
@@ -128,7 +128,7 @@ class KeywordTranslator(TransDict):
         return {self._map.get(key, key): val for key, val in dic.items()}
 
 
-class PropertyConverter(ManyToOneMap):
+class PropertyConverter(TranslatorMap):
     """Keyword value conversion"""
 
     # @expose.args( pre='CONVERT!! '*10, post='DONE '*10 +'\n'*2 )
@@ -1005,7 +1005,7 @@ class InteractionMixin():
         # NOTE:  This means the property translation / conversion will be attempted twice,
         #       which might be slightly inefficient.  Give PropertyManager.__init__ a
         #       `translate` switch to overcome this.
-        # self.goodcolour = kws['edgecolor']   #TODO:  should InteractionProperties inherit TransDict??
+        # self.goodcolour = kws['edgecolor']   #TODO:  should InteractionProperties inherit ManyToOne??
         # self.badcolour = kws.pop('badcolour', rgba_array('y'))
 
         # self.translator = InteractionMixin.translator
@@ -1082,7 +1082,7 @@ class InteractionMixin():
 
             # TODO:  self._properties?????????
             # props = self._properties( self._properties._original, broadcast=True, **props )
-            # TODO: 'coords'?????  need PropertyManager(TransDict)
+            # TODO: 'coords'?????  need PropertyManager(ManyToOne)
             #      Manage as property to avoid this check
 
             props = self._properties.translator(props)

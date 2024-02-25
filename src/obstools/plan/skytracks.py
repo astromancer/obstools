@@ -34,7 +34,7 @@ from scipy.interpolate import interp1d
 # local
 import recipes.pprint as ppr
 from recipes import strings
-from recipes.lists import cosort
+from recipes.containers.lists import cosort
 from recipes.caching import cached
 from recipes.logging import LoggingMixin
 from scrawl.ticks import DegreeFormatter, TransFormatter

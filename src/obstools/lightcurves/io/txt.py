@@ -14,7 +14,7 @@ from loguru import logger
 
 # local
 from recipes import op
-from recipes.dicts import pformat
+from recipes.containers.dicts import pformat
 from recipes.io import read_lines
 from recipes.string import hstack
 from recipes.config import ConfigNode

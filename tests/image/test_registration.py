@@ -75,7 +75,7 @@ class TestImageRegister:
 
 # # from grafico.ts import TSplotter
 # #from tsa.spectral import FFT
-# #from outliers import WindowOutlierDetection, generalizedESD
+# #from outliers import MovingWindowDetection, generalizedESD
 # from recipes.io import parse
 
 # from pyshoc.image.registration import *

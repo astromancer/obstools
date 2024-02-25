@@ -15,7 +15,7 @@ from photutils.aperture import EllipticalAnnulus, EllipticalAperture
 from scrawl.video import VideoDisplay
 from recipes.io import load_memmap
 from recipes.logging import LoggingMixin
-from recipes.dicts import AttrDict, Record
+from recipes.containers.dicts import AttrDict, Record
 
 # relative
 from ...image.segments import LabelGroupsMixin, SegmentsModelHelper
@@ -389,7 +389,7 @@ class HierarchicalImageModel(LabelGroupsMixin):  # CompoundModel ??
         self.groups.info = Record()
 
         for grp, labels in groups.items():
-            SegmentedImageModel(segm, models)
+            SegmentedImageModel(segm, grp)
 
     @property
     def ngroups(self):

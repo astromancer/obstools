@@ -10,8 +10,8 @@ from astropy.utils import lazyproperty
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.caching import Cached as cached
-from recipes.utils import duplicate_if_scalar
 from recipes.decorators import update_defaults
+from recipes.containers import duplicate_if_scalar
 
 # relative
 from .. import _hdu_hasher, cachePaths

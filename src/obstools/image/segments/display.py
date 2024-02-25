@@ -20,9 +20,9 @@ from matplotlib.collections import LineCollection
 import motley
 import motley.image
 from scrawl.utils import embossed
-from recipes.dicts import isdict
 from recipes.functionals import echo
 from recipes.config import ConfigNode
+from recipes.containers.dicts import isdict
 from recipes.pprint import formatters as fmt
 from recipes.decorators import update_defaults
 from recipes import api, duplicate_if_scalar, pprint

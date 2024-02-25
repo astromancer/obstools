@@ -4,7 +4,7 @@ import numpy as np
 from astropy import units
 
 # local
-from recipes.dicts import pformat
+from recipes.pprint import pformat
 from recipes.oo.property import cached_property
 
 # relative

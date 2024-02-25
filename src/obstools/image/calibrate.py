@@ -13,7 +13,7 @@ from astropy.io.fits.hdu import PrimaryHDU
 
 # local
 from recipes import op
-from recipes.dicts import pformat
+from recipes.containers.dicts import pformat
 from recipes.oo.property import ForwardProperty
 
 

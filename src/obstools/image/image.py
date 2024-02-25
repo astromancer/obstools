@@ -27,8 +27,8 @@ from recipes.config import ConfigNode
 from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
 from recipes.oo.property import cached_property
-from recipes.utils import duplicate_if_scalar, not_null
-from recipes.dicts import isdict, AttrDict as ArtistContainer
+from recipes.containers import duplicate_if_scalar, not_null
+from recipes.containers.dicts import isdict, AttrDict as ArtistContainer
 
 # relative
 from .calibrate import ImageCalibratorMixin

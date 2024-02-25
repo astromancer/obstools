@@ -20,7 +20,7 @@ from recipes import pprint
 from recipes.oo import slots
 from recipes.io import load_memmap
 from recipes.config import ConfigNode
-from recipes.dicts import AttrReadItem
+from recipes.containers.dicts import AttrReadItem
 from recipes.decorators import update_defaults
 
 # relative

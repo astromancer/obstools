@@ -11,7 +11,7 @@ from scrawl.image import ImageDisplay
 from recipes.pprint import pformat
 from recipes.config import ConfigNode
 from recipes.oo.slots import _sanitize_locals
-from recipes.utils import duplicate_if_scalar
+from recipes.containers import duplicate_if_scalar
 
 # relative
 from .. import transforms as transform

@@ -45,10 +45,10 @@ from recipes.string import indent
 from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
-from recipes.lists import cosort, split_like
 from recipes.oo.slots import _sanitize_locals
 from recipes.decorators import update_defaults
-from recipes.utils import duplicate_if_scalar, not_null
+from recipes.containers.lists import cosort, split_like
+from recipes.containers import duplicate_if_scalar, not_null
 
 # relative
 from .. import transforms as tf
@@ -285,7 +285,7 @@ def _sanitize_data(xy, source_detection_threshold):
 
     if n_ignore:
         logger.info('Ignoring {:d}/{:d} ({:.1%}) nan values in position '
-                         'measurements.', n_ignore, n, n_ignore / n)
+                    'measurements.', n_ignore, n, n_ignore / n)
 
     # if source_detection_threshold:
 
@@ -2188,7 +2188,7 @@ class ImageRegisterDSS(ImageRegister):
 
     def drizzle(self, path, pixfrac, outwcs=None):
 
-        #drizzle.add_image(self[0].data, outwcs, expin=hdr['EXPOSURE'])
+        # drizzle.add_image(self[0].data, outwcs, expin=hdr['EXPOSURE'])
         if outwcs is not None:
             return super().drizzle(path, outwcs, pixfrac, (0,))
 
@@ -2365,14 +2365,14 @@ class RegistrationMixin:
         # For each telescope, align images wrt each other first
         # try:
         for i in order:
-                gid = keys[i]
-                registers[i] = groups[gid]._coalign(
-                    sample_stat, min_depth,
-                    plot={**plot,
-                          'alignment': alignment[indices[i]],
-                          'clusters':  clusters[gid],
-                          'mosaic':    mosaic[gid]},
-                    **detection)
+            gid = keys[i]
+            registers[i] = groups[gid]._coalign(
+                sample_stat, min_depth,
+                plot={**plot,
+                      'alignment': alignment[indices[i]],
+                      'clusters':  clusters[gid],
+                      'mosaic':    mosaic[gid]},
+                **detection)
         # except Exception as err:
         #     import sys, textwrap
         #     from IPython import embed
@@ -2385,7 +2385,6 @@ class RegistrationMixin:
         #             """) % '\n'.join(format_exception(*sys.exc_info()))
         #     )
         #     raise
-            
 
         # match coordinates of registers against each other
         reg = registers[order[0]]

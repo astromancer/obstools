@@ -11,7 +11,7 @@ from mpl_multitab import MplMultiTab
 
 # local
 from pyxides.typing import ListOf
-from recipes.dicts import AttrDict as ArtistContainer
+from recipes.containers.dicts import AttrDict as ArtistContainer
 from scrawl.image import Image3D
 from scrawl.moves.callbacks import CallbackManager, mpl_connect
 

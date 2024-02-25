@@ -3,7 +3,7 @@
 import numpy as np
 
 # local
-from recipes.dicts import AttrReadItem, ListLike
+from recipes.containers.dicts import AttrReadItem, ListLike
 
 
 class auto_id:

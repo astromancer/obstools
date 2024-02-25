@@ -14,7 +14,7 @@ from scipy.stats._distn_infrastructure import rv_frozen
 
 # local
 from recipes import pprint
-from recipes.dicts import AttrReadItem, pformat as pformat_dict
+from recipes.containers.dicts import AttrReadItem, pformat as pformat_dict
 
 # relative
 from ..utils import prod

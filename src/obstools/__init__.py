@@ -9,8 +9,8 @@ from platformdirs import user_cache_path
 
 # local
 from recipes.config import ConfigNode
-from recipes.dicts import AttrReadItem
 from recipes.caching import Reject, hashers
+from recipes.containers.dicts import AttrReadItem
 
 
 # ---------------------------------------------------------------------------- #

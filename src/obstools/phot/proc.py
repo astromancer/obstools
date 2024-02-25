@@ -17,7 +17,7 @@ from recipes.string import pluralize
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.flow.contexts import ContextStack
-from recipes.concurrent.joblib import initialized
+from recipes.concurrency.joblib import initialized
 
 # relative
 from .logging import TqdmLogAdapter, TqdmStreamAdapter
@@ -58,7 +58,6 @@ def set_lock(mem_lock, tqdm_lock):
 
 
 # ---------------------------------------------------------------------------- #
-
 
 
 class FrameProcessor(LoggingMixin):

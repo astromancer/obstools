@@ -7,7 +7,7 @@ import numpy as np
 from astropy.utils import lazyproperty
 
 # local
-from recipes.dicts import AttrReadItem
+from recipes.containers.dicts import AttrReadItem
 
 # relative
 from ..utils import make_border_mask

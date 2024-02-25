@@ -27,10 +27,10 @@ from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
 from recipes import io, op
 from recipes.shell import bash
-from recipes.dicts import groupby
 from recipes.oo import Null, SelfAware
 from recipes.logging import LoggingMixin
 from recipes.string.delimited import braces
+from recipes.containers.dicts import groupby
 from recipes.string import pluralize, strings
 
 # relative

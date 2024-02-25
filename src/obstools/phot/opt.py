@@ -246,7 +246,7 @@ class ApertureOptimizer:
                                     self.method)
         return snr_star(counts, npix, counts_bg, npixbg)
 
-    def update(self, *args, **kwargs):
+    def update(self, *args, **kws):
         raise NotImplementedError
 
     def update_snr(self, p0, cxy, im, mask, im_sky, mask_sky, sky_width,
