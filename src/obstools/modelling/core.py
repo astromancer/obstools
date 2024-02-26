@@ -11,10 +11,10 @@ import numpy as np
 from scipy.optimize import leastsq, minimize
 
 # local
-from recipes.containers.lists import tally
-from recipes.containers import ensure
 from recipes.io import load_memmap
+from recipes.containers import ensure
 from recipes.logging import LoggingMixin
+from recipes.containers.lists import tally
 
 # relative
 from .parameters import Parameters

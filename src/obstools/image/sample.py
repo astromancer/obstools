@@ -4,12 +4,12 @@ Sampling and statistics of images from a stack.
 
 # third-party
 import numpy as np
-from astropy.utils import lazyproperty
 
 # local
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 from recipes.caching import Cached as cached
+from recipes.oo.property import lazyproperty
 from recipes.decorators import update_defaults
 from recipes.containers import duplicate_if_scalar
 
