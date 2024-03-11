@@ -23,11 +23,11 @@ dependencies = [
     "decorator", 
     "platformdirs", 
     "more_itertools", 
-
     "pyxides",
 
     "numpy", 
     "joblib", 
+
     "astropy", 
     "drizzle", 
     "photutils", 
@@ -39,7 +39,8 @@ dependencies = [
 
     "recipes",
     "motley",
-    "scrawl"
+    "scrawl",
+    "tsa"
 ]
 
 [project.urls]

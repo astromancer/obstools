@@ -1,3 +1,4 @@
 git+https://github.com/astromancer/recipes#egg=recipes
 git+https://github.com/astromancer/motley#egg=motley
 git+https://github.com/astromancer/scrawl#egg=scrawl
+git+https://github.com/astromancer/tsa#egg=tsa
