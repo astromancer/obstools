@@ -15,7 +15,6 @@ Image registration (point set registration) for astronomicall images.
 import re
 import numbers
 import warnings
-import operator as op
 import itertools as itt
 from collections import abc
 
@@ -47,8 +46,7 @@ from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
 from recipes.oo.slots import _sanitize_locals
 from recipes.decorators import update_defaults
-from recipes.containers.lists import cosort, split_like
-from recipes.containers import duplicate_if_scalar, not_null
+from recipes.containers import cosort, duplicate_if_scalar, not_null, split_like
 
 # relative
 from .. import transforms as tf

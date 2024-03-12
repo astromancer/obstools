@@ -8,7 +8,7 @@ from functools import partial
 import numpy as np
 
 # local
-from recipes.containers.lists import cosort
+from recipes.containers import cosort
 
 
 class Ephemeris:

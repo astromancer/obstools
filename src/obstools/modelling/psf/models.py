@@ -11,7 +11,7 @@ from scipy.special import erf
 from scipy.optimize import leastsq
 
 # local
-from recipes.containers.lists import missing_integers
+from recipes.containers import missing_integers
 
 # relative
 from ..core import Model

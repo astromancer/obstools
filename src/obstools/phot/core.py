@@ -14,7 +14,7 @@ from loguru import logger
 from motley.textbox import textbox
 from recipes import op
 from recipes.iter import split_slices
-from recipes.containers.lists import split_like
+from recipes.containers import split_like
 
 # relative
 from .. import io
