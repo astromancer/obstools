@@ -12,9 +12,8 @@ from scipy.optimize import leastsq, minimize
 
 # local
 from recipes.io import load_memmap
-from recipes.containers import ensure
 from recipes.logging import LoggingMixin
-from recipes.containers import tally
+from recipes.containers import ensure, tally
 
 # relative
 from .parameters import Parameters

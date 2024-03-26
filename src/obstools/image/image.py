@@ -28,7 +28,7 @@ from recipes.oo.slots import SlotHelper
 from recipes.oo.repr_helpers import qualname
 from recipes.oo.property import cached_property
 from recipes.containers import duplicate_if_scalar, not_null
-from recipes.containers.dicts import isdict, AttrDict as ArtistContainer
+from recipes.containers.dicts import is_dict, AttrDict as ArtistContainer
 
 # relative
 from .calibrate import ImageCalibratorMixin
@@ -155,7 +155,7 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         # Add frame around image
         if frame:
             frame_kws = dict(**CONFIG.display.frame, alpha=kws.get('alpha'))
-            if isdict(frame):
+            if is_dict(frame):
                 frame_kws.update(frame)
 
             self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
@@ -486,7 +486,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
                             f'{type(points)}.')
 
         points_style = {**CONFIG.display.marker,
-                        **(points if isdict(points) else {})}
+                        **(points if is_dict(points) else {})}
 
         return xy, points_style
 
@@ -510,7 +510,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         tr = self.transform
         transform = ax.transData if coords == 'pixel' else tr + ax.transData
         if regions:
-            regions = regions if isdict(regions) else {}
+            regions = regions if is_dict(regions) else {}
             regions.setdefault('alpha', kws.get('alpha'))
             art.contours = self.seg.show.contours(ax, transform=transform,
                                                   **{**CONFIG.display.contours,
@@ -520,7 +520,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
         if labels:
             art.texts = self.seg.show.labels(
                 ax, **{**CONFIG.display.text, 'transform': transform,
-                       **(labels if isdict(labels) else {})}
+                       **(labels if is_dict(labels) else {})}
             )
 
         # add artists for blitting

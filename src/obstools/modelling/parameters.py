@@ -14,7 +14,7 @@ from scipy.stats._distn_infrastructure import rv_frozen
 
 # local
 from recipes import pprint
-from recipes.containers.dicts import AttrReadItem, pformat as pformat_dict
+from recipes.containers.dicts import AttrReadItem
 
 # relative
 from ..utils import prod
@@ -298,7 +298,7 @@ class Parameters(np.recarray):
     def __str__(self):
         cls_name = self.__class__.__name__
         if self.dtype.fields:
-            s = pformat_dict(self.to_dict())
+            s = pprint.pformat(self.to_dict())
             indent = ' ' * (len(cls_name) + 1)
             s = s.replace('\n', '\n' + indent)
             return '%s(%s)' % (cls_name, s)

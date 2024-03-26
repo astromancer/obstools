@@ -12,7 +12,7 @@ from scipy.optimize import minimize
 
 # local
 from motley.table import Table
-from motley.formatters import Conditional, Decimal, Numeric
+from motley.format.formatters import Conditional, Decimal, Numeric
 from recipes import pprint
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin

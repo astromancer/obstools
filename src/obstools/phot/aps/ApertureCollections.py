@@ -18,7 +18,7 @@ from matplotlib.transforms import (IdentityTransform,
 # local
 from recipes.iter import as_sequence
 from recipes.oo.meta import altflaggerFactory
-from recipes.containers.dicts import TranslatorMap, ManyToOne
+from recipes.containers.dicts import ManyToOne, TranslatorMap
 
 
 # from recipes.io import warn as Warn

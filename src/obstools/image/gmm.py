@@ -10,7 +10,7 @@ import numpy as np
 from scrawl.image import ImageDisplay
 from recipes.pprint import pformat
 from recipes.config import ConfigNode
-from recipes.oo.slots import _sanitize_locals
+from recipes.oo.slots import sanitize
 from recipes.containers import duplicate_if_scalar
 
 # relative
@@ -262,7 +262,7 @@ class MultiGauss(Model):
         """Plot an image of the model."""
 
         self.logger.opt(lazy=True).debug(
-            'Plotting: {}.', lambda: pformat(_sanitize_locals(locals()))
+            'Plotting: {}.', lambda: pformat(sanitize(locals()))
         )
 
         ndims = self.n_dims

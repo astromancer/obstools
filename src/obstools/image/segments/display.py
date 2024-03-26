@@ -22,7 +22,7 @@ import motley.image
 from scrawl.utils import embossed
 from recipes.functionals import echo
 from recipes.config import ConfigNode
-from recipes.containers.dicts import isdict
+from recipes.containers.dicts import is_dict
 from recipes.pprint import formatters as fmt
 from recipes.decorators import update_defaults
 from recipes import api, duplicate_if_scalar, pprint
@@ -145,12 +145,12 @@ class SegmentPlotter:
         ct = None
         if contours:
             ct = self.contours(im.ax, **{**CONFIG.contours,
-                                         **(contours if isdict(contours) else {})})
+                                         **(contours if is_dict(contours) else {})})
 
         texts = []
         if label:
             # add label text (number) on each segment
-            texts = self.labels(im.ax, **(label if isdict(label) else {}))
+            texts = self.labels(im.ax, **(label if is_dict(label) else {}))
 
         rcol = self.seg.slices.plot(im.ax) if bbox else None
 
