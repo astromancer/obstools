@@ -166,11 +166,8 @@ def get_column_info(nstars, has_oflag, precision=CONFIG.precision):
     col_info_text = hstack_string('\n'.join(col_info.values()),
                                   MULTILINE_CURLY_BRACKET % nstars, 3)
 
-    xx = hstack(('\n'.join(col_info.values()),
-            MULTILINE_CURLY_BRACKET % nstars), 3)
-    print( xx == col_info_text )
-    from IPython import embed
-    embed(header="Embedded interpreter at 'src/obstools/lc/io.py':166")
+    col_info_text = hstack(('\n'.join(col_info.values()),
+                            MULTILINE_CURLY_BRACKET % nstars), 3)
 
     col_info.update(zip(col_info, col_info_text.splitlines()))
 
@@ -186,7 +183,8 @@ def get_column_info(nstars, has_oflag, precision=CONFIG.precision):
     return names, units, formats, col_info
 
 
-def make_header(title, obj_name, shape_info, has_oflag, meta=None, precision=CONFIG.precision):
+def make_header(title, obj_name, shape_info, has_oflag, meta=None,
+                precision=CONFIG.precision):
 
     if meta is None:
         meta = {}
@@ -250,7 +248,7 @@ def _make_header(header_info, obj_name, nstars, has_oflag, col_spec):
     yield ''  # advance to new line
 
 
-def make_table(t, flx, std, mask=None):
+def stack_arrays(t, flx, std, mask=None):
     """
     Stack light curve data into table for writing to file. Measurements for
     each star (Flux, σFlux, ...) columns are horizontally stacked.
@@ -284,7 +282,7 @@ def make_table(t, flx, std, mask=None):
 
 
 def write(filename, t, counts, std, mask=None,
-          title=CONFIG.title, meta=None, obj_name='<unknown>',
+          title=CONFIG.title, meta=None, target='<unknown>',
           precision=CONFIG.precision):
     """
     Write to text file
@@ -305,7 +303,7 @@ def write(filename, t, counts, std, mask=None,
         Title for header, by default CONFIG.title
     meta : dict, optional
         Meta data for header, by default None
-    obj_name : str, optional
+    target : str, optional
         Name of the target, by default '<unknown>'
 
     """
@@ -316,26 +314,25 @@ def write(filename, t, counts, std, mask=None,
     if np.ma.isMA(counts) or np.ma.isMA(std):
         mask = np.ma.getmaskarray(counts) | np.ma.getmaskarray(std)
 
-    logger.info('Saving light curve data ({} rows, {} masked points{}) to file:'
-                ' {}', len(t), (0 if mask is None else mask.sum()),
+    logger.info('Saving light curve data ({} rows, {} sources, {} masked '
+                'points{}) to file: {}',
+                len(t), len(counts), (0 if mask is None else mask.sum()),
                 ', including meta data' if meta else '', filename)
 
     # stack data
-    tbl = make_table(t, counts, std, mask)
+    data = stack_arrays(t, counts, std, mask)
 
-    nrows, ncols = tbl.shape
+    nrows, ncols = data.shape
     nstars = len(counts)
-    shape_info = dict(nrows=nrows,
-                      ncols=ncols,
-                      nstars=nstars)
+    shape_info = dict(nrows=nrows, ncols=ncols, nstars=nstars)
     has_oflag = mask is not None
-    header, col_fmt_data = make_header(title.format(obj_name),
-                                       obj_name, shape_info, has_oflag, meta)
+    header, col_fmt_data = make_header(title.format(target), target,
+                                       shape_info, has_oflag, meta)
 
     # write to file
     with Path(filename).open('w') as fp:
         fp.write(header)
-        np.savetxt(fp, tbl, col_fmt_data)
+        np.savetxt(fp, data, col_fmt_data)
 
 
 # alias
@@ -357,7 +354,7 @@ def read(filename):
     if oflag:
         flux = np.ma.MaskedArray(flux, oflag[0])
 
-    return t, flux.T, sigma.T
+    return t, flux, sigma
 
 
 # alias

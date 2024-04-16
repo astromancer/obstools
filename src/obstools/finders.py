@@ -17,24 +17,24 @@ SERVERS = {'b': ['poss2ukstu_blue', 'poss1_blue'],
            'a': ['all']}
 
 
-def make_finder(obj_name, coords=None, size=(10, 10), filters='bri'):
+def make_finder(target, coords=None, size=(10, 10), filters='bri'):
     """
-    Create a finder chart for source with *obj_name* at alt-az coordinates 
+    Create a finder chart for source with *target* at alt-az coordinates 
     *coords* with field of view size *size* in arcminutes using the first 
     available image given the preference sequence in *filters*.
 
     Parameters
     ----------
-    obj_name : str
+    target : str
         The name of the astronomical source for which this finder chart is 
         intended.  This name is used for looking up the coordinates if the 
         *coord* parameter is not provided. If the source name contains the 
         alt-az coordinates for the object, these coordinates will be parsed and 
         used unless you have also provided *coords* which takes preference.
-        The *obj_name* will also be added verbatim to the plot as a label.
+        The *target* will also be added verbatim to the plot as a label.
     coords : tuple or astropy.coordinates.SkyCoord, optional
         The object coordinates (RA, DEC), by default None.  If not given 
-        resolution of the coordinates will be attempted using *obj_name*.
+        resolution of the coordinates will be attempted using *target*.
     size : tuple, optional
         Field of view size in arcminutes, by default (10, 10)
     filters : str, optional
@@ -52,7 +52,7 @@ def make_finder(obj_name, coords=None, size=(10, 10), filters='bri'):
     Exception
         If no image could be retrieved for the given object name or coordinates.
     """
-    coo = get_coordinates(coords or obj_name)
+    coo = get_coordinates(coords or target)
     ra, dec = coo.ra.deg, coo.dec.deg
 
     sequence = (server for band in filters for server in SERVERS[band])
@@ -74,7 +74,7 @@ def make_finder(obj_name, coords=None, size=(10, 10), filters='bri'):
     kws = dict(style='italic', weight='bold', size='large')
 
     plot.add_label(0.5, 1.03,
-                   obj_name,
+                   target,
                    relative=True,
                    layer='text')
     plot.add_label(-0.05, -0.05,
