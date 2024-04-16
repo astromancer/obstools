@@ -40,11 +40,11 @@ from scipy.interpolate import NearestNDInterpolator
 # local
 import recipes.pprint as pp
 from recipes import api, op
+from recipes.oo import slots
 from recipes.string import indent
 from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.logging import LoggingMixin
-from recipes.oo.slots import _sanitize_locals
 from recipes.decorators import update_defaults
 from recipes.containers import cosort, duplicate_if_scalar, not_null, split_like
 
@@ -66,7 +66,7 @@ CONFIG = ConfigNode.load_module(__file__)
 CONFIG_IMAGE = CONFIG.parent
 CONFIG_SAMPLE = CONFIG_IMAGE.sample
 CONFIG_ALIGN = dict(
-    **CONFIG.flatten(levels=0),
+    **CONFIG.flatten(levels=0, keep_tuples=False),
     **CONFIG_SAMPLE,
     sample_stat=CONFIG_SAMPLE.stat
 )
@@ -79,10 +79,24 @@ CONFIG.cluster['classifier'] = getattr(cluster, CONFIG.cluster.pop('classifier')
 
 # ---------------------------------------------------------------------------- #
 
-def _duplicate_config(config, n):
-    if isinstance(config, dict) or not isinstance(config, abc.Iterable):
-        config = itt.repeat(config, n)
-    return np.fromiter(config, 'O')
+def get_plot_config(plot, groups, n):
+
+    dconfig = {}
+    plot = _get_plot_config(plot)
+    dconfig['alignment'] = _duplicate_config(plot.pop('alignment', False), n)
+
+    for item in ('mosaic', 'clusters'):
+        if config := plot.pop(item, False):
+            config = ensure_dict(config)
+            # allow per-group config
+            if not (set(config) & set(groups)):
+                config = dict(zip(groups,  _duplicate_config(config, len(groups))))
+        else:
+            config = dict(zip(groups, _duplicate_config(config, len(groups))))
+
+        dconfig[item] = config
+
+    return dconfig
 
 
 def _get_plot_config(obj):
@@ -103,8 +117,14 @@ def _get_plot_config(obj):
     return obj
 
 
-# ---------------------------------------------------------------------------- #
+def _duplicate_config(config, n):
+    if isinstance(config, dict) or not isinstance(config, abc.Iterable):
+        config = itt.repeat(config, n)
 
+    return np.fromiter(config, 'O')
+
+
+# ---------------------------------------------------------------------------- #
 
 def normalize_image(image, centre=np.ma.median, scale=np.ma.std):
     """Recenter and scale"""
@@ -369,8 +389,6 @@ def compute_centres_offsets(xy, outlier_distance=None,
     centres[use_sources], σxy[use_sources], δxy[good], out = \
         _measure_positions_offsets(xyc, centres[use_sources], outlier_distance, centre)
     #
-    from IPython import embed
-    embed(header="Embedded interpreter at 'src/obstools/image/register.py':334")
 
     for i in np.where(~use_sources)[0]:
         # mask for bad frames in δxy will propagate here
@@ -525,7 +543,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     from recipes import pprint
     from motley.table import Table
-    from motley.formatters import Decimal, Conditional, Numeric
+    from motley.format import Decimal, Conditional, Numeric
     # from obstools.stats import mad
     # TODO: probably mask nans....
 
@@ -1866,7 +1884,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         self.logger.opt(lazy=True).debug(
             'Plotting cluster identified sources with config: {}.',
-            lambda: pp.pformat(_sanitize_locals(locals()))
+            lambda: pp.pformat(slots.sanitize(locals()))
         )
 
         self.check_has_data()
@@ -2346,43 +2364,21 @@ class RegistrationMixin:
         registers = np.empty(len(groups), 'O')
 
         # resolve plot config
-        plot = _get_plot_config(plot)
-        # from IPython import embed
-        # embed(header="Embedded interpreter at 'src/obstools/image/register.py':2351")
-        alignment = _duplicate_config(plot.pop('alignment', False), len(self))
-
-        dconfig = {}
-        for item in ('mosaic', 'clusters'):
-            if config := ensure_dict(plot.pop(item, False)):
-                if not (set(config.keys()) & set(groups)):
-                    config = _duplicate_config(config)
-            dconfig[item] = config
-        mosaic = dconfig['mosaic']
-        clusters = dconfig['clusters']
+        config = get_plot_config(plot, groups, len(self))
+        alignment, mosaic, clusters = config.values()
 
         # For each telescope, align images wrt each other first
-        # try:
         for i in order:
             gid = keys[i]
+            plotting = {**plot,
+                        'alignment': alignment[indices[i]],
+                        'clusters':  clusters[gid],
+                        'mosaic':    mosaic[gid]} if plot else {}
+
+            # align
             registers[i] = groups[gid]._coalign(
-                sample_stat, min_depth,
-                plot={**plot,
-                      'alignment': alignment[indices[i]],
-                      'clusters':  clusters[gid],
-                      'mosaic':    mosaic[gid]},
-                **detection)
-        # except Exception as err:
-        #     import sys, textwrap
-        #     from IPython import embed
-        #     from better_exceptions import format_exception
-        #     embed(header=textwrap.dedent(
-        #             f"""\
-        #             Caught the following {type(err).__name__} at 'register.py':2371:
-        #             %s
-        #             Exception will be re-raised upon exiting this embedded interpreter.
-        #             """) % '\n'.join(format_exception(*sys.exc_info()))
-        #     )
-        #     raise
+                sample_stat, min_depth, plot=plotting, **detection
+            )
 
         # match coordinates of registers against each other
         reg = registers[order[0]]
