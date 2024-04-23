@@ -4,8 +4,8 @@ Image registration (point set registration) for astronomicall images.
 
 # Helper functions to infer World Coordinate System given a target name or
 # coordinates of a object in the field. This is done by matching the image
-# with the DSS image for the same field via image registration.  A number of
-# methods are implemented for doing this:
+# with the DSS image for the same field via image registration.  Several
+# methods are implemented:
 #   coherent point drift
 #   matching via locating dense cluster of displacements between points
 #   direct image-to-image matching
@@ -49,7 +49,7 @@ from recipes.decorators import update_defaults
 from recipes.containers import cosort, duplicate_if_scalar, not_null, split_like
 
 # relative
-from .. import transforms as tf
+from ..math import transforms as tf
 from ..modelling import UnconvergedOptimization
 from ..utils import STScIServerError, get_coordinates, get_dss
 from .hdu import ImageHDU
@@ -544,7 +544,7 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
     from recipes import pprint
     from motley.table import Table
     from motley.format import Decimal, Conditional, Numeric
-    # from obstools.stats import mad
+    # from obstools.math.stats import mad
     # TODO: probably mask nans....
 
     #

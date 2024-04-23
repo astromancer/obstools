@@ -41,7 +41,7 @@ from scrawl.ticks import DegreeFormatter, TransFormatter
 
 # relative
 from ..utils import get_coordinates, get_site
-from .limits import TelescopeLimits
+from ..saao.telescopes.limits import TelescopeLimits
 from .utils import get_midnight, nearest_midnight_date
 
 
@@ -1254,7 +1254,7 @@ class SkyTracks(LoggingMixin):
         ax.grid(ls=':')
         return fig, ax
 
-    def set_cmap(cmap):
+    def set_cmap(self, cmap):
         self.cmap = plt.get_cmap(cmap)
         self.set_colours()
 

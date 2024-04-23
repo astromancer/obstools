@@ -26,7 +26,7 @@ from recipes.pprint.callers import describe
 
 # relative
 from ...utils import prod
-from ...stats import geometric_median
+from ...math.stats import geometric_median
 from ..utils import get_overlap
 from ..detect import SourceDetectionDescriptor
 from .slices import SliceDict
@@ -1360,7 +1360,7 @@ class SegmentedImage(SegmentationImage,     # base
 
     def auto_dilate(self, image, labels=None, dmax=5, sigma=3, connectivity=1):
         #
-        from obstools.stats import mad
+        from obstools.math.stats import mad
 
         labels = self.resolve_labels(labels)
 

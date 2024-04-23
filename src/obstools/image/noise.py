@@ -8,7 +8,7 @@ from recipes.pprint import pformat
 from recipes.oo.property import cached_property
 
 # relative
-from ..unit_helpers import default_units
+from ..utils.unit_helpers import default_units
 
 
 class StdDev:

@@ -20,7 +20,7 @@ from astropy.coordinates import (EarthLocation, SkyCoord, UnknownSiteException,
 from recipes import caching
 
 # relative
-from . import cachePaths as cached
+from .. import cachePaths as cached
 
 
 # ---------------------------------------------------------------------------- #

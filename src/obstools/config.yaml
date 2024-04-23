@@ -1,3 +1,9 @@
+# ---------------------------------------------------------------------------- #
+# Observing sites
+sites:
+    saao:
+        telescopes:
+            use_metric_names:   True
 
 # ---------------------------------------------------------------------------- #
 image:
@@ -345,7 +351,7 @@ phot:
                 top:        1.0
                 bottom:     0.02
                 left:       0.125
-                right:      0.9
+                right:      0.95
 
             legend:
                 show:           on
@@ -380,12 +386,12 @@ phot:
 
                 figsize:        [12, 6.5]
                 subplotspec:
-                    bottom:     0.075
-                    top:        0.9
+                    bottom:     0.05
+                    top:        0.875
                     left:       0.075
-                    right:      0.85
+                    right:      0.925
                     hspace:     0.025
-                    wspace:     0.05
+                    wspace:     0.125
 
                 show:           [avg, weights, caption]  #  nulls, pixel
                 legend:         False
@@ -406,7 +412,7 @@ phot:
                 title:
                     size:       13
                     fontweight: bold
-                    pad:        10
+                    pad:        5
 
                 caption:
                     pos:    [0.075, 0.01]

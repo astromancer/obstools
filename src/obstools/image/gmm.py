@@ -14,8 +14,8 @@ from recipes.oo.slots import sanitize
 from recipes.containers import duplicate_if_scalar
 
 # relative
-from .. import transforms as transform
 from ..modelling import Model
+from ..math import transforms as transform
 from .utils import ensure_dict, non_masked
 
 

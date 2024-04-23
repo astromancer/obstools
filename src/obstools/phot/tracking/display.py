@@ -296,18 +296,19 @@ class SourceTrackerPlots(LoggingMixin):
 
         row, col = index
         multicol = (n_cols != 1)
+        top = (row == 0)
         ax.tick_params(
             bottom=True, top=True, left=True, right=True,
             labelright=(right := (col == n_cols - 1)) and multicol,
             labelleft=(left := (col == 0)),
-            labeltop=False,
-            labelbottom=True,  # (bot := (row == 1)) or (n_cols == 1),
+            labeltop=top,
+            labelbottom=(not top),  # (bot := (row == 1)) or (n_cols == 1),
             direction='inout',
             length=7
         )
 
         # ax.format_coord=format_coord
-        top = (row == 0)
+        
         delta = '' if top else ' - \delta'
         ax.set(xlabel=f'$x - x_0{delta}$', aspect='equal')
 
@@ -316,7 +317,7 @@ class SourceTrackerPlots(LoggingMixin):
 
             title = CENTROIDS[feature][-1]
             if show_weights:
-                title += '\n' + '\n' * (1 - title.count('\n')) * multicol
+                title += '' + '\n' * (1 - title.count('\n')) * multicol
 
                 if feature != 'avg':
                     title += f'(w = {self.tracker.get_weight(feature):3.2f})'

@@ -169,8 +169,8 @@ def get_polygon(inner, outer, **kws):
     path = mpath.Path(verts, codes)
     return PathPatch(path, **kws)
 
-# ---------------------------------------------------------------------------- #
 
+# ---------------------------------------------------------------------------- #
 
 class TelescopeLimits:
     def __init__(self, tel):

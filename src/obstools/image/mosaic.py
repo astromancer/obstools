@@ -3,6 +3,7 @@ Plotting mosaics of partially overlapping images
 """
 
 # std
+import numbers
 import itertools as itt
 
 # third-party
@@ -10,12 +11,13 @@ import numpy as np
 import more_itertools as mit
 
 # local
+from scrawl.utils import emboss
 from recipes import api
 from recipes.config import ConfigNode
 from recipes.logging import LoggingMixin
 
 # relative
-from .. import transforms
+from ..math import transforms
 from .image import ImageContainer, SkyImage, get_axes
 
 
@@ -340,8 +342,6 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         """
         # assert self.reg.targetCoordsPix is not None
 
-        import numbers
-        import matplotlib.patheffects as path_effects
 
         assert isinstance(arrow_head_distance, numbers.Real), \
             '`arrow_offset` should be float'
@@ -468,5 +468,5 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         # redraw
         self.fig.canvas.draw()
 
-    def save(filename, **kws):
+    def save(self, filename, **kws):
         return self.fig.savefig(filename, **kws)

@@ -9,7 +9,7 @@ from recipes.logging import LoggingMixin
 from recipes.decorators import update_defaults
 
 # relative
-from ..io import _FilePicklable
+from ..io import FilePicklable
 from . import CONFIG
 from .noise import CCDNoiseModel
 from .sample import ImageSamplerMixin
@@ -31,8 +31,8 @@ class ImageHDU(PrimaryHDU,
     @classmethod
     def readfrom(cls, fileobj, checksum=False, ignore_missing_end=False, **kws):
 
-        if not isinstance(fileobj, _FilePicklable):
-            fileobj = _FilePicklable(fileobj)
+        if not isinstance(fileobj, FilePicklable):
+            fileobj = FilePicklable(fileobj)
 
         return PrimaryHDU.readfrom(fileobj, checksum, ignore_missing_end, **kws)
 

@@ -1,8 +1,12 @@
+"""
+Statistics.
+"""
+
 import numpy as np
 from scipy.spatial.distance import cdist, euclidean
 
 
-def mad(data, data_median=None, axis=None):
+def median_absolute_deviation(data, data_median=None, axis=None):
     """
     Median absolute deviation
 
@@ -24,6 +28,10 @@ def mad(data, data_median=None, axis=None):
     # else:
     # make sure we can broadcast them together
     return np.ma.median(np.abs(data - data_median), axis)
+
+
+# alias
+mad = median_absolute_deviation
 
 
 def median_scaled_median(data, axis):

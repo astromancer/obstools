@@ -136,7 +136,7 @@ class MeasurementConstraints(slots.SlotHelper):
                          distance=float(distance),
                          saturation=float(saturation))
 
-
+# TODO Executor base
 class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     """
     A class to track sources in CCD video to aid time series photometry.

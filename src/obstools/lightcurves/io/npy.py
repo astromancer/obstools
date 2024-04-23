@@ -2,7 +2,7 @@ import numpy as np
 from loguru import logger
 
 
-def write(filename, t, counts, std, mask=None):
+def write(filename, t, counts, std, mask=None, **kws):
 
     if np.ma.isMA(counts) or np.ma.isMA(std):
         mask = np.ma.getmaskarray(counts) | np.ma.getmaskarray(std)

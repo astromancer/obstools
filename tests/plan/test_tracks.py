@@ -9,7 +9,7 @@ import more_itertools as mit
 
 # local
 from obstools.plan import SkyTracks
-from obstools.plan.limits import HARD_LIMITS, SOFT_LIMITS, TelescopeLimits
+from obstools.saao.telescopes.limits import HARD_LIMITS, SOFT_LIMITS, TelescopeLimits
 
 
 # TODO:

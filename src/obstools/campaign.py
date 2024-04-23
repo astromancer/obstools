@@ -61,7 +61,7 @@ NOFILE = NoFile()
 
 class FilenameHelper:
     """
-    Helper class for working with filenames
+    Helper class for working with filenames.
     """
 
     def __init__(self, hdu):

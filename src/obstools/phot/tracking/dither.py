@@ -470,7 +470,7 @@ class PointSourceDitherModel(LoggingMixin):
                detect_frac_min=None, count_thresh=None):
         # report on position measurement
 
-        # from obstools.stats import mad
+        # from obstools.math.stats import mad
         # TODO: probably mask nans....
         n_points, n_sources, _ = xy.shape
         n_points_tot = n_points * n_sources
