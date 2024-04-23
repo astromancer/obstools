@@ -1,5 +1,5 @@
 """
-SAAO telescope info
+SAAO telescope info.
 """
 
 
@@ -8,24 +8,22 @@ import numpy as np
 from astropy.coordinates import EarthLocation
 
 # local
+from recipes.config import ConfigNode
 from recipes.oo.slots import SlotHelper
 from recipes.containers.dicts import invert
 
-# relative
-from ...config import CONFIG
-
 
 # ---------------------------------------------------------------------------- #
+# config
+CONFIG = ConfigNode.load_module(__file__)
 
 # names
 METRIC_NAMES = ('1.9m', '1.0m')
 IMPERIAL_NAMES = ('74in', '40in')
 use_metric_names = CONFIG.use_metric_names
 
-NAME_EQUIVALENTS = _REMAPPED_NAMES = \
-    dict(zip(*(IMPERIAL_NAMES, METRIC_NAMES)[::(-1, 1)[use_metric_names]]))
-_INV_NAMES = invert(_REMAPPED_NAMES)
-_74, _40 = _INV_NAMES
+NAME_EQUIVALENTS = dict(zip(*(IMPERIAL_NAMES, METRIC_NAMES)[::(-1, 1)[use_metric_names]]))
+INVERTED_NAMES = (_74, _40) = invert(NAME_EQUIVALENTS)
 NAME_EQUIVALENTS.update(
     {'74': _74, '1.9': _74,
      '40': _40, '1.0': _40, '1': _40}
@@ -35,15 +33,17 @@ KNOWN_NAMES = sorted([*METRIC_NAMES, *IMPERIAL_NAMES, *NAME_EQUIVALENTS])
 # with focal reducer
 FOV_REDUCED = {'74':    (2.79, 2.79)}
 
-# F_RATIOS = {'1.9m': 4.85 }
-#    '1.0m':  ,
-#    'lesedi':,
-#    'salt':  }
+F_RATIOS = {
+    _74:     4.85
+    #    _40:  ,
+    #    'lesedi':,
+    #    'salt':
+}
 
 # ---------------------------------------------------------------------------- #
 
 
-def get_tel(name, metric=use_metric_names):
+def get_name(name, metric=use_metric_names):
     """
     Get standardized telescope name from description.
 
@@ -59,17 +59,17 @@ def get_tel(name, metric=use_metric_names):
 
     Examples
     --------
-    >>> get_tel(74)
+    >>> get_name(74)
     '1.9m'
-    >>> get_tel(1.9)
+    >>> get_name(1.9)
     '1.9m'
-    >>> get_tel('1.9 m', metric=False)
+    >>> get_name('1.9 m', metric=False)
     '74in'
-    >>> get_tel(1)
+    >>> get_name(1)
     '1.0m'
-    >>> get_tel('40     in')
+    >>> get_name('40     in')
     '1.0m'
-    >>> get_tel('LESEDI')
+    >>> get_name('LESEDI')
     'lesedi'
 
     Raises
@@ -86,7 +86,7 @@ def get_tel(name, metric=use_metric_names):
                          f'use one of the following\n: {KNOWN_NAMES}')
 
     name = NAME_EQUIVALENTS.get(nr, name)
-    return name if metric == use_metric_names else _INV_NAMES[name]
+    return name if metric == use_metric_names else INVERTED_NAMES[name]
 
 
 def get_fov(telescope, unit='arcmin', focal_reducer=False):
@@ -111,7 +111,7 @@ def get_fov(telescope, unit='arcmin', focal_reducer=False):
     >>> get_fov('40 in')         # 1.0m
     """
 
-    telescope = get_tel(telescope)
+    telescope = get_name(telescope)
     fov = (FOV_REDUCED[telescope] if focal_reducer else telescope.fov)
 
     # at this point we have the FoV in arcmin
@@ -144,7 +144,7 @@ class Telescope(SlotHelper):
 
 class TelInfo(dict):
     def __getitem__(self, key):
-        return super().__getitem__(get_tel(key))
+        return super().__getitem__(get_name(key))
 
 
 #
@@ -157,6 +157,3 @@ INFO = TelInfo({
         # 'salt': ((),  (20.810808, -32.375823, 1798))
     }.items()
 })
-
-# cleanup namespace
-del _REMAPPED_NAMES, _INV_NAMES

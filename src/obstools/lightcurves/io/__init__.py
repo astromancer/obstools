@@ -23,10 +23,10 @@ class SupportedFileType(Enum):
     # FITS = 'fits'
     # hd5
 
+    @classmethod
     def _missing_(cls, ext):
         if isinstance(ext, Path):
-            ext = ext.suffix.lower().strip('.').upper()
-            if member := getattr(cls, ext, ()):
+            if member := getattr(cls, ext.suffix.strip('.').upper(), ()):
                 return member
 
         raise ValueError(f'Unsupported format: {ext!r}')
@@ -43,7 +43,7 @@ class SupportedFileType(Enum):
 
 
 #
-SUPPORTED = {x.value for x in SupportedFileType}
+SUPPORTED = tuple(x.value for x in SupportedFileType)
 
 
 # ---------------------------------------------------------------------------- #
@@ -53,12 +53,12 @@ def write(filename, t, counts, std, **kws):
     ext = SupportedFileType(filename)
     writer = writers[ext]
     return writer(filename, t, counts, std, **kws)
- 
+
 
 def read(filename, hdu=None):
 
     filename = Path(filename)
-    ext = SupportedFileType(filename)
+    ext = SupportedFileType(filename).value
 
     if ext == 'txt':
         return txt.read(filename)
@@ -66,19 +66,15 @@ def read(filename, hdu=None):
     if ext == 'npy':
         return load_memmap(hdu, filename)
 
-    raise ValueError(f'Unsupported format: {ext!r}')
 
-
-def load_memmap(hdu, filename, outfile=None, **kws):
-
+def load_memmap(filename, hdu):
     logger.info('Loading data for {}.', hdu.file.name)
 
     # CONFIG.pre_subtract
     # since the (gain) calibrated frames are being used below,
     # CCDNoiseModel(hdu.readout.noise)
 
-    data = io.load_memmap(filename)
-    flux = data['flux']
+    flux = io.load_memmap(filename)['flux']
     return hdu.t.bjd, flux['value'].T, flux['sigma'].T
 
 
