@@ -248,24 +248,29 @@ lightcurves:
                 outlier: 
                     [oflag, '', Outlier flag]
 
-            precision:  5
+            precision:  5   # significant figures
 
     plots:
-        # figure
-        subplotspec:
-            top:        0.81
-            bottom:     0.1
-            left:       0.065
-            right:      0.94
-
         # time series plot parametes
-        plims:          [-0.1, 99.99]
-        xlabel:
-            top:        Time (UTC)
-            bottom:     Δt (s)
-            pad:        -17.5
-        ylabel:         Relative Flux
+        figure:
+            size:           [14, 8]
+            margins:
+                top:        0.81
+                bottom:     0.1
+                left:       0.065
+                right:      0.94
 
+        axes:
+            plims:          [-0.1, 99.99]
+            labels:
+                x:
+                    top:        Time (UTC)
+                    bottom:     Δt (s)
+                    pad:        -17.5
+                    ticks:
+                        rotation:   45
+                y:
+                    left:       Relative Flux
 
 
 # ---------------------------------------------------------------------------- #

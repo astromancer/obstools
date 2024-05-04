@@ -50,8 +50,7 @@ SUPPORTED = tuple(x.value for x in SupportedFileType)
 
 def write(filename, t, counts, std, **kws):
     filename = Path(filename)
-    ext = SupportedFileType(filename)
-    writer = writers[ext]
+    writer = writers[SupportedFileType(filename).value]
     return writer(filename, t, counts, std, **kws)
 
 
@@ -64,7 +63,7 @@ def read(filename, hdu=None):
         return txt.read(filename)
 
     if ext == 'npy':
-        return load_memmap(hdu, filename)
+        return load_memmap(filename, hdu)
 
 
 def load_memmap(filename, hdu):
