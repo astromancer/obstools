@@ -80,7 +80,7 @@ class BootstrapResample(LoggingMixin):
 
         if not isinstance(subset, slice):
             # make a slice
-            subset = slice(*duplicate_if_scalar(subset, 1, raises=False))
+            subset = slice(*duplicate_if_scalar(subset, 1, emit=False))
 
         *interval, _ = subset.indices(size)
         i, j = interval

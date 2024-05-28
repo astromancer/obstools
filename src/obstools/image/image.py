@@ -538,20 +538,24 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
                        va='top', **kws)
 
 
+def array(itr):
+    return np.array([*itr])
+
+
 class ImageContainer(IndexingMixin, ListOf(SkyImage), Vectorized):
 
     # properties: vectorized attribute getters on `SkyImage`
     # ------------------------------------------------------------------------ #
     images = AttrVector('data')
-    shapes = AttrVector('data.shape', output=np.array)
+    shapes = AttrVector('data.shape', output=array)
     detections = AttrVector('seg')
     coms = centroids = AttrVector('xy')
-    fovs = AttrVector('fov', output=np.array)
-    scales = AttrVector('scale', output=np.array)
-    params = AttrVector('params', output=np.array)
-    origins = AttrVector('origin', output=np.array)
-    angles = AttrVector('angles', output=np.array)
-    corners = AttrVector('corners', output=np.array)
+    fovs = AttrVector('fov', output=array)
+    scales = AttrVector('scale', output=array)
+    params = AttrVector('params', output=array)
+    origins = AttrVector('origin', output=array)
+    angles = AttrVector('angles', output=array)
+    corners = AttrVector('corners', output=array)
 
     # ------------------------------------------------------------------------ #
 

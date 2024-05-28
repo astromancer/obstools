@@ -270,7 +270,7 @@ class MultiGauss(Model):
             raise ValueError(f'Can only image 2D models. Model is {ndims}D.')
 
         if grid is None:
-            size = duplicate_if_scalar(size, ndims, raises=False)
+            size = duplicate_if_scalar(size, ndims, emit=False)
             grid = self._auto_grid(size)
 
         # compute model values
