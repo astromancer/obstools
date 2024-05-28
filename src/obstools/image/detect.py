@@ -108,9 +108,9 @@ class DetectionBase(LoggingMixin):
 
     def __repr__(self):
         return pp.pformat({'owner': self.owner,
-                        'params': self.params,
-                        'report': self.report},
-                       type(self).__name__)
+                           'params': self.params,
+                           'report': self.report},
+                          type(self).__name__)
 
     def detect(self, image, mask=None, *args, report=None, **kws):
 
@@ -586,7 +586,7 @@ class MultiThreshold(_SourceDetectionLoop):
         seg: SegmentedImage
             The segmented image
         groups: dict
-            Groups of detected sources.  One group for each iteration of the
+            Grouped of detected sources.  One group for each iteration of the
             algorithm.
         info: dict
             Detection parameters for each round

@@ -22,7 +22,7 @@ from astropy.io.fits.hdu.base import _BaseHDU
 from motley.table.attrs import AttrTable
 from pyxides.typing import ListOf
 from pyxides.getitem import IndexingMixin
-from pyxides.grouping import AttrGrouper, Groups
+from pyxides.grouping import AttrGrouper, Grouped
 from pyxides.vectorize import AttrVector, Vectorized
 from pyxides.pprint import PPrintContainer, PrettyPrinter
 from recipes import io, op
@@ -191,6 +191,7 @@ class GlobIndexing(IndexingMixin):
 
 # ---------------------------------------------------------------------------- #
 
+
 class CampaignType(SelfAware, ListOf):
     """metaclass to avoid conflicts"""
 
@@ -331,7 +332,7 @@ class PhotCampaign(PPrintContainer,
             raise ValueError('No data found.')
 
         if loader is None:
-            loaders = op.AttrVector('readfrom', default=None)(cls._allowed_types)
+            loaders = AttrVector('readfrom', default=None)(cls._allowed_types)
             loader = next(filter(None, loaders))
 
         i = 0
@@ -408,7 +409,7 @@ class PhotCampaign(PPrintContainer,
         return PhotInterface(self)
 
 
-class ObsGroups(Groups, LoggingMixin):
+class GroupedRuns(Grouped, LoggingMixin):
     """
     Emulates dict to hold multiple `Campaign` instances keyed by their common
     attribute values. The attribute names given in `group_id` are the ones by
@@ -422,3 +423,7 @@ class ObsGroups(Groups, LoggingMixin):
 
     def __init__(self, factory=PhotCampaign, *args, **kw):
         super().__init__(factory, *args, **kw)
+
+
+# Alias
+GroupedObs = GroupedRuns

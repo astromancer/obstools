@@ -79,7 +79,7 @@ class TestImageRegister:
 # from recipes.io import parse
 
 # from pyshoc.image.registration import *
-# from pyshoc.core import shocRun
+# from pyshoc.core import Campaign
 
 # # exit_register(embed)
 
@@ -109,7 +109,7 @@ class TestImageRegister:
 #     else:
 #         newlist.append(fits)
 
-# obs = shocRun.load(filenames=newlist + fits2017)
+# obs = Campaign.load(filenames=newlist + fits2017)
 # sr = obs.group_by('date.year')
 
 # self = obs

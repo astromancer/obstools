@@ -474,7 +474,7 @@ class SegmentedImage(SegmentationImage,     # base
         return self.data[self.slices[label]]
 
     @lazyproperty
-    def heights(self):  # TODO: manage these through MethodVectorizer api
+    def heights(self):  # TODO: manage these through CallMapper api
         """Vector of segment heights"""
         return self.get_heights()
 
