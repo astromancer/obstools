@@ -22,7 +22,7 @@ from .image import ImageContainer, SkyImage, get_axes
 
 
 # ---------------------------------------------------------------------------- #
-CONFIG = ConfigNode.load_module(__file__)
+CONFIG = ConfigNode.load_module(__file__).plot
 
 
 # ---------------------------------------------------------------------------- #

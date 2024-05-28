@@ -21,7 +21,7 @@ from recipes.pprint.mapping import pformat
 
 
 # ---------------------------------------------------------------------------- #
-CONFIG = ConfigNode.load_module(__file__)
+CONFIG = ConfigNode.load_module(__file__, dot_split=True)
 
 # write oflag data to file
 REGEX_FORMAT_SPEC = re.compile(r'%(\d{0,2})\.?(\d{0,2})([if])')

@@ -11,6 +11,7 @@ image:
         stat:               median
         min_depth:          5
 
+    # ------------------------------------------------------------------------ #
     detect:
         algorithm:          sigma_threshold
         snr:                3
@@ -20,7 +21,7 @@ image:
         edge_cutoff:        null
         edge_fraction:      0.5  # maximum fractional area of source inside border region
         monolithic:         True
-        roundness:          [0.5, 1.5]
+        roundness:          [0.5, 1.75]
         dilate:             0
         deblend:            False
 
@@ -37,30 +38,28 @@ image:
             title_style:    [B, _]
             extend:         2
 
+    # ------------------------------------------------------------------------ #
     register:
         survey:                     dss
         fov_stretch:                1.2
 
-        plot:
-            mosaic:                 False
-            alignment:              False
-            clusters:
-                show:               False
-                centres:            k+
-                frames:             True
-                nrs:                True
-                show_bandwidth:     True
-                trim_labels:        False
+        measure:
+            centre:                         mean
+            source_detection_threshold:     0.25
+            outlier_distance:               Null
+            report:                         True
 
         align:
             hop:                        True
             fit_angle:                  True
             refine:                     True
 
+            # Parameters for gmm model
             sigma_distance_scale:       3
             sigma_fallback:             10
 
             # plot model probability image + matched coordinates for each image
+            show:   False
             plot:
                 model:          False
                 points:
@@ -69,76 +68,85 @@ image:
                     mfc:        none
                     ms:         12
 
-        measure:
-            centre:                         mean
-            source_detection_threshold:     0.25
-            outlier_distance:               Null
-            report:                         True
-
-        cluster:
+        clusters:
             classifier:                 MeanShift
-            bandwidth_distance_scale:   2
+            bandwidth_distance_scale:   0.6
             cluster_all:                False
 
+            show:   False
             plot:
+                # measurements
                 features:
+                    show:               True
                     s:                  25
                     marker:             '*'
                     cmap:               null
                     label:              Centroids ({} images)
 
                 centres:
+                    show:               True
                     marker:             +
                     color:              k
                     ms:                 2.5
                     alpha:              1
 
                 labels:
+                    show:               True
+                    trim:               False
                     size:               8
                     emboss:
                         linewidth:      1.5
                         color:          '0.2'
 
                 outliers:
+                    show:               True
                     color:              r
                     marker:             x
                     alpha:              0.5
 
                 bandwidth:
+                    show:               True
                     ec:                 '0.2'
                     alpha:              0.75
                     label:              '{algorithm}(bandwidth={bandwidth:.3f})'
 
                 frames:
+                    show:               True
                     lw:                 1
                     ec:                 '0.5'
 
+        mosaic:
+            show:   False
+
+    # ------------------------------------------------------------------------ #
     mosaic:
-        ref:
-            cmap:           Greys
-            alpha:          1
+        plot:
+            ref:
+                cmap:           Greys
+                alpha:          1
 
-        alpha:
-            min:    0.025
-            cycle:  0.65
+            alpha:
+                min:    0.025
+                cycle:  0.65
 
-        labels:
-            format: image{:d}
-            color:  w
+            labels:
+                format: image{:d}
+                color:  w
 
-        target:
-            color:            forestgreen
-            arrow:
-                size:             10
-                head_distance:    2.5
-                offset:           [0, 0]
+            target:
+                color:            forestgreen
+                arrow:
+                    size:             10
+                    head_distance:    2.5
+                    offset:           [0, 0]
 
-            text:
-                offset:         3
-                emboss:
-                    linewidth:  2
-                    color:      k
+                text:
+                    offset:         3
+                    emboss:
+                        linewidth:  2
+                        color:      k
 
+    # ------------------------------------------------------------------------ #
     gmm:
         plot:
             image:
@@ -155,6 +163,7 @@ image:
                 marker:         ''
                 color:          r
 
+    # ------------------------------------------------------------------------ #
     display:
         image:
             cmap:           Null  # 'cmr.voltage_r',
@@ -182,6 +191,7 @@ image:
             weight:         heavy
             offset:         5
 
+    # ------------------------------------------------------------------------ #
     segments:
         display:
             contours:  
@@ -232,23 +242,22 @@ campaign:
 
 # ---------------------------------------------------------------------------- #
 lightcurves:
-    io:
-        txt:
-            title:  Light Curve for {}
+    io.txt:
+        title:  Light Curve for {}
 
-            # columns [name, unit, description]
-            columns:
-                time: 
-                    [bjd, day, Barycentric Julian Date]
-                    # [sidt, h  Sidereal time in seconds since midnight]
-                counts: 
-                    [Flux, counts, Total integrated counts for star (background subtracted)]
-                sigma:   
-                    [σFlux, counts, Standard deviation uncertainty on total counts]
-                outlier: 
-                    [oflag, '', Outlier flag]
+        # columns [name, unit, description]
+        columns:
+            time: 
+                [bjd, day, Barycentric Julian Date]
+                # [sidt, h  Sidereal time in seconds since midnight]
+            counts: 
+                [Flux, counts, Total integrated counts for star (background subtracted)]
+            sigma:   
+                [σFlux, counts, Standard deviation uncertainty on total counts]
+            outlier: 
+                [oflag, '', Outlier flag]
 
-            precision:  5   # significant figures
+        precision:  5   # significant figures
 
     plots:
         # time series plot parametes

@@ -25,10 +25,10 @@ from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.config import ConfigNode
 from recipes.oo.slots import SlotHelper
+from recipes.containers.dicts import is_dict
 from recipes.oo.repr_helpers import qualname
 from recipes.oo.property import cached_property
 from recipes.containers import duplicate_if_scalar, not_null
-from recipes.containers.dicts import is_dict, AttrDict as ArtistContainer
 
 # relative
 from .calibrate import ImageCalibratorMixin
@@ -47,6 +47,9 @@ UNIT_CORNERS = np.array([[0., 0.],
 
 
 # ---------------------------------------------------------------------------- #
+
+# class ArtistContainer
+
 
 def get_axes(ax, fig=None, **kws):
     if ax:
@@ -105,7 +108,9 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         self.art = self._init_art()
 
     def _init_art(self):
-        return ArtistContainer(display=None, image=None, frame=None)
+        artists = ConfigNode(image=None, frame=None)
+        artists.display = None
+        return artists.freeze()
 
     def __getstate__(self):
         # remove artists that can't be pickled
@@ -149,7 +154,7 @@ class Image(SelfAware, SlotHelper):  # AliasManager
         ax = None
         if image:
             display = ImageDisplay(self.data, **{**CONFIG.display.image, **kws})
-            self.art.image = display.image
+            self.art['image'] = display.image
             ax = display.ax
 
         # Add frame around image
@@ -158,8 +163,8 @@ class Image(SelfAware, SlotHelper):  # AliasManager
             if is_dict(frame):
                 frame_kws.update(frame)
 
-            self.art.frame = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
-                                               **frame_kws)
+            self.art['frame'] = frame = Rectangle((-0.5, -0.5), *self.shape[::-1],
+                                                  **frame_kws)
             if (ax := kws.get('ax', ax)) is None:
                 raise TypeError('`ax` keyword required')
 

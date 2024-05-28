@@ -1,9 +1,5 @@
 
-# std
-from pathlib import Path
-
 # third-party
-import numpy as np
 from loguru import logger
 from platformdirs import user_cache_path
 
@@ -13,9 +9,10 @@ from recipes.caching import Reject, hashers
 from recipes.containers.dicts import AttrReadItem
 
 
+# Config
 # ---------------------------------------------------------------------------- #
-# config
 CONFIG = ConfigNode.load_module(__file__)
+CONFIG.image.detect['roundness'] = tuple(CONFIG.image.detect.roundness)
 
 #
 logger.disable('obstools')
