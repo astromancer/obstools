@@ -61,12 +61,13 @@ image:
             # plot model probability image + matched coordinates for each image
             show:   False
             plot:
-                model:          False
+                model:          
+                    cmap:       Blues
                 points:
                     color:      orangered
                     marker:     o
                     mfc:        none
-                    ms:         12
+                    ms:         6
 
         clusters:
             classifier:                 MeanShift
