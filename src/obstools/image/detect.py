@@ -129,9 +129,10 @@ class DetectionBase(LoggingMixin):
     def _get_hash_key(self):
         return self.name, tuple(self.params.items())
 
-    @caching.cached(typed={'self': _get_hash_key,
-                           'image': caching.hashers.array,
-                           'mask': caching.hashers.array})
+    @caching.cached(typed={'self':      _get_hash_key,
+                           'image':     caching.hashers.array,
+                           'mask':      caching.hashers.array,
+                           'roundness': tuple})
     def __call__(self, image, mask=None, **kws):
         """
         Image object detection that returns a `SegmentedImage` instance. Post
