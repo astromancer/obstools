@@ -342,7 +342,6 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
         """
         # assert self.reg.targetCoordsPix is not None
 
-
         assert isinstance(arrow_head_distance, numbers.Real), \
             '`arrow_offset` should be float'
 
@@ -452,7 +451,7 @@ class MosaicPlotter(ImageContainer, LoggingMixin):
 
         except Exception as err:
             self.logger.exception(
-                f'Scroll failed: {len(self)=} {self._idx_active=}'
+                f'Scroll failed: {len(self)=} {self._idx_active=}:\n{err}'
             )
 
             self.image_label = None

@@ -260,9 +260,10 @@ class MultiGauss(Model):
     def plot(self, grid=None, size=CONFIG.plot.image.grid_size,
              points=True, peak=False, **kws):
         """Plot an image of the model."""
-
+        
+        namespace = sanitize(locals())
         self.logger.opt(lazy=True).debug(
-            'Plotting: {}.', lambda: pformat(sanitize(locals()))
+            'Plotting: {}.', lambda: pformat(namespace)
         )
 
         ndims = self.n_dims
