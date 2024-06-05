@@ -453,7 +453,7 @@ def compute_centres_offsets(xy, outlier_distance=None,
     # delay centre compute for fainter sources until after re-centering
     centres = np.ma.masked_all((n_sources, 2))
     for i, j in enumerate(np.where(use_sources)[0]):
-        centres[j] = np.mean(xyc[:, i])
+        centres[j] = xyc[:, i].mean(0)
 
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
@@ -517,7 +517,7 @@ def _measure_positions_offsets(xy, centres, outlier_distance, centre_func):
         centres = np.ma.empty((n_sources, 2))
 
         for i in range(n_sources):
-            centres[i] = centre_func(xy_shifted[:, i], 1)
+            centres[i] = centre_func(xy_shifted[:, i], 0)
 
         if outlier_distance is None:
             # break out here without removing any points
