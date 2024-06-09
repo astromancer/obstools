@@ -214,26 +214,13 @@ class PointSourceDitherModel(LoggingMixin):
             import warnings
             with warnings.catch_warnings():
                 warnings.filterwarnings("error")
-                try:
-                    idxf, idxs = np.where(out.any(1))
-                    idxb, = np.where(np.all(source_weights == 0, 1))
-                    idxg, = np.where(good)
-                    idxg = np.setdiff1d(idxg, idxb)
-                    # idxu = np.arange(n_sources)
-                    outlier_indices = (idxg[idxf], idxs)
-                except Exception as err:
-                    import sys, textwrap
-                    from IPython import embed
-                    from better_exceptions import format_exception
-                    embed(header=textwrap.dedent(
-                            f"""\
-                            Caught the following {type(err).__name__} at 'dither.py':221:
-                            %s
-                            Exception will be re-raised upon exiting this embedded interpreter.
-                            """) % '\n'.join(format_exception(*sys.exc_info()))
-                    )
-                    raise
-                    
+                #
+                idxf, idxs = np.where(out.any(1))
+                idxb, = np.where(np.all(source_weights == 0, 1))
+                idxg, = np.where(good)
+                idxg = np.setdiff1d(idxg, idxb)
+                # idxu = np.arange(n_sources)
+                outlier_indices = (idxg[idxf], idxs)
 
         else:
             outlier_indices = ()
@@ -328,6 +315,9 @@ class PointSourceDitherModel(LoggingMixin):
         assert not nans.all()
         source_weights[nans] = 1
 
+        # mask nans
+        xy[np.isnan(xy)] = np.ma.masked
+
         count = itt.count()
         while (current := next(count)) < 5:
             # xy_feature_avg: xy features average (n, nsources)
@@ -355,7 +345,7 @@ class PointSourceDitherModel(LoggingMixin):
         # stddev
         bias = 1 / ((s := feature_weights.sum()) - np.sum(feature_weights ** 2) / s)
         xy_feature_sigma = bias * \
-            np.sum(np.square(xy - xy_feature_avg[..., None]) * feature_weights, -1)
+            np.sum(np.square(xy - xy_feature_avg[:, None]) * self.feature_weights, 1)
 
         # xy_feature_avg: xy features average (n, nsources)
         # delta_xy: frame offsets from ref

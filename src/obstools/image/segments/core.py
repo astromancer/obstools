@@ -1037,8 +1037,8 @@ class SegmentedImage(SegmentationImage,     # base
         # revised CCD equation from Merlin & Howell '95
         noise = np.sqrt(signal +  # ← poisson.      sky + instrument ↓
                         n_pix_src * (1 + n_pix_src / n_pix_bg) * counts_bg_pp)
-
-        return signal, noise
+        # TODO: bg sigma
+        return signal, noise, counts_bg_pp
 
     def _flux(self, image, labels, bg=(0,), stat='median'):
 
@@ -1082,8 +1082,8 @@ class SegmentedImage(SegmentationImage,     # base
         uncertainty (including poisson, sky, and instrumental noise) in each
         segment as per Merlin & Howell '95
         """
-
-        return np.divide(*self.flux(image, labels, bg))
+        signal, noise, bg = self.flux(image, labels, bg)
+        return signal / noise
         # return signal / noise
 
     # def noise(self, image)
@@ -1093,7 +1093,7 @@ class SegmentedImage(SegmentationImage,     # base
         Re-label segments for highest per-pixel counts in descending order
         """
         labels = self.resolve_labels(labels)
-        flx, _ = self.flux(image, labels, bg, bg_stat)
+        flx, *_ = self.flux(image, labels, bg, bg_stat)
         order = np.argsort(flx)[::-1]
 
         # re-order segmented image labels

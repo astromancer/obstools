@@ -137,6 +137,8 @@ class MeasurementConstraints(slots.SlotHelper):
                          saturation=float(saturation))
 
 # TODO Executor base
+
+
 class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     """
     A class to track sources in CCD video to aid time series photometry.
@@ -188,11 +190,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             The segmentation image. Centroids for each source are computed
             within the corresponding labelled region.
         labels : array-like or str, optional
-            Only sources corresponding to these labels will be used to calculate
+            Only segments with these labels will be used to calculate
             frame shift. Note that center of mass measurements are for all
-            sources (that are on-frame) in order to compute the best relative
+            sources (that are on-frame) in order to compute the best 
             positions for all sources, but that the frame-to-frame shift will be
-            computed using only the sources in `labels`, by default this
+            computed using only the segments in `labels`, by default this
             includes all sources for the default `snr` weighting scheme.
         mask : np.ndarray, optional
             Ignore these pixels in centroid computation.
@@ -236,7 +238,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # shared memory. these are just placeholders for now, they are set in
         # `init_memory`
         self.measurements = self.origins = self.delta_xy = self.source_info = None
-        self.frame_info = np.array((0, np.nan), self._mmap_dtypes.frame_info,
+        self.frame_info = np.array((0, np.nan, 0), self._mmap_dtypes.frame_info,
                                    ndmin=1)
 
         # reference position (in pixel coordinates) from which the shift will
@@ -245,7 +247,8 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # self.xy0 = coords[self.reference_index]
         # self.rpos = coords - coords[self.reference_index]
         self.coords = np.recarray((len(self.use_labels), 2), self._mmap_dtypes.coords)
-        self.coords['xy'] = coords[self.use_labels - 1]
+        _, select = np.where(self.use_labels[:, None] == self.seg.labels)
+        self.coords['xy'] = coords[select]
         self.coords['sigma'] = np.inf
 
         # algorithmic details
@@ -256,7 +259,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         region_centres = self.seg.com(self.seg.data, self.use_labels)[:, ::-1]
         origin = self.compute_frame_offset(region_centres,
                                            weights=self.source_weights, axis=0)
-        self.origin = origin.round(0).astype(int)
+
+        if len(coords) != self.seg.nlabels:
+            raise ValueError('This will cause problems.')
+
+        self.origin = np.array(origin).round(0).astype(int)
         self.logger.debug('Origin  set to: xy = {}.', self.origin)
 
         #
@@ -324,9 +331,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             # Per-frame data
             frame_info=     [
                 # origin index (rows, col) of segmentation for measuring each frame
-                ('origins',  int),
+                ('origins',  (int, 2)),
                 # measured xy offset for each frame
-                ('delta_xy', float)
+                ('delta_xy', (float, 2)),
+                # median bg rate per pixel
+                ('bg_counts_avg', float)
             ],
 
             # structured series data for sources (value, sigma)
@@ -354,7 +363,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             # raw centroids
             measurements=   (n, nfeatures, nsources, 2),
             # frame measurements (origin, offset)
-            frame_info=     (n, 2),
+            frame_info=     (n, ),
             # structured series results for sources
             source_info=    (n, nsources),
             # fit weights for centroid features
@@ -422,6 +431,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
     @property
     def origin(self):
+
         return self._origin
 
     @origin.setter
@@ -439,6 +449,9 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         if np.any(origin > self.seg.shape):
             raise ValueError(f'Tracker `origin` {origin} outside of image'
                              f' boundary for segmented image: {self.seg}')
+
+        # if np.any(np.abs(origin) > 10):
+        #     raise ValueError('WTF!')
 
         self._origin = origin
 
@@ -520,7 +533,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
     def get_coords_residual(self, section=_s0, feature=_s0, source=_s0,
                             shifted=True):
 
-        source = (self.use_labels - 1)[source]
+        # source = (self.use_labels - 1)[source]
 
         if (feature == 'avg'):
             data = self.source_info['xy']['value'][keep_dims(section, source)]
@@ -550,7 +563,12 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # finally, recompute the positions
         # with memory_lock:
         self.logger.info('Final fit with full dataset.')
-        self.fit(report=True)
+        
+        try:
+            self.fit(report=True)
+        except ValueError as err:
+            self.logger.info('Something went wrong during the final fit with '
+                             'the full dataset: {}', err)
 
     def get_workload(self, indices, njobs, batch_size, progress_bar, jobname):
 
@@ -648,13 +666,16 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
     def measure(self, data, index, mask=None):
 
+        # get mask
         if mask is None:
             mask = self.masks.bad_pixels  # NOTE: may be None
         elif self.masks.bad_pixels is not None:
-            mask |= self.masks.bad_pixels
+            mask = mask | self.masks.bad_pixels
 
-        #
+        # get masked image
         image = np.ma.MaskedArray(data[index], mask)
+
+        # measure
         xy, weights = self._measure(image, index, self.origin)
 
         # compute delta
@@ -668,13 +689,13 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # if np.any(np.abs(dxy) > 20):
         #     raise ValueError('')
 
-        self.logger.trace('OFFSET: {}.', dxy)
+        # self.logger.trace('OFFSET: {}.', dxy)
 
         # Update origin
         if (np.ma.abs(dxy) > 1).any():
             new = self.update_origin(dxy, index, image)
 
-            self.logger.trace('UPDATED OFFSET {}: {} {}.', index, dxy, new)
+            # self.logger.trace('UPDATED OFFSET {}: {} {}.', index, dxy, new)
             return new
 
         # same origin
@@ -686,6 +707,25 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # positions
         self.logger.trace('Measuring source positions for frame relative to '
                           'array index {}.', origin)
+
+        # get segmented image for current origin
+        seg = self.get_segments(origin, image.shape)
+
+        # Flux with uncertainty
+        flux = self.source_info['flux']
+        good = ~self._check_out_of_frame((self.coords['xy'] + self.origin)[::-1])
+        f, σ, bg = seg.flux(image, self.use_labels[good], [0], self.bg)
+        flux['value'][index][good], flux['sigma'][index][good] = f, σ
+        self.frame_info['bg_counts_avg'][index] = bg
+
+        # SNR
+        self.source_info['snr'][index][good] = f / σ
+
+        # subtract bg before centroid measures
+        if self.presub:
+            image = image - bg
+
+        # centroids
         seg, xy = self.measure_positions(image, origin=origin, index=index)
 
         # xy may contain nans for sanitized values
@@ -706,19 +746,11 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
             n = list(get_neighbours(image, idx, func=sum))
             self.source_info['q'][index][good] = image[tuple(idx.T)] / n
 
-        # Flux with uncertainty
-        flux = self.source_info['flux']
-        f = flux['value'][index], flux['sigma'][index] = \
-            seg.flux(image, self.use_labels, [0], self.bg)
-
-        # SNR
-        self.source_info['snr'][index] = np.divide(*f)
-
         # return average position across features for all sources and source
         # weight vector (with low snr points removed) for offset compute
         return xym, self.get_source_weights(index)
 
-    def measure_positions(self, image, mask=None, origin=None, index=None):
+    def measure_positions(self, image, mask=None, seg=None, origin=None, index=None):
         """
         Calculate measure of central tendency (centre-of-mass) for the objects
         in the segmentation image.
@@ -745,8 +777,10 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         # if np.sqrt(np.square(self.origin[0] - origin).sum()) > self.cutoffs.distance:
         #     self.logger.warning('Seems like a large shift? {}', origin)
 
-        # get segmented image for current origin
-        seg = self.get_segments(origin, image.shape)
+        if seg is None:
+            # get segmented image for current origin
+            seg = self.get_segments(origin, image.shape)
+
         # NOTE: the segmented image returned here is in the image array
         # coordinates, so image stats below are in image array coords
         yx = self._measure_positions(np.ma.MaskedArray(image, mask), seg)
@@ -800,9 +834,6 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         labels = self.use_labels
         yx = np.full((len(self.features), len(labels), 2), np.nan)
 
-        if self.presub:
-            data = data - getattr(seg, self.bg)(data, 0)
-
         for i, stat in enumerate(self.features):
             centroid = getattr(seg, stat)(data, labels, njobs=1,
                                           **self.feature_kws.get(stat, {}))
@@ -821,14 +852,17 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
 
         return yx
 
+    def _check_out_of_frame(self, yx):
+        # check if any measurements out of frame
+        ec = np.array(self.cutoffs.edge)
+        return ((yx < ec) | (yx > self.seg.shape - ec)).any(-1)
+
     def _sanitize_measurement(self, yx, shape, seg, index=None):
 
         # check if any measurements out of frame
-        ec = np.array(self.cutoffs.edge)
-        outframe = ((yx < ec) | (yx > shape - ec)).any(-1)
+        outframe = self._check_out_of_frame(yx)
 
         # check if measurement outside of segment. Happens with CoM and low snr
-
         outseg = (seg.position_to_label(yx) != self.use_labels)
 
         for name, out in dict(frame=outframe, segment=outseg).items():
@@ -865,7 +899,7 @@ class SourceTracker(LabelUser, PointSourceDitherModel, FrameProcessor):
         self.logger.trace('Re-measuring centroids for updated origin: {}.',
                           self.origin)
         xym, weights = self._measure(image, index, self.origin)
-        return self.compute_frame_offset(xym, weights=weights, axis=1)
+        return self.compute_frame_offset(xym, weights=weights, axis=0)
 
     def get_segments(self, origin=None, shape=None):
         """
