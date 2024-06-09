@@ -22,8 +22,9 @@ class LabelUser:
         if ignore_labels is None:
             ignore_labels = []
 
-        self._use_labels = np.setdiff1d(use_labels, ignore_labels)
         self._ignore_labels = np.asarray(ignore_labels)
+        self._use_labels = np.array([ll for ll in use_labels
+                                     if ll not in ignore_labels])
 
     @property
     def ignore_labels(self):
