@@ -126,7 +126,7 @@ def get_coords_named(name):
         )
     else:
         if isinstance(coo, SkyCoord):
-            logger.opt(lazy=True).info(
+            logger.opt(lazy=True).bind(indent=True).info(
                 'The following ICRS J2000.0 coordinates were retrieved:\n\t{:s}',
                 lambda: ra_dec_string(coo)
             )

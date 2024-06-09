@@ -12,6 +12,8 @@ Image registration (point set registration) for astronomicall images.
 #   brute force search with gaussian mixtures on points
 # std
 import re
+import math
+import copy
 import numbers
 import warnings
 import itertools as itt
@@ -38,8 +40,8 @@ from scipy.interpolate import NearestNDInterpolator
 
 # local
 import recipes.pprint as pp
-from recipes import api, op
 from recipes.oo import slots
+from recipes import api, op, pprint
 from recipes.config import ConfigNode
 from recipes.functionals import echo0
 from recipes.string import csv, indent
@@ -47,8 +49,9 @@ from recipes.iter import where_duplicate
 from recipes.logging import LoggingMixin
 from recipes.decorators import update_defaults
 from recipes.containers import cosort, duplicate_if_scalar, not_null, split_like
-from motley.table import Table
 from scrawl.utils import emboss
+from motley.table import Table
+from motley.format.formatters import Conditional, Decimal, Numeric
 
 # relative
 from ..math import transforms as tf
@@ -458,19 +461,17 @@ def compute_centres_offsets(xy, outlier_distance=None,
     # ensure output same size as input
     δxy = np.ma.masked_all((n, 2))
     σxy = np.empty((n_sources, 2))
-    # σxy = np.ma.masked_all((n_sources, 2))
 
     # compute positions of all sources with frame offsets measured from best
     # and brightest sources
     centres[use_sources], σxy[use_sources], δxy[good], out = \
         _measure_positions_offsets(xyc, centres[use_sources], outlier_distance, centre)
-    #
 
-    for i in np.where(~use_sources)[0]:
-        # mask for bad frames in δxy will propagate here
-        recentred = xy[:, i].squeeze() - δxy
-        centres[i] = centre(recentred)
-        σxy[i] = recentred.std()
+    # compute centre position of sources *not* used for dither calculation
+    faint = ~use_sources
+    recentred = xy[:, faint] - δxy[:, None]
+    centres[faint] = centre(recentred, 0)
+    σxy[faint] = recentred.std(0)  # FIXME: propagate uncertainties
 
     # fix outlier indices
     idxf, idxs = np.where(out)
@@ -486,7 +487,7 @@ def compute_centres_offsets(xy, outlier_distance=None,
             report_measurements(xy, centres, σxy, δxy, None, source_detection_threshold)
 
         except Exception as err:
-            logger.exception('Report failed')
+            logger.exception('Report failed: {}', err)
 
     return xy, centres, σxy, δxy, outlier_indices
 
@@ -615,15 +616,9 @@ def group_features(labels, *features):
 def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
                         detect_frac_min=None, count_thresh=None, logger=logger):
     # report on relative position measurement
-    import math
 
-    from recipes import pprint
-    from motley.table import Table
-    from motley.format import Decimal, Conditional, Numeric
     # from obstools.math.stats import mad
     # TODO: probably mask nans....
-
-    #
 
     n_points, n_sources, _ = xy.shape
     n_points_tot = n_points * n_sources
@@ -703,7 +698,8 @@ def report_measurements(xy, centres, σ_xy, xy_offsets=None, counts=None,
 
     #
     tbl = Table.from_columns(*columns,
-                             units=['pixels', 'pixels', ''],
+                             align=list('>>>'),
+                             units=['pixels', 'pixels', 'points'],
                              col_headers=col_headers,
                              totals=[-1],
                              formatters=formatters,
@@ -1152,22 +1148,25 @@ class ImageRegister(ImageContainer, LoggingMixin):
 
         # convert coordinates to pixel coordinates of reference image
         reg.check_has_data()
-        xy, params = reg.convert_to_pixels_of(self)
+
+        rescale = reg.pixel_scale / self.pixel_scale
+        xy = reg.xy * rescale
 
         # use `fit_points` so we don't aggregate images just yet
         p = self.fit_points(xy, p0, hop, refine, plot)
 
-        # finally aggregate the results from the new register
-        reg.params = params + p
-        self.extend(reg.data)
+        # transform
+        params = reg.params
+        params[:, :2] *= rescale
+        params += p
+        # NOTE: this does not edit image `params` since array is created by
+        # the `params` property
 
-        # convert back to original coords
-        # reg.convert_to_pixels_of(reg)
-
-        # fig, ax = plt.subplots()
-        # for xy in reg.xyt:
-        #     ax.plot(*xy.T, 'x')
-        # ax.plot(*reg.xy.T, 'o', mfc='none', ms=8)
+        # finally aggregate the images
+        for im, p in zip(reg.data, params):
+            clone = copy.deepcopy(im)
+            clone.params = p
+            self.append(clone)
 
     @update_defaults(CONFIG.align)
     def fit_sequence(self, items, p0=None, hop=True, refine=True, plot=False,
@@ -1434,7 +1433,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
                          + ' parameters.', ratio)
         return ratio
 
-    def register(self, clustering=None, relabel=False, plot=CONFIG.clusters.show):
+    def register(self, clustering=None, relabel=True, plot=CONFIG.clusters.show):
 
         self.check_has_data()
 
@@ -1442,11 +1441,11 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.cluster_points(clustering)
 
         if relabel:
-            # relabel clusters and segmented images
+            # relabel clusters and segmented images consistently
             self.relabel()
 
         # cluster centres become the target coordinates
-        self.xy = self.xyt_block.mean(0)
+        self.update_centres()
 
         if plot:
             return self.plot_clusters(**ensure_dict(plot))
@@ -1474,10 +1473,27 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # np.unique(self.labels)[None].T == self.labels
         return [xy[self.labels == i] for i in sorted(set(self.labels) - {-1})]
 
+    def _trans_to_image(self, index, unit='pixel'):
+        # get transform from reference to image
+        assert unit in {'fraction', 'pixel', 'arcmin'}
+        #
+        scale = self.scale
+        image = self[index]
+        if unit == 'fraction':
+            scale *= 1 / image.fov
+        elif unit == 'pixel':
+            scale /= image.scale
+        # elif unit == 'arcmin':
+        #     scale *= 1
+
+        return Affine2D().translate(*-image.origin) \
+                         .rotate(-image.angle) \
+                         .scale(*scale)
+
     def _unimportant_labels(self):
         return []
 
-    def remap_labels(self, target, flux_sort=False):
+    def remap_labels(self, target=0, flux_sort=False):
         """
         Re-order the *cluster* labels so that our `target` becomes 0, the rest
         follow in descending order of brightness first listing those that occur
@@ -1491,6 +1507,8 @@ class ImageRegister(ImageContainer, LoggingMixin):
         xb, = np.where(self._unimportant_labels())  # unimportant labels
         [nb.remove(r) for r in (target, -1, *xb) if r in nb]
 
+        # spanning = sorted(set.intersection(*map(set, self.labels_per_image)))
+
         if flux_sort:
             # get cluster labels bright to faint
             counts, = group_features(self.labels, self.attrs.counts)
@@ -1502,28 +1520,33 @@ class ImageRegister(ImageContainer, LoggingMixin):
         # these are the new labels!
         return np.argsort([target, *nb, *xb])
 
-    def relabel(self, target=None, flux_sort=False):
+    def relabel(self, target=0, flux_sort=False):
         # new desired segment labels
-        #  +1 ensure non-zero labels for SegmentedImage
+
         new = self.remap_labels(target, flux_sort)
         labels = np.full_like(self.labels, -1)
+
         core = (self.labels != -1)
         labels[core] = new[self.labels[core]]
         self.labels = labels
 
         # relabel all segmentedImages for cross image consistency
         new_labels = []
+        # duplicates = self._get_duplicate_labels()
+
         for cluster_labels, image in zip(self.labels_per_image, self):
             # relabel image segments
-            image_labels = cluster_labels + 1
+            #  +1 ensure non-zero labels for SegmentedImage
             reorder = ...
+            image_labels = cluster_labels + 1
+
             if np.any(image.seg.labels != image_labels):
                 # self.logger.debug('Relabelling {}.')
                 # old = image.seg.copy()
                 image.seg.relabel_many(image_labels)
                 # have to reorder the features
-                use = (image_labels != 0)
-                reorder = image_labels[use].argsort()
+                # use = (image_labels != 0)
+                reorder = image_labels[(image_labels != 0)].argsort()
                 # reorder = [*image_labels[use].argsort(), *np.where(~use)[0]]
 
                 image.xy = image.xy[reorder]
@@ -1537,33 +1560,9 @@ class ImageRegister(ImageContainer, LoggingMixin):
         self.labels = np.array(new_labels)
 
         # update `xy` source coordinate centres
-        # self.update_centres()
-        # self.xy = self.xyt_block.mean(0)
+        self.update_centres()
 
         return new_labels
-
-    # def relabel_clusters(self):
-        # match cluster labels to segment labels
-
-    # def to_pixel_coords(self, xy):
-    #     # internal coordinates are in arcmin origin at (0,0) for image
-    #     return np.divide(xy, self.pixel_scale)
-
-    def convert_to_pixels_of(self, reg):  # to_pixels_of
-        # convert coordinates to pixel coordinates of reference image
-        ratio = self.pixel_scale / reg.pixel_scale
-        xy = self.xy * ratio
-
-        params = self.params
-        params[:, :2] *= ratio
-        # NOTE: this does not edit image `params` since array is made
-        # through the `params` property
-
-        # note this means reg.mosaic will no longer work without fov keyword
-        #  since we have changed the scale and it substitutes image shape for
-        #  fov if not given
-
-        return xy, params
 
     # ------------------------------------------------------------------------ #
     def get_centres(self, func=np.ma.median):
@@ -1574,12 +1573,15 @@ class ImageRegister(ImageContainer, LoggingMixin):
         -------
 
         """
-        # this ignores noise points from clustering
-        centres = np.empty((self.n_sources(), 2))  # ma.masked_all
-        for i, xy in enumerate(np.rollaxis(self.xyt_block, 1)):
-            centres[i] = func(xy)
 
-        return centres
+        # this ignores noise points from clustering
+        return func(self.xyt_block, 0)
+
+        # centres = np.empty((self.n_sources(), 2))  # ma.masked_all
+        # for i, xy in enumerate(np.rollaxis(self.xyt_block, 1)):
+        #     centres[i] = func(xy)
+
+        # return centres
 
     def update_centres(self):
         """
@@ -1626,7 +1628,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             return
 
         # get classifier
-        clf = self.classifier = (classifier or self.clustering(**kws))
+        self.classifier = clf = (classifier or self.clustering(**kws))
 
         # get position data
         X = np.vstack(self.xyt)
@@ -1660,23 +1662,33 @@ class ImageRegister(ImageContainer, LoggingMixin):
                 'Looks like we may be overfitting clusters. Image with most '
                 'sources has {}, while clustering produced '
                 '{} clusters. Maybe increase bandwidth from current {}.',
-                n_sources_most, n_sources, classifier.bandwidth
+                n_sources_most, n_sources, self.classifier.bandwidth
             )
 
+        # check for duplicate predictions
+        # self._get_duplicate_labels(report=True)
+
+    # def _get_duplicate_labels(self, report=False):
         #
         duplicates = []
+        new_labels = self.labels.copy()
+        extra = new_labels.max() + 1
+        zero = 0
         for i, cluster_labels in enumerate(self.labels_per_image):
             # labels, inv, counts = np.unique(cluster_labels, return_counts=True)
             for indices in where_duplicate(cluster_labels):
                 # duplicates_image_labels = self[i].seg.labels[indices]
+                duplicates.append((
+                    i, cluster_labels[indices[0]], self[i].seg.labels[indices],
+                    (xy := self[i].xy[indices]),
+                    np.sqrt(np.square(xy - xy[0]).sum(1))
+                ))
 
-                duplicates.append(
-                    (i, cluster_labels[indices[0]],
-                     self[i].seg.labels[indices],
-                     (xy := self[i].xy[indices]),
-                     np.sqrt(np.square(xy - xy[0]).sum(1)))
-                )
-        if duplicates:
+                new_labels[np.add(zero, indices[1:])] = extra
+                extra += 1
+            zero += len(cluster_labels)
+
+        if duplicates:  # and report:
             self.logger.info(
                 'Clustering predicted the same label for multiple image sources'
                 ' in image {}:\n{}', i,
@@ -1689,6 +1701,10 @@ class ImageRegister(ImageContainer, LoggingMixin):
                                   4: lambda _: '\n'.join(map('{:4.2f}'.format, _))},
                       hlines=...)
             )
+
+        # remove clustered points that occur multiple times in a single image
+        # Every source should have a unique cluster label in the image.
+        self.labels = new_labels
 
     # def check_labelled(self):
         # if not len(self):
@@ -1733,6 +1749,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
         xy = self.xyt_block
 
         self.logger.info('Measuring cluster centres, frame xy-offsets.')
+
         _, centres, xy_std, xy_offsets, outliers = \
             compute_centres_offsets(xy, outlier_distance, source_detection_threshold)
 
@@ -1749,7 +1766,7 @@ class ImageRegister(ImageContainer, LoggingMixin):
             self.sigmas = xy_std
             self.xy = centres
 
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # -------------------------------------------------------------------- #
         if plot:
             # diagnostic for source location measurements
             from obstools.phot.diagnostics import plot_position_measures
@@ -2091,38 +2108,6 @@ class ImageRegister(ImageContainer, LoggingMixin):
         return cir, proxy
 
 
-class ImageRegistrationGUI(MplMultiTab):
-    def __init__(self, reg, names=(), **kws):
-
-        super().__init__()
-
-        self.reg = reg
-        self.style = kws
-        self.art = {}
-
-        for _, name in itt.zip_longest(reg, names):
-            fig = self.add_tab('Images', name)
-
-        self['Images'].add_task(self._plot_image)
-
-        #
-        self.add_tab('Clusters')
-        self['Clusters'].add_task(self._plot_clusters)
-
-    def _plot_clusters(self, fig, indices):
-        ax = self['Clusters'].figure.axes
-        art = self.plot_clusters(ax, labels=True, frames=True, trim_labels=True)
-
-    def _plot_image(self, fig, indices):
-        i, j = indices
-        if i == 0:
-            _, self.art[j] = self.reg[j].plot(fig=fig, **self.style)
-        else:
-            raise ValueError
-
-        # fig.canvas.draw() # WHY? blit?
-
-
 class ImageRegisterDSS(ImageRegister):
     """
     Align images with the Digitized Sky Survey archival plate images and infer
@@ -2243,7 +2228,7 @@ class ImageRegisterDSS(ImageRegister):
     #         use[w] = False
     #     return labels, use
 
-    def register(self, clf=None, relabel=True, plot=CONFIG.clusters.show):
+    def register(self, clf=None, relabel=False, plot=CONFIG.clusters.show):
         # trim=True
         # if trim:
         #     self._unimportant_labels()
@@ -2254,25 +2239,9 @@ class ImageRegisterDSS(ImageRegister):
             self.relabel()
 
         # cluster centres become the target coordinates
-        self.xy = self.xyt_block.mean(0)
+        self.update_centres()
 
         return art
-
-    def _trans_to_image(self, index, unit='pixel'):
-        assert unit in {'fraction', 'pixel', 'arcmin'}
-
-        scale = self.scale
-        image = self[index]
-        if unit == 'fraction':
-            scale *= 1 / image.fov
-        elif unit == 'pixel':
-            scale /= image.scale
-        # elif unit == 'arcmin':
-        #     scale *= 1
-
-        return Affine2D().translate(*-image.origin) \
-                         .rotate(-image.angle) \
-                         .scale(*scale)
 
     def _trans_to_dss(self, index, unit='pixel'):
         return self._trans_to_image(index, unit).inverted()
@@ -2286,11 +2255,8 @@ class ImageRegisterDSS(ImageRegister):
             tr = self._trans_to_image(i + int(i >= index), unit='fraction')
             xyi = tr.transform(xy)
             out[i] = ((0 > xyi) | (xyi > 1)).any(1)
-            # print(i+1, np.where(l)[0])
 
         return out.all(0)
-        # return np.where(outside.all(0))[0]
-        # return np.array(sorted(set(self.labels) - {-1}))[outside.all(0)]
 
     def build_wcs(self, run):
         assert len(run) == len(self) - 1
@@ -2443,13 +2409,16 @@ class RegistrationMixin:
         if fov is None:
             fov = np.ceil(np.max(reg.fovs, 0)) * fov_stretch
 
-        #
         dss = ImageRegisterDSS(self[reg.primary].coords, fov, **kws)
         dss._reg = reg
 
         dss.fit(reg, refine=False)
         dss.register(reg.classifier, relabel=False)
         dss.order = reg.order
+
+        # Relabel segments with target at 1
+        target, = dss.classifier.predict([dss.target_coords_pixel])
+        reg.relabel(target)
 
         # dss.recentre(plot=plot)
         # _, better = imr.refine(plot=plot)
@@ -2534,6 +2503,7 @@ class RegistrationMixin:
         reg.order = np.hstack([indices[o] for o in order])
         # reg.data, _ = cosort(reg.order, reg.data)
 
+        # plot
         for which, config in [('clusters', clusters), ('mosaic', mosaic)]:
             if config := config.get('all', False):
                 config = ensure_dict(config)
@@ -2584,3 +2554,35 @@ class RegistrationMixin:
         return reg
 
     # ------------------------------------------------------------------------ #
+
+
+class ImageRegistrationGUI(MplMultiTab):
+    def __init__(self, reg, names=(), **kws):
+
+        super().__init__()
+
+        self.reg = reg
+        self.style = kws
+        self.art = {}
+
+        for _, name in itt.zip_longest(reg, names):
+            fig = self.add_tab('Images', name)
+
+        self['Images'].add_task(self._plot_image)
+
+        #
+        self.add_tab('Clusters')
+        self['Clusters'].add_task(self._plot_clusters)
+
+    def _plot_clusters(self, fig, indices):
+        ax = self['Clusters'].figure.axes
+        art = self.plot_clusters(ax, labels=True, frames=True, trim_labels=True)
+
+    def _plot_image(self, fig, indices):
+        i, j = indices
+        if i == 0:
+            _, self.art[j] = self.reg[j].plot(fig=fig, **self.style)
+        else:
+            raise ValueError
+
+        # fig.canvas.draw() # WHY? blit?
