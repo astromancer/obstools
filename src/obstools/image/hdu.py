@@ -11,6 +11,7 @@ from recipes.decorators import update_defaults
 # relative
 from ..io import FilePicklable
 from . import CONFIG
+from .display import FitsVideo
 from .noise import CCDNoiseModel
 from .sample import ImageSamplerMixin
 from .detect import SourceDetectionMixin
@@ -115,7 +116,6 @@ class ImageHDU(PrimaryHDU,
             # Note: `self.section` fails with 2d data
 
         elif nd == 3:
-            from .image.display import FitsVideo
 
             im = FitsVideo(self, **kws)
 
@@ -124,4 +124,3 @@ class ImageHDU(PrimaryHDU,
 
         im.figure.canvas.manager.set_window_title(self.file.name)
         return im
-
