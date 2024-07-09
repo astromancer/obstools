@@ -24,9 +24,9 @@ from pyxides.getitem import IndexingMixin
 from pyxides.vectorize import AttrVector, Vectorized
 from recipes.oo import SelfAware
 from recipes.config import ConfigNode
-from recipes.oo.slots import SlotHelper
+from recipes.oo.slots import SlotHelper, Represent
 from recipes.containers.dicts import is_dict
-from recipes.oo.repr_helpers import qualname
+from recipes.oo.represent import qualname
 from recipes.oo.property import cached_property
 from recipes.containers import duplicate_if_scalar, not_null
 
@@ -75,6 +75,7 @@ def get_axes(ax, fig=None, **kws):
 
 # ---------------------------------------------------------------------------- #
 
+
 class Image(SelfAware, SlotHelper):  # AliasManager
     """
     A simple image class.
@@ -83,9 +84,9 @@ class Image(SelfAware, SlotHelper):  # AliasManager
     # ------------------------------------------------------------------------ #
     __slots__ = ('data', 'meta', 'art')
 
-    _repr_style = dict(SlotHelper._repr_style,
-                       attrs=['shape'],
-                       maybe=['meta'],)
+    __repr__ = Represent(**{**SlotHelper.__repr__.__dict__,
+                            **dict(attrs=['shape'],
+                                   maybe=['meta'])})
     #    brackets='<>',
     #    hang=True)
 
@@ -186,8 +187,8 @@ class TransformedImage(Image):
     # ------------------------------------------------------------------------ #
     __slots__ = ('_origin', '_angle', '_scale')
 
-    _repr_style = dict(Image._repr_style,
-                       attrs=('shape', 'scale', 'origin', 'angle'))
+    __repr__ = Represent(**{**Image.__repr__.__dict__,
+                            'attrs': ('shape', 'scale', 'origin', 'angle')})
 
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
@@ -317,8 +318,8 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
     __slots__ = ('seg', 'xy', 'counts')
 
-    _repr_style = dict(TransformedImage._repr_style,
-                       maybe=['angle'])
+    __repr__ = Represent({**TransformedImage.__repr__.__dict__,
+                          'maybe': ['angle']})
 
     # ------------------------------------------------------------------------ #
     # @doc.inherit('Parameters')
@@ -455,7 +456,7 @@ class SkyImage(CCDImage, TransformedImage, SourceDetectionMixin):
 
         # centre of mass, counts
         yx = self.seg.com(self.data)
-        counts, noise = self.seg.flux(self.data)
+        counts, noise, bg = self.seg.flux(self.data)
 
         # sometimes, we get nans from the center-of-mass calculation
         ok = np.isfinite(yx).all(1)
