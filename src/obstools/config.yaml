@@ -248,14 +248,14 @@ lightcurves:
 
         # columns [name, unit, description]
         columns:
-            time: 
-                [bjd, day, Barycentric Julian Date]
+            time:
+                [Time, BJD, Barycentric Julian Date]
                 # [sidt, h  Sidereal time in seconds since midnight]
-            counts: 
-                [Flux, counts, Total integrated counts for star (background subtracted)]
-            sigma:   
-                [σFlux, counts, Standard deviation uncertainty on total counts]
-            outlier: 
+            value:
+                [Flux, ADU, Total integrated counts for star (background subtracted)]
+            sigma:
+                [σFlux, ADU, Standard deviation uncertainty of Flux]
+            outlier:
                 [oflag, '', Outlier flag]
 
         precision:  5   # significant figures

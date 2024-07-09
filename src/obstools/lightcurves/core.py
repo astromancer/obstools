@@ -11,9 +11,6 @@ from recipes.config import ConfigNode
 from tsa.ts.ts import MultiVariate, TimeSeries
 from tsa.ts.plotting import TimeSeriesPlot, make_twin_relative
 
-# relative
-from .. import lightcurves as lc
-
 
 # ---------------------------------------------------------------------------- #
 # Config
@@ -67,12 +64,10 @@ class LightCurve(TimeSeries):
 
     plot = LightCurvePlot(CONFIG.plots.axes.plims)
 
-    @classmethod
-    def load(cls, filename, hdu=None):
-        return cls(*lc.io.read(filename, hdu))
-
-    def save(self, filename, **kws):
-        return lc.io.write(filename, self.t, self.x.T, self.u.T, **kws)
+    def write(self, filename, **kws):
+        return super().write(filename,
+                             **{**CONFIG.io.txt.rename('columns', 'col_info'),
+                                **kws})
 
 
 class MultiVariateLightCurve(MultiVariate, LightCurve):
